@@ -7,7 +7,7 @@ from fastapi.openapi.utils import get_openapi
 
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
 from Backend.API_Layer.routes import health_routes
-from Backend.Data_Access_Layer.models import models
+from Backend.Data_Access_Layer.models import Base
 from Backend.Data_Access_Layer.utils.database import engine
 from Backend.config.env_loader import get_env_var
 
@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-models.Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Accounts Payable Module",
