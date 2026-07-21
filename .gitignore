@@ -2,3 +2,6 @@
 */pycache/
 **.pyc
 *__init__.py
+*ap/
+.ap/
+.venv/
