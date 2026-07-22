@@ -4,7 +4,7 @@ import decimal
 
 from sqlalchemy import Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from Backend.Data_Access_Layer.models.payment import Payment
 from Backend.Data_Access_Layer.models.base import Base
 
 

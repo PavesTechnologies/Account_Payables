@@ -4,7 +4,9 @@ import decimal
 
 from sqlalchemy import Boolean, CHAR, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from Backend.Data_Access_Layer.models.vendor import Vendor, VendorAddress, VendorBank, VendorTax
+from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder
+from Backend.Data_Access_Layer.models.approval import InvoiceApproval, ApprovalWorkflow
 from Backend.Data_Access_Layer.models.base import Base
 
 

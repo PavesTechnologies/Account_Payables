@@ -3,7 +3,7 @@ import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from Backend.Data_Access_Layer.models.invoice import Invoice
 from Backend.Data_Access_Layer.models.base import Base
 
 
