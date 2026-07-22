@@ -186,7 +186,7 @@ avoids over-engineering with EAV unless you're onboarding many more countries.
 - Indexes added on all common lookup/filter columns (`vendor_id`, `status_id`, `due_date`, etc.)
 - `tax_type` is effective-dated (`effective_from`/`effective_to`) so historical invoices keep the tax rate that applied when they were created — never recompute old invoices when rates change
 
----
+--- 
 
 ## FastAPI Integration Notes
 
@@ -194,7 +194,7 @@ avoids over-engineering with EAV unless you're onboarding many more countries.
 - Model one SQLAlchemy class per table above, in module-aligned files (e.g. `models/vendor.py`, `models/invoice.py`, `models/payment.py`) mirroring this README's module grouping
 - Recommended: a `BaseAuditModel` mixin providing `created_by/created_at/updated_by/updated_at` so every model inherits it consistently
 - `status_master` lookups are a good candidate for an in-memory cache (rarely changes, read very often)
-
+ 
 ---
 
 ## Future Enhancements
