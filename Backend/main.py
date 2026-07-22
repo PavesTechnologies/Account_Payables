@@ -5,8 +5,9 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
+from Backend.API_Layer.middleware.db_middleware import DBSessionMiddleware
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
-from Backend.API_Layer.routes import health_routes
+from Backend.API_Layer.routes import master
 from Backend.Data_Access_Layer.models.base import Base
 from Backend.Data_Access_Layer.utils.database import engine
 from Backend.config.env_loader import get_env_var
@@ -30,6 +31,7 @@ app = FastAPI(
 FRONTEND_URL = get_env_var("FRONTEND_URL", "http://localhost:5173")
 
 app.add_middleware(JWTMiddleware)
+app.add_middleware(DBSessionMiddleware)
 
 # Add CORS last so it wraps *all* responses
 app.add_middleware(
@@ -93,7 +95,7 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 
 api_router = APIRouter(prefix="/apm")
 
-api_router.include_router(health_routes.router, tags=["Health"])
+api_router.include_router(master.router, tags=["Master"], prefix="/master")
 
 app.include_router(api_router)
 
