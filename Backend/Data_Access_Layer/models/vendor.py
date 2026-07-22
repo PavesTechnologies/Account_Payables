@@ -1,9 +1,9 @@
 from typing import Optional
 import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, String, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from Backend.Data_Access_Layer.models.invoice import Invoice
+
 from Backend.Data_Access_Layer.models.base import Base
 
 
@@ -14,11 +14,11 @@ class Vendor(Base):
         ForeignKeyConstraint(['currency_id'], ['ap.currency.currency_id'], name='vendor_currency_id_fkey'),
         ForeignKeyConstraint(['payment_term_id'], ['ap.payment_term.payment_term_id'], name='vendor_payment_term_id_fkey'),
         ForeignKeyConstraint(['status_id'], ['ap.status_master.status_id'], name='vendor_status_id_fkey'),
-        ForeignKeyConstraint(['vendor_category_id'], ['ap.vendor_category.vendor_category_id'], name='vendor_vendor_category_id_fkey'),
         PrimaryKeyConstraint('vendor_id', name='vendor_pkey'),
         UniqueConstraint('vendor_code', name='vendor_vendor_code_key'),
         Index('idx_vendor_country', 'country_id'),
         Index('idx_vendor_status', 'status_id'),
+        Index('idx_vendor_email', 'email'),
         {'schema': 'ap'}
     )
 
@@ -28,10 +28,8 @@ class Vendor(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     vendor_code: Mapped[Optional[str]] = mapped_column(String(30))
-    vendor_category_id: Mapped[Optional[int]] = mapped_column(Integer)
     payment_term_id: Mapped[Optional[int]] = mapped_column(Integer)
     currency_id: Mapped[Optional[int]] = mapped_column(Integer)
-    address: Mapped[Optional[str]] = mapped_column(String(255))
     phone_number: Mapped[Optional[str]] = mapped_column(String(30))
     email: Mapped[Optional[str]] = mapped_column(String(150))
     status_id: Mapped[Optional[int]] = mapped_column(Integer)
@@ -42,8 +40,9 @@ class Vendor(Base):
     currency: Mapped[Optional['Currency']] = relationship('Currency', back_populates='vendor')
     payment_term: Mapped[Optional['PaymentTerm']] = relationship('PaymentTerm', back_populates='vendor')
     status: Mapped[Optional['StatusMaster']] = relationship('StatusMaster', back_populates='vendor')
-    vendor_category: Mapped[Optional['VendorCategory']] = relationship('VendorCategory', back_populates='vendor')
     purchase_order: Mapped[list['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='vendor')
+    goods_receipt: Mapped[list['GoodsReceipt']] = relationship('GoodsReceipt', back_populates='vendor')
+    inbound_document: Mapped[list['InboundDocument']] = relationship('InboundDocument', back_populates='vendor')
     vendor_address: Mapped[list['VendorAddress']] = relationship('VendorAddress', back_populates='vendor')
     vendor_bank: Mapped[list['VendorBank']] = relationship('VendorBank', back_populates='vendor')
     vendor_tax: Mapped[list['VendorTax']] = relationship('VendorTax', back_populates='vendor')
@@ -73,8 +72,6 @@ class VendorAddress(Base):
     address_line2: Mapped[Optional[str]] = mapped_column(String(200))
     state: Mapped[Optional[str]] = mapped_column(String(100))
     postal_code: Mapped[Optional[str]] = mapped_column(String(20))
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
-    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
     country: Mapped['Country'] = relationship('Country', back_populates='vendor_address')
     vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='vendor_address')
@@ -86,6 +83,7 @@ class VendorBank(Base):
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], ondelete='CASCADE', name='vendor_bank_vendor_id_fkey'),
         PrimaryKeyConstraint('vendor_bank_id', name='vendor_bank_pkey'),
         Index('idx_vendor_bank_vendor', 'vendor_id'),
+        Index('idx_vendor_bank_active', 'vendor_id', 'effective_to'),
         {'schema': 'ap'}
     )
 
@@ -94,7 +92,7 @@ class VendorBank(Base):
     bank_name: Mapped[str] = mapped_column(String(150), nullable=False)
     account_holder_name: Mapped[str] = mapped_column(String(150), nullable=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
+    effective_from: Mapped[datetime.date] = mapped_column(Date, nullable=False, server_default=text('CURRENT_DATE'))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     account_number: Mapped[Optional[str]] = mapped_column(String(50))
@@ -102,8 +100,7 @@ class VendorBank(Base):
     swift_code: Mapped[Optional[str]] = mapped_column(String(20))
     routing_number: Mapped[Optional[str]] = mapped_column(String(20))
     ifsc_code: Mapped[Optional[str]] = mapped_column(String(20))
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
-    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
+    effective_to: Mapped[Optional[datetime.date]] = mapped_column(Date)
 
     vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='vendor_bank')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='vendor_bank')
@@ -125,10 +122,7 @@ class VendorTax(Base):
     registration_number: Mapped[str] = mapped_column(String(50), nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     verified_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
-    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
     tax_type: Mapped['TaxType'] = relationship('TaxType', back_populates='vendor_tax')
     vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='vendor_tax')

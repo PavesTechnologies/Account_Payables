@@ -2,11 +2,8 @@ from typing import Optional
 import datetime
 import decimal
 
-from sqlalchemy import Boolean, CHAR, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
+from sqlalchemy import Boolean, CHAR, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from Backend.Data_Access_Layer.models.vendor import Vendor, VendorAddress, VendorBank, VendorTax
-from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder
-from Backend.Data_Access_Layer.models.approval import InvoiceApproval, ApprovalWorkflow
 from Backend.Data_Access_Layer.models.base import Base
 
 
@@ -23,9 +20,6 @@ class Country(Base):
     country_code: Mapped[str] = mapped_column(CHAR(2), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
-    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
     tax_type: Mapped[list['TaxType']] = relationship('TaxType', back_populates='country')
     vendor: Mapped[list['Vendor']] = relationship('Vendor', back_populates='country')
@@ -47,12 +41,8 @@ class Currency(Base):
     decimal_places: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text('2'))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
-    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
     vendor: Mapped[list['Vendor']] = relationship('Vendor', back_populates='currency')
-    purchase_order: Mapped[list['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='currency')
     invoice: Mapped[list['Invoice']] = relationship('Invoice', back_populates='currency')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='currency')
 
@@ -70,6 +60,7 @@ class PaymentTerm(Base):
     due_days: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text('0'))
     discount_percent: Mapped[decimal.Decimal] = mapped_column(Numeric(5, 2), nullable=False, server_default=text('0'))
     discount_days: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text('0'))
+    is_system_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
@@ -97,34 +88,32 @@ class StatusMaster(Base):
     vendor: Mapped[list['Vendor']] = relationship('Vendor', back_populates='status')
     purchase_order: Mapped[list['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='status')
     invoice: Mapped[list['Invoice']] = relationship('Invoice', back_populates='status')
-    invoice_exception: Mapped[list['InvoiceException']] = relationship('InvoiceException', back_populates='status')
+    invoice_issue: Mapped[list['InvoiceIssue']] = relationship('InvoiceIssue', back_populates='status')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='status')
 
 
-class VendorCategory(Base):
-    __tablename__ = 'vendor_category'
+class SystemConfiguration(Base):
+    __tablename__ = 'system_configuration'
     __table_args__ = (
-        PrimaryKeyConstraint('vendor_category_id', name='vendor_category_pkey'),
-        UniqueConstraint('category_name', name='vendor_category_category_name_key'),
+        PrimaryKeyConstraint('config_key', name='system_configuration_pkey'),
         {'schema': 'ap'}
     )
 
-    vendor_category_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    category_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    config_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    config_value: Mapped[str] = mapped_column(String(255), nullable=False)
+    data_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'STRING'::character varying"))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     description: Mapped[Optional[str]] = mapped_column(String(255))
-    created_by: Mapped[Optional[str]] = mapped_column(String(100))
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))
-
-    approval_workflow: Mapped[list['ApprovalWorkflow']] = relationship('ApprovalWorkflow', back_populates='vendor_category')
-    vendor: Mapped[list['Vendor']] = relationship('Vendor', back_populates='vendor_category')
 
 
 class TaxType(Base):
     __tablename__ = 'tax_type'
     __table_args__ = (
+        CheckConstraint(
+            "calculation_type = 'PERCENTAGE' AND rate_percent IS NOT NULL OR calculation_type = 'FIXED' AND fixed_amount IS NOT NULL",
+            name='tax_type_check'
+        ),
         ForeignKeyConstraint(['country_id'], ['ap.country.country_id'], name='tax_type_country_id_fkey'),
         PrimaryKeyConstraint('tax_type_id', name='tax_type_pkey'),
         UniqueConstraint('country_id', 'tax_code', 'effective_from', name='tax_type_country_id_tax_code_effective_from_key'),
@@ -135,12 +124,15 @@ class TaxType(Base):
     country_id: Mapped[int] = mapped_column(Integer, nullable=False)
     tax_name: Mapped[str] = mapped_column(String(100), nullable=False)
     tax_code: Mapped[str] = mapped_column(String(30), nullable=False)
-    rate_percent: Mapped[decimal.Decimal] = mapped_column(Numeric(6, 3), nullable=False)
+    calculation_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PERCENTAGE'::character varying"))
     is_withholding: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
     effective_from: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    is_system_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    rate_percent: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(6, 3))
+    fixed_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
     effective_to: Mapped[Optional[datetime.date]] = mapped_column(Date)
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))

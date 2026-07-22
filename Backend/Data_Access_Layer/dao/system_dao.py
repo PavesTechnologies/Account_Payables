@@ -4,11 +4,7 @@ from typing import List, Optional
 
 from Backend.Data_Access_Layer.models.master import (
     Country,
-    Currency,
-    TaxType,
-    VendorCategory,
-    PaymentTerm,
-    StatusMaster,
+    Currency
 )
 
 
@@ -106,51 +102,4 @@ class MasterDAO:
 
         self.db.delete(currency)
 
-    # =====================================================
-    # Tax Type
-    # =====================================================
-
-    def create_tax_type(
-        self,
-        tax_type: TaxType,
-    ) -> TaxType:
-
-        self.db.add(tax_type)
-        self.db.flush()
-
-        return tax_type
-    def get_all_tax_types(
-        self,
-    ) -> List[TaxType]:
-
-        return (
-            self.db.query(TaxType)
-            .order_by(TaxType.tax_type_name.asc())
-            .all()
-        )
-    def get_tax_type_by_id(
-        self,
-        tax_type_id: int,
-    ) -> Optional[TaxType]:
-
-        return (
-            self.db.query(TaxType)
-            .filter('TaxType.tax_type_id' == tax_type_id)
-            .first()
-        )
-    def get_tax_type_by_code(
-        self,
-        tax_code: str,
-    ) -> Optional[TaxType]:
-
-        return (
-            self.db.query(TaxType)
-            .filter('TaxType.tax_code' == tax_code)
-            .first()
-        )
-    def delete_tax_type(
-        self,
-        tax_type: TaxType,
-    ) -> None:
-
-        self.db.delete(tax_type)
+    

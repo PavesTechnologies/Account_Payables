@@ -150,7 +150,7 @@ CREATE TABLE vendor (
     vendor_name         VARCHAR(200) NOT NULL,
     vendor_code         VARCHAR(30) UNIQUE,
     country_id          INT NOT NULL REFERENCES country(country_id),
-    vendor_category_id  INT REFERENCES vendor_category(vendor_category_id), -- OPTIONAL
+    -- vendor_category_id  INT REFERENCES vendor_category(vendor_category_id), -- OPTIONAL
     payment_term_id     INT REFERENCES payment_term(payment_term_id),        -- OPTIONAL
     currency_id         INT REFERENCES currency(currency_id),
     phone_number        VARCHAR(30),
@@ -438,13 +438,13 @@ INSERT INTO country (country_name, country_code) VALUES
 ('India','IN'), ('United States','US'), ('Germany','DE'),
 ('United Arab Emirates','AE'), ('Singapore','SG');
 
-INSERT INTO vendor_category (category_name, description, is_system_default) VALUES
-('Software & SaaS','Software subscriptions and SaaS tools', TRUE),
-('Professional Services','Consulting, legal, audit', TRUE),
-('IT Hardware','Computers, servers, networking equipment', TRUE),
-('Marketing','Advertising and marketing services', TRUE),
-('Utilities','Electricity, water, internet', TRUE),
-('Others','Uncategorized vendors', TRUE);
+-- INSERT INTO vendor_category (category_name, description, is_system_default) VALUES
+-- ('Software & SaaS','Software subscriptions and SaaS tools', TRUE),
+-- ('Professional Services','Consulting, legal, audit', TRUE),
+-- ('IT Hardware','Computers, servers, networking equipment', TRUE),
+-- ('Marketing','Advertising and marketing services', TRUE),
+-- ('Utilities','Electricity, water, internet', TRUE),
+-- ('Others','Uncategorized vendors', TRUE);
 
 INSERT INTO payment_term (term_name, due_days, discount_percent, discount_days, is_system_default) VALUES
 ('Immediate', 0, 0, 0, TRUE),
