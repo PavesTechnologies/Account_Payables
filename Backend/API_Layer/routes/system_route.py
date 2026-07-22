@@ -12,7 +12,9 @@ from Backend.API_Layer.interface.system_interface import (
     CurrencyRequest,
     CurrencyResponse,
     CurrencyDTO,
-    DeleteCurrencyResponse
+    DeleteCurrencyResponse,
+    StatusMasterDTO,
+    StatusMasterUpdateRequest,
 )
 
 
@@ -307,6 +309,93 @@ def delete_currency(
     except Exception as e:
         db.rollback()
 
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+
+# ---------------------------------------------------------
+# Get All Statuses
+# ---------------------------------------------------------
+@router.get(
+    "/status",
+    response_model=list[StatusMasterDTO],
+)
+def get_all_statuses(http_request: Request, module_name: str | None = None):
+
+    db = http_request.state.db
+
+    try:
+        service = SystemService(db)
+
+        return service.get_all_statuses(module_name)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+
+# ---------------------------------------------------------
+# Get Status By ID
+# ---------------------------------------------------------
+@router.get(
+    "/status/{status_id}",
+    response_model=StatusMasterDTO,
+)
+def get_status_by_id(status_id: int, http_request: Request):
+
+    db = http_request.state.db
+
+    try:
+        service = SystemService(db)
+
+        return service.get_status_by_id(status_id)
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=str(e),
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+
+# ---------------------------------------------------------
+# Update Status (label/display_order only — code is locked)
+# ---------------------------------------------------------
+@router.put(
+    "/status/{status_id}",
+    response_model=StatusMasterDTO,
+)
+def update_status(
+    status_id: int,
+    payload: StatusMasterUpdateRequest,
+    http_request: Request,
+):
+
+    db = http_request.state.db
+
+    try:
+        service = SystemService(db)
+
+        return service.update_status(status_id, payload)
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=404,
+            detail=str(e),
+        )
+
+    except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=500,
             detail=str(e),

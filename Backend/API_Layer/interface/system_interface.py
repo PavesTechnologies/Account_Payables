@@ -58,5 +58,21 @@ class CurrencyListResponse(BaseModel):
 
 
 class DeleteCurrencyResponse(BaseModel):
-    message: str    
+    message: str
+
+# =====================================================
+# Status Master
+# =====================================================
+
+class StatusMasterDTO(BaseModel):
+    status_id: int
+    module_name: str
+    status_code: str
+    status_name: str
+    display_order: int
+
+
+class StatusMasterUpdateRequest(BaseModel):
+    status_name: str | None = None
+    display_order: int | None = None
 

@@ -4,7 +4,8 @@ from typing import List, Optional
 
 from Backend.Data_Access_Layer.models.master import (
     Country,
-    Currency
+    Currency,
+    StatusMaster,
 )
 
 
@@ -102,4 +103,32 @@ class SystemDAO:
 
         self.db.delete(currency)
 
-    
+    # =====================================================
+    # Status Master
+    # =====================================================
+
+    def get_all_statuses(
+        self,
+        module_name: Optional[str] = None,
+    ) -> List[StatusMaster]:
+
+        query = self.db.query(StatusMaster)
+
+        if module_name is not None:
+            query = query.filter(StatusMaster.module_name == module_name)
+
+        return query.order_by(
+            StatusMaster.module_name.asc(),
+            StatusMaster.display_order.asc(),
+        ).all()
+
+    def get_status_by_id(
+        self,
+        status_id: int,
+    ) -> Optional[StatusMaster]:
+
+        return (
+            self.db.query(StatusMaster)
+            .filter(StatusMaster.status_id == status_id)
+            .first()
+        )

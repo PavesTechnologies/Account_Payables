@@ -11,6 +11,7 @@ from Backend.Data_Access_Layer.models.master import (
 from Backend.API_Layer.interface.system_interface import (
     CountryRequest,
     CurrencyRequest,
+    StatusMasterUpdateRequest,
 )
 from Backend.Business_Layer.utils.country_validator import validate_country_code
 
@@ -128,3 +129,42 @@ class SystemService:
         self.master_dao.delete_currency(currency)
 
         self.db.commit()
+
+    # =========================================================
+    # Status Master
+    # =========================================================
+    # Read + label-update only: status_code/module_name are wired into
+    # application logic and are never created/deleted through this API.
+
+    def get_all_statuses(self, module_name: str = None):
+        return self.master_dao.get_all_statuses(module_name)
+
+    def get_status_by_id(self, status_id: int) -> StatusMaster:
+
+        status = self.master_dao.get_status_by_id(status_id)
+
+        if status is None:
+            raise ValueError("Status not found")
+
+        return status
+
+    def update_status(
+        self,
+        status_id: int,
+        update_data: StatusMasterUpdateRequest,
+    ) -> StatusMaster:
+
+        status = self.master_dao.get_status_by_id(status_id)
+
+        if status is None:
+            raise ValueError("Status not found")
+
+        if update_data.status_name is not None:
+            status.status_name = update_data.status_name
+        if update_data.display_order is not None:
+            status.display_order = update_data.display_order
+
+        self.db.commit()
+        self.db.refresh(status)
+
+        return status

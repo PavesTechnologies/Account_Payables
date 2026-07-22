@@ -7,7 +7,7 @@ from fastapi.openapi.utils import get_openapi
 
 from Backend.API_Layer.middleware.db_middleware import DBSessionMiddleware
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
-from Backend.API_Layer.routes import system_route
+from Backend.API_Layer.routes import master_route, system_route
 from Backend.Data_Access_Layer.models.base import Base
 from Backend.Data_Access_Layer.utils.database import engine
 from Backend.config.env_loader import get_env_var
@@ -96,6 +96,7 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 api_router = APIRouter(prefix="/apm")
 
 api_router.include_router(system_route.router, tags=["System Defaults"], prefix="/system")
+api_router.include_router(master_route.router, tags=["Master Configuration"], prefix="/master")
 
 app.include_router(api_router)
 
