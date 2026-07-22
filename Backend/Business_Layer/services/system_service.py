@@ -1,6 +1,6 @@
 # Backend/Business_Layer/services/master_service.py
 
-from Backend.Data_Access_Layer.dao.system_dao import MasterDAO
+from Backend.Data_Access_Layer.dao.system_dao import SystemDAO
 from Backend.Data_Access_Layer.models.master import (
     Country,
     Currency,
@@ -15,10 +15,10 @@ from Backend.API_Layer.interface.system_interface import (
 from Backend.Business_Layer.utils.country_validator import validate_country_code
 
 
-class MasterService:
+class SystemService:
     def __init__(self, db):
         self.db = db
-        self.master_dao = MasterDAO(db)
+        self.master_dao = SystemDAO(db)
 
     # =========================================================
     # Country

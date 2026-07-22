@@ -8,7 +8,7 @@ from Backend.Data_Access_Layer.models.master import (
 )
 
 
-class MasterDAO:
+class SystemDAO:
     def __init__(self, db):
         self.db = db
 

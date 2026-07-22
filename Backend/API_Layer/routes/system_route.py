@@ -16,7 +16,7 @@ from Backend.API_Layer.interface.system_interface import (
 )
 
 
-from Backend.Business_Layer.services.system_service import MasterService
+from Backend.Business_Layer.services.system_service import SystemService
 
 router = APIRouter()
 
@@ -40,7 +40,7 @@ def create_country(
         if user_id is None:
             raise ValueError("Token payload missing user identifier")
 
-        service = MasterService(db)
+        service = SystemService(db)
 
         country = service.create_country(payload, user_id)
 
@@ -80,7 +80,7 @@ def get_all_countries(http_request: Request):
 
     try:
         print("entering route")
-        service = MasterService(db)
+        service = SystemService(db)
 
         countries = service.get_all_countries()
 
@@ -108,7 +108,7 @@ def get_country_by_id(
     db = http_request.state.db
 
     try:
-        service = MasterService(db)
+        service = SystemService(db)
 
         country = service.get_country_by_id(country_id)
 
@@ -142,7 +142,7 @@ def delete_country(
     db = http_request.state.db
 
     try:
-        service = MasterService(db)
+        service = SystemService(db)
 
         service.delete_country(country_id)
 
@@ -184,7 +184,7 @@ def create_currency(
         if user_id is None:
             raise ValueError("Token payload missing user identifier")
 
-        service = MasterService(db)
+        service = SystemService(db)
 
         currency = service.create_currency(payload, user_id)
 
@@ -226,7 +226,7 @@ def get_all_currencies(http_request: Request):
     db = http_request.state.db
 
     try:
-        service = MasterService(db)
+        service = SystemService(db)
 
         currencies = service.get_all_currencies()
 
@@ -254,7 +254,7 @@ def get_currency_by_id(
     db = http_request.state.db
 
     try:
-        service = MasterService(db)
+        service = SystemService(db)
 
         currency = service.get_currency_by_id(currency_id)
 
@@ -288,7 +288,7 @@ def delete_currency(
     db = http_request.state.db
 
     try:
-        service = MasterService(db)
+        service = SystemService(db)
 
         service.delete_currency(currency_id)
 
