@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
 
@@ -7,6 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from Backend.Data_Access_Layer.models.base import Base
 
+if TYPE_CHECKING:
+    from Backend.Data_Access_Layer.models.master import Currency, StatusMaster
+    from Backend.Data_Access_Layer.models.vendor import VendorBank, Vendor
+    from Backend.Data_Access_Layer.models.invoice import Invoice
 
 class Payment(Base):
     __tablename__ = 'payment'

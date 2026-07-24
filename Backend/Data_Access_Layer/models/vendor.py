@@ -1,11 +1,22 @@
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import datetime
-
 from sqlalchemy import Boolean, Date, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from Backend.Data_Access_Layer.models.base import Base
 
+if TYPE_CHECKING:
+    from Backend.Data_Access_Layer.models.payment import Payment
+    from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, GoodsReceipt
+    from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
+    from Backend.Data_Access_Layer.models.invoice import Invoice
+    from Backend.Data_Access_Layer.models.master import (
+        Country,
+        Currency,
+        PaymentTerm,
+        StatusMaster,
+        TaxType,
+    )
 
 class Vendor(Base):
     __tablename__ = 'vendor'
@@ -30,6 +41,7 @@ class Vendor(Base):
     vendor_code: Mapped[Optional[str]] = mapped_column(String(30))
     payment_term_id: Mapped[Optional[int]] = mapped_column(Integer)
     currency_id: Mapped[Optional[int]] = mapped_column(Integer)
+    pan_number: Mapped[Optional[str]] = mapped_column(String(10))
     phone_number: Mapped[Optional[str]] = mapped_column(String(30))
     email: Mapped[Optional[str]] = mapped_column(String(150))
     status_id: Mapped[Optional[int]] = mapped_column(Integer)

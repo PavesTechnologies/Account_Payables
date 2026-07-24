@@ -8,6 +8,7 @@ from fastapi.openapi.utils import get_openapi
 from Backend.API_Layer.middleware.db_middleware import DBSessionMiddleware
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
 from Backend.API_Layer.routes import master_route, system_route
+from Backend.Data_Access_Layer import models  # noqa: F401 - registers all model classes with SQLAlchemy before metadata/mapper use
 from Backend.Data_Access_Layer.models.base import Base
 from Backend.Data_Access_Layer.utils.database import engine
 from Backend.config.env_loader import get_env_var

@@ -1,10 +1,18 @@
-from typing import Optional
+# Backend/Data_Access_Layer/models/master.py
+from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
 
 from sqlalchemy import Boolean, CHAR, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from Backend.Data_Access_Layer.models.base import Base
+
+if TYPE_CHECKING:
+    from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceLine, InvoiceIssue
+    from Backend.Data_Access_Layer.models.payment import Payment
+    from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder
+    from Backend.Data_Access_Layer.models.vendor import Vendor, VendorAddress, VendorTax
+
 
 
 class Country(Base):

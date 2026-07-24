@@ -153,6 +153,7 @@ CREATE TABLE vendor (
     -- vendor_category_id  INT REFERENCES vendor_category(vendor_category_id), -- OPTIONAL
     payment_term_id     INT REFERENCES payment_term(payment_term_id),        -- OPTIONAL
     currency_id         INT REFERENCES currency(currency_id),
+    pan_number         VARCHAR(10),
     phone_number        VARCHAR(30),
     email               VARCHAR(150),                -- expected sender for inbound invoice emails
     status_id           INT REFERENCES status_master(status_id),
