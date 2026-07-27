@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
-
+import requests
 from Backend.API_Layer.interface.system_interface import (
     CountryRequest,
     CountryResponse,
@@ -396,6 +396,33 @@ def update_status(
 
     except Exception as e:
         db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+@router.get("/gstin/{gstin}")
+def get_gstin_details(gstin: str):
+    """
+    Fetch GST details using GSTIN.
+    """
+
+    try:
+        from Backend.Business_Layer.utils.gst_service import search_gstin
+
+        gst_details = search_gstin(gstin)
+
+        return gst_details
+
+    except requests.exceptions.HTTPError as e:
+        response = e.response
+
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=response.json()   # or response.text
+        )
+
+    except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=str(e),
