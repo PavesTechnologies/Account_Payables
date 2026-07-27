@@ -146,5 +146,4 @@ class TaxType(Base):
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
     country: Mapped['Country'] = relationship('Country', back_populates='tax_type')
-    vendor_tax: Mapped[list['VendorTax']] = relationship('VendorTax', back_populates='tax_type')
     invoice_line: Mapped[list['InvoiceLine']] = relationship('InvoiceLine', back_populates='tax_type')

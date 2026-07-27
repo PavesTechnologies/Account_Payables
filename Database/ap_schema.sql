@@ -206,17 +206,20 @@ CREATE TABLE vendor_bank (
 CREATE INDEX idx_vendor_bank_vendor ON vendor_bank(vendor_id);
 CREATE INDEX idx_vendor_bank_active ON vendor_bank(vendor_id, effective_to);
 
--- Authoritative source for tax validation (not vendor_category).
+-- Tax registrations are scoped to a specific vendor address (e.g. a GST
+-- registration tied to the address in that state), not to the vendor directly.
 CREATE TABLE vendor_tax (
     vendor_tax_id       SERIAL PRIMARY KEY,
-    vendor_id           INT NOT NULL REFERENCES vendor(vendor_id) ON DELETE CASCADE,
-    tax_type_id         INT NOT NULL REFERENCES tax_type(tax_type_id),
+    vendor_address_id   INT NOT NULL REFERENCES vendor_address(vendor_address_id) ON DELETE CASCADE,
+    registration_type   VARCHAR(30) NOT NULL,
     registration_number VARCHAR(50) NOT NULL,
     is_verified         BOOLEAN NOT NULL DEFAULT FALSE,
     verified_at         TIMESTAMP,
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE (vendor_id, tax_type_id)
+    UNIQUE (vendor_address_id, registration_type)
 );
+
+CREATE INDEX idx_vendor_tax_address ON vendor_tax(vendor_address_id);
 
 -- ============================================================================
 -- MODULE 3: PURCHASE ORDER & GOODS RECEIPT (optional, minimal — Phase 1)
