@@ -1,0 +1,1167 @@
+backend:
+  module: Accounts Payable (AP) - Vendor Management, Master Configuration, System Defaults
+  base_url: /apm
+  api_version: "1.0.0"
+  auth:
+    type: Bearer JWT (OIDC, validated via UMS OpenID Connect Discovery + JWKS)
+    header: "Authorization: Bearer <access_token>"
+    required: true
+    public_paths: ["/", "/apm/docs", "/apm/redoc", "/apm/openapi.json", "/apm/health"]
+    note: "/apm/health is listed as public in middleware but no such route is implemented. All other routes (system/master/vendor) require a valid bearer token; middleware sets request.state.user from the decoded payload. Mutating endpoints read user_id from claim 'user_id' (fallback 'sub') for created_by/updated_by/audit fields; missing claim raises 422 'Token payload missing user identifier'."
+  response_wrapper: none
+  response_wrapper_note: "Routes return the Pydantic response_model JSON body directly (no {success,message,data} envelope). Backend_Layer/API_Layer/utils/response_utils.py defines success_response/error_response helpers but they are unused dead code — ignored per scan rules."
+
+apis:
+  # =========================================================
+  # SYSTEM DEFAULTS — Country
+  # =========================================================
+  - feature: Country
+    endpoint: /apm/system/country
+    method: POST
+    description: Create a country master record.
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: application/json }
+      path_params: {}
+      query_params: {}
+      body:
+        fields:
+          - { name: country_name, type: string, required: true, default: null, validation: none, enum: null }
+          - { name: country_code, type: string, required: true, default: null, validation: "must be a valid ISO 3166-1 alpha-2 code; normalized to uppercase", enum: null }
+          - { name: is_active, type: boolean, required: false, default: true, validation: none, enum: null }
+    response:
+      success: { status: 201-equivalent (200 OK), body: "{ country_id: int, message: string }" }
+      error:
+        - { status: 422, condition: "invalid country_code or missing user identifier" }
+        - { status: 409, condition: "country_code already exists (DB unique constraint)" }
+        - { status: 500, condition: "unexpected error" }
+      model: CountryResponse
+    frontend:
+      screen: Country Master
+      service_name: createCountry
+      react_query_key: "['countries']"
+      cache: "invalidate ['countries'] on success"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["GET /apm/system/country", "GET /apm/system/country/{country_id}"]
+      business_rules: ["country_code must be a valid ISO 3166-1 alpha-2 code", "country_code must be globally unique"]
+
+  - feature: Country
+    endpoint: /apm/system/country
+    method: GET
+    description: List all countries (no filters, no pagination).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body: null
+    response:
+      success: { status: 200, body: "CountryDTO[]" }
+      error: [{ status: 500, condition: "unexpected error" }]
+      model: CountryDTO[]
+    frontend:
+      screen: Country Master, Vendor Create/Edit (country dropdown)
+      service_name: getAllCountries
+      react_query_key: "['countries']"
+      cache: "long TTL (rarely changes) — treat as static reference data"
+      loading: skeleton (table) / inline spinner (dropdown)
+      pagination: none (returns full list)
+      search: client-side only
+      sorting: none (backend does not sort; order is DB-default)
+      filters: none
+      optimistic_update: n/a
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["POST /apm/system/country"]
+      business_rules: []
+
+  - feature: Country
+    endpoint: /apm/system/country/{country_id}
+    method: GET
+    description: Get a single country by ID.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { country_id: int }
+      query_params: {}
+      body: null
+    response:
+      success: { status: 200, body: CountryDTO }
+      error:
+        - { status: 404, condition: "Country not found" }
+        - { status: 500, condition: "unexpected error" }
+      model: CountryDTO
+    frontend:
+      screen: Country Master (detail/edit)
+      service_name: getCountryById
+      react_query_key: "['countries', countryId]"
+      cache: standard
+      loading: skeleton
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: n/a
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Country
+    endpoint: /apm/system/country/{country_id}
+    method: DELETE
+    description: Delete a country. No system-default protection exists for countries (unlike tax type/payment term).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { country_id: int }
+      query_params: {}
+      body: null
+    response:
+      success: { status: 200, body: "{ message: string }" }
+      error:
+        - { status: 404, condition: "Country not found" }
+        - { status: 500, condition: "unexpected error (e.g. FK violation from referencing vendors/addresses/tax types is NOT caught explicitly and will surface as 500)" }
+      model: DeleteCountryResponse
+    frontend:
+      screen: Country Master
+      service_name: deleteCountry
+      react_query_key: "['countries']"
+      cache: "invalidate ['countries']"
+      loading: confirm dialog + button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: []
+      related_endpoints: []
+      business_rules: ["Deleting a country referenced by vendor/vendor_address/tax_type will fail at the DB FK level and return a generic 500 — frontend should warn before allowing delete of in-use countries."]
+
+  # =========================================================
+  # SYSTEM DEFAULTS — Currency
+  # =========================================================
+  - feature: Currency
+    endpoint: /apm/system/currency
+    method: POST
+    description: Create a currency master record.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body:
+        fields:
+          - { name: currency_name, type: string, required: true, default: null, validation: none, enum: null }
+          - { name: currency_code, type: string, required: true, default: null, validation: "normalized to uppercase; must be unique", enum: null }
+          - { name: symbol, type: string, required: true, default: null, validation: none, enum: null }
+          - { name: decimal_places, type: integer, required: false, default: 2, validation: none, enum: null }
+          - { name: is_active, type: boolean, required: false, default: true, validation: none, enum: null }
+    response:
+      success: { status: 200, body: "{ currency_id: int, message: string }" }
+      error:
+        - { status: 422, condition: "currency_code already exists (pre-check) or missing user identifier" }
+        - { status: 409, condition: "currency_code already exists (DB unique constraint fallback)" }
+        - { status: 500, condition: "unexpected error" }
+      model: CurrencyResponse
+    frontend:
+      screen: Currency Master
+      service_name: createCurrency
+      react_query_key: "['currencies']"
+      cache: "invalidate ['currencies']"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/system/currency"], business_rules: ["currency_code must be globally unique (case-insensitive, stored uppercase)"] }
+
+  - feature: Currency
+    endpoint: /apm/system/currency
+    method: GET
+    description: List all currencies, sorted by currency_name.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
+    response: { success: { status: 200, body: "CurrencyDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: CurrencyDTO[] }
+    frontend:
+      screen: Currency Master, Vendor Create/Edit (currency dropdown)
+      service_name: getAllCurrencies
+      react_query_key: "['currencies']"
+      cache: "long TTL — static reference data"
+      loading: skeleton / inline spinner
+      pagination: none
+      search: client-side
+      sorting: "server pre-sorted by currency_name asc"
+      filters: none
+      optimistic_update: n/a
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Currency
+    endpoint: /apm/system/currency/{currency_id}
+    method: GET
+    description: Get a single currency by ID.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { currency_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: CurrencyDTO }
+      error: [{ status: 404, condition: "Currency not found" }, { status: 500, condition: "unexpected error" }]
+      model: CurrencyDTO
+    frontend: { screen: Currency Master (detail/edit), service_name: getCurrencyById, react_query_key: "['currencies', currencyId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Currency
+    endpoint: /apm/system/currency/{currency_id}
+    method: DELETE
+    description: Delete a currency. No system-default protection.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { currency_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: "{ message: string }" }
+      error: [{ status: 404, condition: "Currency not found" }, { status: 500, condition: "FK violation if referenced by vendor surfaces as generic 500" }]
+      model: DeleteCurrencyResponse
+    frontend: { screen: Currency Master, service_name: deleteCurrency, react_query_key: "['currencies']", cache: "invalidate ['currencies']", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Deleting a currency in use by a vendor is not guarded in the service layer and will 500 at the DB level."] }
+
+  # =========================================================
+  # SYSTEM DEFAULTS — Status Master (read + label update only)
+  # =========================================================
+  - feature: Status Master
+    endpoint: /apm/system/status
+    method: GET
+    description: List statuses, optionally filtered by module_name. Used to drive status dropdowns per module (e.g. VENDOR).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: { module_name: "string, optional — e.g. 'VENDOR'" }
+      body: null
+    response: { success: { status: 200, body: "StatusMasterDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: StatusMasterDTO[] }
+    frontend:
+      screen: Status Master, Vendor Create/Edit (status dropdown), Vendor Activate/Deactivate
+      service_name: getAllStatuses
+      react_query_key: "['statuses', moduleName]"
+      cache: "long TTL — static reference data"
+      loading: inline spinner
+      pagination: none
+      search: none
+      sorting: "server pre-sorted by module_name asc, display_order asc"
+      filters: { module_name: "e.g. VENDOR" }
+      optimistic_update: n/a
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["status_code/module_name are wired into application logic (e.g. VENDOR/PENDING, VENDOR/ACTIVE, VENDOR/INACTIVE) and cannot be created or deleted through this API — seed data only."] }
+
+  - feature: Status Master
+    endpoint: /apm/system/status/{status_id}
+    method: GET
+    description: Get a single status by ID.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { status_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: StatusMasterDTO }, error: [{ status: 404, condition: "Status not found" }, { status: 500, condition: "unexpected error" }], model: StatusMasterDTO }
+    frontend: { screen: Status Master (detail/edit), service_name: getStatusById, react_query_key: "['statuses', 'id', statusId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Status Master
+    endpoint: /apm/system/status/{status_id}
+    method: PUT
+    description: Update a status's display label and/or sort order. status_code and module_name are immutable (locked, not accepted by the request body).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { status_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: status_name, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: display_order, type: integer, required: false, default: null, validation: none, enum: null }
+    response: { success: { status: 200, body: StatusMasterDTO }, error: [{ status: 404, condition: "Status not found" }, { status: 500, condition: "unexpected error" }], model: StatusMasterDTO }
+    frontend: { screen: Status Master, service_name: updateStatus, react_query_key: "['statuses']", cache: "invalidate ['statuses']", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: true }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["status_code and module_name cannot be changed via this endpoint by design."] }
+
+  # =========================================================
+  # SYSTEM DEFAULTS — GSTIN Lookup (external integration passthrough)
+  # =========================================================
+  - feature: GSTIN Lookup
+    endpoint: /apm/system/gstin/{gstin}
+    method: GET
+    description: "Looks up GST registration details for a GSTIN via an external provider (Sandbox API — search_gstin/get_access_token in Business_Layer/utils/gst_service.py + sandbox_auth.py). No local database read/write. Intended to assist Vendor Tax / Vendor Address data entry by auto-fetching registered details."
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { gstin: string }
+      query_params: {}
+      body: null
+    response:
+      success: { status: 200, body: "raw passthrough JSON from external Sandbox GST API (schema not owned by this backend)" }
+      error:
+        - { status: "external provider's HTTP status (proxied verbatim)", condition: "external API returned an HTTPError" }
+        - { status: 500, condition: "unexpected error (e.g. missing SANDBOX_API_KEY/SANDBOX_API_SECRET env vars, network failure)" }
+      model: none (unstructured dict)
+    frontend:
+      screen: Vendor Create/Edit — GSTIN auto-fill assist
+      service_name: lookupGstin
+      react_query_key: "['gstin', gstin] — fetch on-demand (manual trigger), not prefetched"
+      cache: none (do not cache; always a fresh external lookup)
+      loading: inline spinner on the GSTIN input
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["POST /apm/addresses/{vendor_address_id}/taxes", "POST /apm/vendor/{vendor_id}/addresses"]
+      business_rules: ["Requires backend env vars SANDBOX_BASE_URL, SANDBOX_API_KEY, SANDBOX_API_SECRET to be configured; response shape is entirely defined by the third-party provider and is out of this backend's control."]
+
+  # =========================================================
+  # MASTER CONFIGURATION — Tax Type
+  # =========================================================
+  - feature: Tax Type
+    endpoint: /apm/master/tax-type
+    method: POST
+    description: Create a tax type for a country (e.g. GST rate slab, withholding tax).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body:
+        fields:
+          - { name: country_id, type: integer, required: true, default: null, validation: "must reference an existing country", enum: null }
+          - { name: tax_name, type: string, required: true, default: null, validation: none, enum: null }
+          - { name: tax_code, type: string, required: true, default: null, validation: "unique per (country_id, tax_code, effective_from)", enum: null }
+          - { name: calculation_type, type: string, required: false, default: PERCENTAGE, validation: "must be PERCENTAGE or FIXED", enum: [PERCENTAGE, FIXED] }
+          - { name: rate_percent, type: decimal, required: conditional, default: null, validation: "required when calculation_type=PERCENTAGE (max 6 digits, 3 decimal)", enum: null }
+          - { name: fixed_amount, type: decimal, required: conditional, default: null, validation: "required when calculation_type=FIXED (max 18 digits, 2 decimal)", enum: null }
+          - { name: is_withholding, type: boolean, required: false, default: false, validation: none, enum: null }
+          - { name: effective_from, type: date, required: true, default: null, validation: none, enum: null }
+          - { name: effective_to, type: date, required: false, default: null, validation: "must not be earlier than effective_from", enum: null }
+          - { name: is_active, type: boolean, required: false, default: true, validation: none, enum: null }
+    response:
+      success: { status: 200, body: "{ tax_type_id: int, message: string }" }
+      error:
+        - { status: 422, condition: "country not found; invalid calculation_type; missing rate_percent/fixed_amount; effective_to < effective_from; duplicate (country_id, tax_code, effective_from) pre-check; missing user identifier" }
+        - { status: 409, condition: "duplicate (country_id, tax_code, effective_from) — DB unique constraint fallback" }
+        - { status: 500, condition: "unexpected error" }
+      model: TaxTypeResponse
+    frontend:
+      screen: Tax Type Master
+      service_name: createTaxType
+      react_query_key: "['tax-types']"
+      cache: "invalidate ['tax-types']"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/system/country"]
+      related_endpoints: ["GET /apm/master/tax-type", "PUT /apm/master/tax-type/{tax_type_id}"]
+      business_rules: ["is_system_default is always false for tax types created via this endpoint (seeded defaults are set at DB level, not via API)", "DB check constraint mirrors calculation_type/rate_percent/fixed_amount pairing"]
+
+  - feature: Tax Type
+    endpoint: /apm/master/tax-type
+    method: GET
+    description: List all tax types, optionally filtered by country, sorted by tax_name.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: { country_id: "integer, optional" }, body: null }
+    response: { success: { status: 200, body: "TaxTypeDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: TaxTypeDTO[] }
+    frontend:
+      screen: Tax Type Master, Invoice/Line entry (future) tax dropdown
+      service_name: getAllTaxTypes
+      react_query_key: "['tax-types', countryId]"
+      cache: medium TTL
+      loading: skeleton / inline spinner
+      pagination: none
+      search: client-side
+      sorting: "server pre-sorted by tax_name asc"
+      filters: { country_id: integer }
+      optimistic_update: n/a
+    dependencies: { lookup_apis: ["GET /apm/system/country"], related_endpoints: [], business_rules: [] }
+
+  - feature: Tax Type
+    endpoint: /apm/master/tax-type/{tax_type_id}
+    method: GET
+    description: Get a single tax type by ID.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { tax_type_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: TaxTypeDTO }, error: [{ status: 404, condition: "Tax type not found" }, { status: 500, condition: "unexpected error" }], model: TaxTypeDTO }
+    frontend: { screen: Tax Type Master (detail/edit), service_name: getTaxTypeById, react_query_key: "['tax-types', 'id', taxTypeId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Tax Type
+    endpoint: /apm/master/tax-type/{tax_type_id}
+    method: PUT
+    description: Update a tax type. country_id and tax_code are not updatable via this endpoint.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { tax_type_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: tax_name, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: calculation_type, type: string, required: false, default: null, validation: "must be PERCENTAGE or FIXED if provided", enum: [PERCENTAGE, FIXED] }
+          - { name: rate_percent, type: decimal, required: false, default: null, validation: "re-validated against effective calculation_type", enum: null }
+          - { name: fixed_amount, type: decimal, required: false, default: null, validation: "re-validated against effective calculation_type", enum: null }
+          - { name: is_withholding, type: boolean, required: false, default: null, validation: none, enum: null }
+          - { name: effective_from, type: date, required: false, default: null, validation: none, enum: null }
+          - { name: effective_to, type: date, required: false, default: null, validation: "must not be earlier than effective_from", enum: null }
+          - { name: is_active, type: boolean, required: false, default: null, validation: none, enum: null }
+    response:
+      success: { status: 200, body: TaxTypeDTO }
+      error:
+        - { status: 404, condition: "Tax type not found" }
+        - { status: 422, condition: "invalid calculation_type/rate/fixed_amount combination; invalid effective range" }
+        - { status: 500, condition: "unexpected error" }
+      model: TaxTypeDTO
+    frontend: { screen: Tax Type Master, service_name: updateTaxType, react_query_key: "['tax-types']", cache: "invalidate ['tax-types']", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Validation re-runs the same PERCENTAGE/FIXED pairing rule using merged (existing + incoming) values."] }
+
+  - feature: Tax Type
+    endpoint: /apm/master/tax-type/{tax_type_id}
+    method: DELETE
+    description: Delete a tax type. Blocked for system-default rows.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { tax_type_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: "{ message: string }" }
+      error:
+        - { status: 404, condition: "Tax type not found" }
+        - { status: 409, condition: "is_system_default=true — 'System-default tax types cannot be deleted. Deactivate it instead.'" }
+        - { status: 500, condition: "unexpected error" }
+      model: DeleteTaxTypeResponse
+    frontend: { screen: Tax Type Master, service_name: deleteTaxType, react_query_key: "['tax-types']", cache: "invalidate ['tax-types']", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Disable the Delete action in the UI when is_system_default=true; suggest toggling is_active instead."] }
+
+  # =========================================================
+  # MASTER CONFIGURATION — Payment Term
+  # =========================================================
+  - feature: Payment Term
+    endpoint: /apm/master/payment-term
+    method: POST
+    description: Create a payment term (e.g. Net 30, 2/10 Net 30).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body:
+        fields:
+          - { name: term_name, type: string, required: true, default: null, validation: "must be unique", enum: null }
+          - { name: due_days, type: integer, required: false, default: 0, validation: none, enum: null }
+          - { name: discount_percent, type: decimal, required: false, default: 0, validation: "max 5 digits, 2 decimal", enum: null }
+          - { name: discount_days, type: integer, required: false, default: 0, validation: none, enum: null }
+          - { name: is_active, type: boolean, required: false, default: true, validation: none, enum: null }
+    response:
+      success: { status: 200, body: "{ payment_term_id: int, message: string }" }
+      error:
+        - { status: 422, condition: "term_name already exists (pre-check); missing user identifier" }
+        - { status: 409, condition: "term_name already exists (DB unique constraint fallback)" }
+        - { status: 500, condition: "unexpected error" }
+      model: PaymentTermResponse
+    frontend: { screen: Payment Term Master, service_name: createPaymentTerm, react_query_key: "['payment-terms']", cache: "invalidate ['payment-terms']", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/master/payment-term"], business_rules: ["is_system_default is always false for terms created via this endpoint"] }
+
+  - feature: Payment Term
+    endpoint: /apm/master/payment-term
+    method: GET
+    description: List all payment terms, sorted by term_name.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
+    response: { success: { status: 200, body: "PaymentTermDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: PaymentTermDTO[] }
+    frontend:
+      screen: Payment Term Master, Vendor Create/Edit (payment term dropdown)
+      service_name: getAllPaymentTerms
+      react_query_key: "['payment-terms']"
+      cache: "long TTL — static reference data"
+      loading: skeleton / inline spinner
+      pagination: none
+      search: client-side
+      sorting: "server pre-sorted by term_name asc"
+      filters: none
+      optimistic_update: n/a
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Payment Term
+    endpoint: /apm/master/payment-term/{payment_term_id}
+    method: GET
+    description: Get a single payment term by ID.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { payment_term_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: PaymentTermDTO }, error: [{ status: 404, condition: "Payment term not found" }, { status: 500, condition: "unexpected error" }], model: PaymentTermDTO }
+    frontend: { screen: Payment Term Master (detail/edit), service_name: getPaymentTermById, react_query_key: "['payment-terms', 'id', paymentTermId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Payment Term
+    endpoint: /apm/master/payment-term/{payment_term_id}
+    method: PUT
+    description: Update a payment term.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { payment_term_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: term_name, type: string, required: false, default: null, validation: "not re-checked for uniqueness on update (see business_rules)", enum: null }
+          - { name: due_days, type: integer, required: false, default: null, validation: none, enum: null }
+          - { name: discount_percent, type: decimal, required: false, default: null, validation: none, enum: null }
+          - { name: discount_days, type: integer, required: false, default: null, validation: none, enum: null }
+          - { name: is_active, type: boolean, required: false, default: null, validation: none, enum: null }
+    response:
+      success: { status: 200, body: PaymentTermDTO }
+      error:
+        - { status: 404, condition: "Payment term not found" }
+        - { status: 500, condition: "unexpected error, including a DB unique-constraint violation on term_name which is NOT caught as IntegrityError on this route and will surface as 500" }
+      model: PaymentTermDTO
+    frontend: { screen: Payment Term Master, service_name: updatePaymentTerm, react_query_key: "['payment-terms']", cache: "invalidate ['payment-terms']", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Unlike create, update does not pre-check term_name uniqueness in the service layer — a duplicate name on update returns a generic 500, not 409. Frontend should pre-validate against the cached list where possible."] }
+
+  - feature: Payment Term
+    endpoint: /apm/master/payment-term/{payment_term_id}
+    method: DELETE
+    description: Delete a payment term. Blocked for system-default rows.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { payment_term_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: "{ message: string }" }
+      error:
+        - { status: 404, condition: "Payment term not found" }
+        - { status: 409, condition: "is_system_default=true — 'System-default payment terms cannot be deleted. Deactivate it instead.'" }
+        - { status: 500, condition: "unexpected error" }
+      model: DeletePaymentTermResponse
+    frontend: { screen: Payment Term Master, service_name: deletePaymentTerm, react_query_key: "['payment-terms']", cache: "invalidate ['payment-terms']", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Disable Delete in UI when is_system_default=true."] }
+
+  # =========================================================
+  # MASTER CONFIGURATION — System Configuration
+  # =========================================================
+  - feature: System Configuration
+    endpoint: /apm/master/system-configuration
+    method: GET
+    description: List all system configuration key/value entries. No create/delete endpoint — keys are seeded, only config_value/description are editable.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
+    response: { success: { status: 200, body: "SystemConfigDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: SystemConfigDTO[] }
+    frontend: { screen: System Configuration, service_name: getAllSystemConfigs, react_query_key: "['system-configs']", cache: medium TTL, loading: skeleton, pagination: none, search: client-side, sorting: "server pre-sorted by config_key asc", filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/master/system-configuration/{config_key}", "PUT /apm/master/system-configuration/{config_key}"], business_rules: ["No POST/DELETE exists for this resource — treat as a fixed, seeded key set in the UI (e.g. render as an editable settings table, not a CRUD grid)."] }
+
+  - feature: System Configuration
+    endpoint: /apm/master/system-configuration/{config_key}
+    method: GET
+    description: Get a single configuration entry by its key.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { config_key: string }, query_params: {}, body: null }
+    response: { success: { status: 200, body: SystemConfigDTO }, error: [{ status: 404, condition: "Configuration key not found" }, { status: 500, condition: "unexpected error" }], model: SystemConfigDTO }
+    frontend: { screen: System Configuration (detail/edit), service_name: getSystemConfigByKey, react_query_key: "['system-configs', configKey]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: System Configuration
+    endpoint: /apm/master/system-configuration/{config_key}
+    method: PUT
+    description: Update a configuration entry's value (and optionally description). data_type is locked per key and dictates value validation.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { config_key: string }
+      query_params: {}
+      body:
+        fields:
+          - { name: config_value, type: string, required: true, default: null, validation: "must parse according to the existing entry's data_type: NUMBER must be float-parseable; BOOLEAN must be literal 'true'/'false' (case-insensitive)", enum: null }
+          - { name: description, type: string, required: false, default: null, validation: none, enum: null }
+    response:
+      success: { status: 200, body: SystemConfigDTO }
+      error:
+        - { status: 404, condition: "Configuration key not found" }
+        - { status: 422, condition: "config_value does not match the key's data_type" }
+        - { status: 500, condition: "unexpected error" }
+      model: SystemConfigDTO
+    frontend:
+      screen: System Configuration
+      service_name: updateSystemConfig
+      react_query_key: "['system-configs']"
+      cache: "invalidate ['system-configs']"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: true
+    dependencies:
+      lookup_apis: []
+      related_endpoints: []
+      business_rules: ["Render the input control based on data_type (STRING → text, NUMBER → numeric input, BOOLEAN → toggle) to avoid round-tripping a 422."]
+
+  # =========================================================
+  # VENDOR MANAGEMENT — Vendor
+  # =========================================================
+  - feature: Vendor
+    endpoint: /apm/vendor
+    method: POST
+    description: Create a vendor.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body:
+        fields:
+          - { name: vendor_name, type: string, required: true, default: null, validation: "non-empty after trim; 2-200 chars; letters/digits/spaces/& . , ' - ( ) / only; not numeric-only (rules skipped when gstin is provided); globally unique (case-insensitive)", enum: null }
+          - { name: country_id, type: integer, required: true, default: null, validation: "must reference an existing country", enum: null }
+          - { name: vendor_code, type: string, required: false, default: null, validation: "ignored — vendor_code is always backend-generated and unique, this field is accepted but has no effect", enum: null }
+          - { name: payment_term_id, type: integer, required: false, default: null, validation: "must reference an existing payment term if provided", enum: null }
+          - { name: currency_id, type: integer, required: false, default: null, validation: "must reference an existing currency if provided", enum: null }
+          - { name: pan_number, type: string, required: false, default: null, validation: "must match Indian PAN format AAAAA9999A (normalized uppercase); 4th char must be a valid entity-type code; rejects placeholder/dummy PANs (rules beyond the base format skipped when gstin is provided); globally unique", enum: null }
+          - { name: phone_number, type: string, required: false, default: null, validation: "digits only with optional leading +; 7-15 digits; not all-zero; globally unique", enum: null }
+          - { name: email, type: string, required: false, default: null, validation: "must match basic email pattern; normalized lowercase; max 150 chars; disposable-email domains rejected; globally unique", enum: null }
+          - { name: status_id, type: integer, required: false, default: "resolved to the VENDOR/PENDING status if omitted", validation: "must reference a status row whose module_name = VENDOR", enum: null }
+          - { name: gstin, type: string, required: false, default: null, validation: "when provided, re-verified via the GSTIN lookup service; signals GST_VERIFIED mode for this request only (not persisted) — relaxes the vendor_name/pan_number format rules above to a bare required check", enum: null }
+    response:
+      success: { status: 200, body: "{ vendor_id: int, message: string }" }
+      error:
+        - { status: 422, condition: "empty/invalid vendor_name; invalid/dummy PAN; invalid phone/email; duplicate name/vendor_code/PAN/phone/email (pre-check); country/payment_term/currency not found; invalid status_id; GSTIN verification failed; missing user identifier" }
+        - { status: 409, condition: "duplicate vendor_name or vendor_code — DB unique constraint fallback" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorResponse
+    frontend:
+      screen: Vendor Create
+      service_name: createVendor
+      react_query_key: "['vendors']"
+      cache: "invalidate ['vendors'] list on success"
+      loading: button spinner, disable submit while pending
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/system/country", "GET /apm/system/currency", "GET /apm/master/payment-term", "GET /apm/system/status?module_name=VENDOR"]
+      related_endpoints: ["GET /apm/vendor", "GET /apm/vendor/{vendor_id}"]
+      business_rules: ["Vendor is created with an empty vendor_address/vendor_bank list; those are added via their own sub-resource endpoints after the vendor exists.", "An audit_log CREATE row is written for every vendor creation.", "Do not render a Vendor Code input — vendor_code is always backend-generated; display it only after successful creation from the response/detail fetch."]
+
+  - feature: Vendor
+    endpoint: /apm/vendor
+    method: GET
+    description: List vendors with optional filtering, search, and pagination. Each vendor is returned with its full nested addresses (incl. nested tax registrations) and bank accounts eager-loaded.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params:
+        status_id: "integer, optional"
+        country_id: "integer, optional"
+        search: "string, optional — case-insensitive partial match on vendor_name (ILIKE %search%)"
+        skip: "integer, default 0 — pagination offset"
+        limit: "integer, default 100 — pagination page size"
+      body: null
+    response: { success: { status: 200, body: "VendorDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: VendorDTO[] }
+    frontend:
+      screen: Vendor List
+      service_name: getAllVendors
+      react_query_key: "['vendors', { statusId, countryId, search, skip, limit }]"
+      cache: "short TTL; invalidate on any vendor/address/bank/tax mutation"
+      loading: skeleton table with row placeholders
+      pagination: "offset-based via skip/limit; no total-count field returned — frontend must infer 'has more' from result length == limit"
+      search: "server-side, debounce the `search` query param (vendor_name only)"
+      sorting: "server pre-sorted by vendor_name asc; no client-selectable sort field exposed"
+      filters: { status_id: integer, country_id: integer }
+      optimistic_update: n/a
+    dependencies:
+      lookup_apis: ["GET /apm/system/status?module_name=VENDOR", "GET /apm/system/country"]
+      related_endpoints: ["GET /apm/vendor/{vendor_id}"]
+      business_rules: ["No `total` or `has_more` field is returned — do not build a page-count UI off this response without an extra count query."]
+
+  - feature: Vendor
+    endpoint: /apm/vendor/{vendor_id}
+    method: GET
+    description: Get a single vendor's complete profile including addresses (with nested tax registrations) and bank accounts.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: VendorDTO }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: VendorDTO }
+    frontend: { screen: Vendor Detail / Edit, service_name: getVendorById, react_query_key: "['vendors', vendorId]", cache: "short TTL; invalidate on mutation of this vendor or any of its sub-resources", loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/vendor/{vendor_id}/addresses", "GET /apm/vendor/{vendor_id}/banks"], business_rules: ["This single response already includes addresses+taxes+banks — the dedicated list sub-endpoints are only needed when working on one sub-resource type in isolation."] }
+
+  - feature: Vendor
+    endpoint: /apm/vendor/{vendor_id}
+    method: PUT
+    description: Update vendor master fields. All fields optional/partial-update semantics.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: vendor_name, type: string, required: false, default: null, validation: "non-empty after trim if provided; 2-200 chars; letters/digits/spaces/& . , ' - ( ) / only; not numeric-only; unique excluding self", enum: null }
+          - { name: vendor_code, type: string, required: false, default: null, validation: "ignored — vendor_code is backend-generated and immutable; this field is accepted for backward compatibility but has no effect", enum: null }
+          - { name: country_id, type: integer, required: false, default: null, validation: "must exist if provided", enum: null }
+          - { name: payment_term_id, type: integer, required: false, default: null, validation: "must exist if provided", enum: null }
+          - { name: currency_id, type: integer, required: false, default: null, validation: "must exist if provided", enum: null }
+          - { name: pan_number, type: string, required: false, default: null, validation: "PAN format if provided (4th-char entity-type + dummy-PAN checks apply); unique excluding self", enum: null }
+          - { name: phone_number, type: string, required: false, default: null, validation: "digits only with optional leading +; 7-15 digits; not all-zero; unique excluding self", enum: null }
+          - { name: email, type: string, required: false, default: null, validation: "email format if provided; normalized lowercase; max 150 chars; disposable-email domains rejected; unique excluding self", enum: null }
+          - { name: status_id, type: integer, required: false, default: null, validation: "must be a VENDOR-module status if provided", enum: null }
+    response:
+      success: { status: 200, body: VendorDTO }
+      error:
+        - { status: 404, condition: "Vendor not found" }
+        - { status: 422, condition: "empty/invalid vendor_name; duplicate name/PAN/phone/email; FK not found; invalid PAN/phone/email/status_id" }
+        - { status: 409, condition: "duplicate vendor_name — DB fallback" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorDTO
+    frontend: { screen: Vendor Edit, service_name: updateVendor, react_query_key: "['vendors', vendorId]", cache: "invalidate ['vendors', vendorId] and the ['vendors'] list", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: ["GET /apm/system/country", "GET /apm/system/currency", "GET /apm/master/payment-term", "GET /apm/system/status?module_name=VENDOR"], related_endpoints: [], business_rules: ["Only changed fields are written to audit_log (UPDATE action, old/new value diff).", "vendor_code is not editable — do not render it as an input on the Edit screen."] }
+
+  - feature: Vendor
+    endpoint: /apm/vendor/{vendor_id}/status
+    method: PATCH
+    description: Activate or deactivate a vendor (maps to the VENDOR/ACTIVE or VENDOR/INACTIVE status row).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: is_active, type: boolean, required: true, default: null, validation: "true maps to VENDOR/ACTIVE status_code, false maps to VENDOR/INACTIVE", enum: null }
+    response:
+      success: { status: 200, body: VendorDTO }
+      error:
+        - { status: 404, condition: "Vendor not found" }
+        - { status: 422, condition: "'ACTIVE'/'INACTIVE' status not configured for the VENDOR module in status_master" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorDTO
+    frontend:
+      screen: Vendor List / Vendor Detail — Activate/Deactivate toggle
+      service_name: updateVendorStatus
+      react_query_key: "['vendors', vendorId]"
+      cache: "invalidate ['vendors', vendorId] and ['vendors'] list"
+      loading: inline toggle spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: "true (toggle switch) — revert on error"
+    dependencies: { lookup_apis: ["GET /apm/system/status?module_name=VENDOR"], related_endpoints: [], business_rules: ["This is a distinct, simpler status transition from the generic status_id field on PUT /apm/vendor/{vendor_id} — use this endpoint for the binary active/inactive toggle UI."] }
+
+  # =========================================================
+  # VENDOR MANAGEMENT — Vendor Address
+  # =========================================================
+  - feature: Vendor Address
+    endpoint: /apm/vendor/{vendor_id}/addresses
+    method: POST
+    description: Add an address to a vendor. First address for a vendor is auto-promoted to primary regardless of the is_primary flag sent.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: address_type, type: string, required: false, default: REGISTERED, validation: "free text — no enum enforced by backend", enum: null }
+          - { name: address_line1, type: string, required: true, default: null, validation: "non-empty after trim", enum: null }
+          - { name: address_line2, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: city, type: string, required: true, default: null, validation: "non-empty after trim", enum: null }
+          - { name: state, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: postal_code, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: country_id, type: integer, required: true, default: null, validation: "must reference an existing country", enum: null }
+          - { name: is_primary, type: boolean, required: false, default: false, validation: "forced true if this is the vendor's first address, regardless of value sent; setting true unsets is_primary on all other addresses of the vendor", enum: null }
+    response:
+      success: { status: 200, body: "{ vendor_address_id: int, message: string }" }
+      error:
+        - { status: 404, condition: "Vendor not found" }
+        - { status: 422, condition: "empty address_line1/city; country not found" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorAddressResponse
+    frontend:
+      screen: Vendor Detail — Addresses tab
+      service_name: createVendorAddress
+      react_query_key: "['vendors', vendorId, 'addresses']"
+      cache: "invalidate ['vendors', vendorId, 'addresses'] and ['vendors', vendorId] (parent DTO embeds addresses)"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/system/country", "GET /apm/system/gstin/{gstin} (optional auto-fill assist)"]
+      related_endpoints: ["GET /apm/vendor/{vendor_id}/addresses", "POST /apm/addresses/{vendor_address_id}/taxes"]
+      business_rules: ["Only one address per vendor can be is_primary=true at a time — enforced in the service layer by unsetting others, not by a DB constraint."]
+
+  - feature: Vendor Address
+    endpoint: /apm/vendor/{vendor_id}/addresses
+    method: GET
+    description: List all addresses for a vendor (does not include nested tax registrations in this list call's underlying query, but the DTO includes vendor_tax field via lazy attribute access).
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "VendorAddressDTO[]" }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: VendorAddressDTO[] }
+    frontend: { screen: Vendor Detail — Addresses tab, service_name: getVendorAddresses, react_query_key: "['vendors', vendorId, 'addresses']", cache: "short TTL", loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by vendor_address_id asc", filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Address
+    endpoint: /apm/vendor/{vendor_id}/addresses/{address_id}
+    method: GET
+    description: Get a single vendor address by ID (scoped to the given vendor_id).
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int, address_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: VendorAddressDTO }, error: [{ status: 404, condition: "Vendor not found OR Address not found" }, { status: 500, condition: "unexpected error" }], model: VendorAddressDTO }
+    frontend: { screen: Vendor Detail — Address edit modal, service_name: getVendorAddress, react_query_key: "['vendors', vendorId, 'addresses', addressId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Address
+    endpoint: /apm/vendor/{vendor_id}/addresses/{address_id}
+    method: PUT
+    description: Update a vendor address.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_id: int, address_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: address_type, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: address_line1, type: string, required: false, default: null, validation: "non-empty after trim if provided", enum: null }
+          - { name: address_line2, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: city, type: string, required: false, default: null, validation: "non-empty after trim if provided", enum: null }
+          - { name: state, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: postal_code, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: country_id, type: integer, required: false, default: null, validation: "must exist if provided", enum: null }
+          - { name: is_primary, type: boolean, required: false, default: null, validation: "true unsets is_primary on the vendor's other addresses; false simply unsets this one (no auto-reassignment of primary)", enum: null }
+    response:
+      success: { status: 200, body: VendorAddressDTO }
+      error:
+        - { status: 404, condition: "Vendor not found OR Address not found" }
+        - { status: 422, condition: "empty address_line1/city; country not found" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorAddressDTO
+    frontend: { screen: Vendor Detail — Address edit modal, service_name: updateVendorAddress, react_query_key: "['vendors', vendorId, 'addresses']", cache: "invalidate ['vendors', vendorId, 'addresses'] and ['vendors', vendorId]", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: ["GET /apm/system/country"], related_endpoints: [], business_rules: ["Setting is_primary=false on the current primary address leaves the vendor with no primary address — frontend should warn or require selecting a new primary first."] }
+
+  - feature: Vendor Address
+    endpoint: /apm/vendor/{vendor_id}/addresses/{address_id}
+    method: DELETE
+    description: Delete a vendor address. Cascades to delete its vendor_tax registrations at the DB level (ON DELETE CASCADE).
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int, address_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "{ message: string }" }, error: [{ status: 404, condition: "Vendor not found OR Address not found" }, { status: 500, condition: "unexpected error" }], model: DeleteVendorAddressResponse }
+    frontend: { screen: Vendor Detail — Addresses tab, service_name: deleteVendorAddress, react_query_key: "['vendors', vendorId, 'addresses']", cache: "invalidate ['vendors', vendorId, 'addresses'] and ['vendors', vendorId]", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Warn the user that deleting an address also deletes all tax registrations scoped to it."] }
+
+  # =========================================================
+  # VENDOR MANAGEMENT — Vendor Bank
+  # =========================================================
+  - feature: Vendor Bank
+    endpoint: /apm/vendor/{vendor_id}/banks
+    method: POST
+    description: Add a bank account to a vendor. Bank accounts are versioned — making a new one primary closes out (effective_to = today, is_primary = false) the previously active primary rather than overwriting it.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: bank_name, type: string, required: true, default: null, validation: "non-empty after trim", enum: null }
+          - { name: account_holder_name, type: string, required: true, default: null, validation: "non-empty after trim; 2-150 chars; letters/digits/spaces/& . , ' - ( ) / only; not numeric-only", enum: null }
+          - { name: account_number, type: string, required: false, default: null, validation: "digits only, 6-20 digits if provided; at least one of account_number/iban is required; unique within this vendor's bank accounts (cross-vendor uniqueness only if VENDOR_BANK_DUPLICATE_ACROSS_VENDORS=true)", enum: null }
+          - { name: iban, type: string, required: false, default: null, validation: "at least one of account_number/iban is required; unique within this vendor's bank accounts (cross-vendor uniqueness only if VENDOR_BANK_DUPLICATE_ACROSS_VENDORS=true)", enum: null }
+          - { name: swift_code, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: routing_number, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: ifsc_code, type: string, required: false, default: null, validation: "format AAAA0XXXXXX if provided (normalized uppercase)", enum: null }
+          - { name: is_primary, type: boolean, required: false, default: false, validation: "forced true if the vendor has no currently-active primary bank account", enum: null }
+    response:
+      success: { status: 200, body: "{ vendor_bank_id: int, message: string }" }
+      error:
+        - { status: 404, condition: "Vendor not found" }
+        - { status: 422, condition: "empty bank_name/account_holder_name; invalid account_holder_name format; neither account_number nor iban provided; invalid account_number/ifsc_code format; duplicate account_number/iban" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorBankResponse
+    frontend:
+      screen: Vendor Detail — Bank Accounts tab
+      service_name: createVendorBank
+      react_query_key: "['vendors', vendorId, 'banks']"
+      cache: "invalidate ['vendors', vendorId, 'banks'] and ['vendors', vendorId]"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["GET /apm/vendor/{vendor_id}/banks"]
+      business_rules: ["effective_from defaults to today's date server-side; effective_to is null while active.", "'Active primary' is defined as is_primary=true AND effective_to IS NULL — the UI should surface effective_to on historical (superseded) rows."]
+
+  - feature: Vendor Bank
+    endpoint: /apm/vendor/{vendor_id}/banks
+    method: GET
+    description: List all bank accounts (including historical/superseded ones) for a vendor.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "VendorBankDTO[]" }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: VendorBankDTO[] }
+    frontend: { screen: Vendor Detail — Bank Accounts tab, service_name: getVendorBanks, react_query_key: "['vendors', vendorId, 'banks']", cache: "short TTL", loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by vendor_bank_id asc", filters: "client-side filter for effective_to == null to show only active accounts", optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Bank
+    endpoint: /apm/vendor/{vendor_id}/banks/{bank_id}
+    method: GET
+    description: Get a single vendor bank account by ID.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int, bank_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: VendorBankDTO }, error: [{ status: 404, condition: "Vendor not found OR Bank not found" }, { status: 500, condition: "unexpected error" }], model: VendorBankDTO }
+    frontend: { screen: Vendor Detail — Bank edit modal, service_name: getVendorBank, react_query_key: "['vendors', vendorId, 'banks', bankId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Bank
+    endpoint: /apm/vendor/{vendor_id}/banks/{bank_id}
+    method: PUT
+    description: Update a vendor bank account. Same primary-versioning behavior as create applies when flipping is_primary to true.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_id: int, bank_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: bank_name, type: string, required: false, default: null, validation: "non-empty after trim if provided", enum: null }
+          - { name: account_holder_name, type: string, required: false, default: null, validation: "non-empty after trim if provided; 2-150 chars; letters/digits/spaces/& . , ' - ( ) / only; not numeric-only", enum: null }
+          - { name: account_number, type: string, required: false, default: null, validation: "digits only, 6-20 digits if provided; if account_number or iban is being changed, at least one of the two must remain set, and the resulting value is checked for duplicates (within-vendor always; cross-vendor only if VENDOR_BANK_DUPLICATE_ACROSS_VENDORS=true)", enum: null }
+          - { name: iban, type: string, required: false, default: null, validation: "see account_number — same at-least-one and duplicate rules apply", enum: null }
+          - { name: swift_code, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: routing_number, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: ifsc_code, type: string, required: false, default: null, validation: "format AAAA0XXXXXX if provided (normalized uppercase)", enum: null }
+          - { name: is_primary, type: boolean, required: false, default: null, validation: "true closes out the current active primary (effective_to=today) before promoting this one; false simply unsets this row's primary flag", enum: null }
+    response:
+      success: { status: 200, body: VendorBankDTO }
+      error:
+        - { status: 404, condition: "Vendor not found OR Bank not found" }
+        - { status: 422, condition: "empty bank_name/account_holder_name; invalid account_holder_name format; neither account_number nor iban remains set; invalid account_number/ifsc_code format; duplicate account_number/iban" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorBankDTO
+    frontend: { screen: Vendor Detail — Bank edit modal, service_name: updateVendorBank, react_query_key: "['vendors', vendorId, 'banks']", cache: "invalidate ['vendors', vendorId, 'banks'] and ['vendors', vendorId]", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Bank
+    endpoint: /apm/vendor/{vendor_id}/banks/{bank_id}
+    method: DELETE
+    description: Delete a vendor bank account (hard delete — not the same as closing/superseding via effective_to).
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int, bank_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "{ message: string }" }, error: [{ status: 404, condition: "Vendor not found OR Bank not found" }, { status: 500, condition: "unexpected error" }], model: DeleteVendorBankResponse }
+    frontend: { screen: Vendor Detail — Bank Accounts tab, service_name: deleteVendorBank, react_query_key: "['vendors', vendorId, 'banks']", cache: "invalidate ['vendors', vendorId, 'banks'] and ['vendors', vendorId]", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Prefer 'deactivate/replace' (create a new primary, which auto-closes the old one) over hard delete for accounts referenced by payment history."] }
+
+  # =========================================================
+  # VENDOR MANAGEMENT — Vendor Tax (scoped to a Vendor Address)
+  # =========================================================
+  - feature: Vendor Tax
+    endpoint: /apm/addresses/{vendor_address_id}/taxes
+    method: POST
+    description: "Add a tax registration (e.g. GSTIN) to a specific vendor address. NOTE: this path is NOT nested under /apm/vendor — it hangs directly off /apm/vendor's router at '/addresses/{vendor_address_id}/taxes', resolving to full path /apm/vendor/addresses/{vendor_address_id}/taxes."
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_address_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: registration_type, type: string, required: true, default: null, validation: "non-empty after trim; normalized to uppercase; unique per (vendor_address_id, registration_type)", enum: null }
+          - { name: registration_number, type: string, required: true, default: null, validation: "non-empty after trim; normalized to uppercase", enum: null }
+    response:
+      success: { status: 200, body: "{ vendor_tax_id: int, message: string }" }
+      error:
+        - { status: 404, condition: "Address not found" }
+        - { status: 422, condition: "empty registration_type/registration_number; duplicate registration_type for this address (pre-check)" }
+        - { status: 409, condition: "duplicate registration_type for this address — DB unique constraint fallback" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorTaxResponse
+    frontend:
+      screen: Vendor Detail — Address → Tax Registrations
+      service_name: createVendorTax
+      react_query_key: "['vendor-addresses', vendorAddressId, 'taxes']"
+      cache: "invalidate ['vendor-addresses', vendorAddressId, 'taxes'] and the parent vendor's ['vendors', vendorId] (VendorDTO embeds vendor_tax under each address)"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/system/gstin/{gstin} (optional auto-fill for registration_number when registration_type is a GST identifier)"]
+      related_endpoints: ["GET /apm/addresses/{vendor_address_id}/taxes"]
+      business_rules: ["is_verified defaults to false; there is no endpoint in this module that sets is_verified=true — verification is presumably handled by another workflow/module not present in this codebase."]
+
+  - feature: Vendor Tax
+    endpoint: /apm/addresses/{vendor_address_id}/taxes
+    method: GET
+    description: List all tax registrations for a vendor address.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_address_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "VendorTaxDTO[]" }, error: [{ status: 404, condition: "Address not found" }, { status: 500, condition: "unexpected error" }], model: VendorTaxDTO[] }
+    frontend: { screen: Vendor Detail — Address → Tax Registrations, service_name: getVendorTaxes, react_query_key: "['vendor-addresses', vendorAddressId, 'taxes']", cache: "short TTL", loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by vendor_tax_id asc", filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Tax
+    endpoint: /apm/addresses/{vendor_address_id}/taxes/{tax_id}
+    method: GET
+    description: Get a single tax registration by ID.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_address_id: int, tax_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: VendorTaxDTO }, error: [{ status: 404, condition: "Address not found OR Tax not found" }, { status: 500, condition: "unexpected error" }], model: VendorTaxDTO }
+    frontend: { screen: Vendor Detail — Tax registration edit modal, service_name: getVendorTax, react_query_key: "['vendor-addresses', vendorAddressId, 'taxes', taxId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Vendor Tax
+    endpoint: /apm/addresses/{vendor_address_id}/taxes/{tax_id}
+    method: PUT
+    description: Update a tax registration. Changing registration_type or registration_number resets is_verified to false (and clears verified_at).
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { vendor_address_id: int, tax_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: registration_type, type: string, required: false, default: null, validation: "non-empty after trim if provided; normalized to uppercase; unique per address excluding self", enum: null }
+          - { name: registration_number, type: string, required: false, default: null, validation: "non-empty after trim if provided; normalized to uppercase", enum: null }
+    response:
+      success: { status: 200, body: VendorTaxDTO }
+      error:
+        - { status: 404, condition: "Address not found OR Tax not found" }
+        - { status: 422, condition: "empty fields; duplicate registration_type for this address (pre-check)" }
+        - { status: 409, condition: "duplicate registration_type for this address — DB unique constraint fallback" }
+        - { status: 500, condition: "unexpected error" }
+      model: VendorTaxDTO
+    frontend: { screen: Vendor Detail — Tax registration edit modal, service_name: updateVendorTax, react_query_key: "['vendor-addresses', vendorAddressId, 'taxes']", cache: "invalidate ['vendor-addresses', vendorAddressId, 'taxes']", loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Warn the user that editing registration_type/registration_number un-verifies a previously verified registration."] }
+
+  - feature: Vendor Tax
+    endpoint: /apm/addresses/{vendor_address_id}/taxes/{tax_id}
+    method: DELETE
+    description: Delete a tax registration.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_address_id: int, tax_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "{ message: string }" }, error: [{ status: 404, condition: "Address not found OR Tax not found" }, { status: 500, condition: "unexpected error" }], model: DeleteVendorTaxResponse }
+    frontend: { screen: Vendor Detail — Address → Tax Registrations, service_name: deleteVendorTax, react_query_key: "['vendor-addresses', vendorAddressId, 'taxes']", cache: "invalidate ['vendor-addresses', vendorAddressId, 'taxes']", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+models:
+  request_models:
+    - VendorCreateRequest
+    - VendorUpdateRequest
+    - VendorStatusUpdateRequest
+    - VendorAddressCreateRequest
+    - VendorAddressUpdateRequest
+    - VendorBankCreateRequest
+    - VendorBankUpdateRequest
+    - VendorTaxCreateRequest
+    - VendorTaxUpdateRequest
+    - TaxTypeRequest
+    - TaxTypeUpdateRequest
+    - PaymentTermRequest
+    - PaymentTermUpdateRequest
+    - SystemConfigUpdateRequest
+    - CountryRequest
+    - CurrencyRequest
+    - StatusMasterUpdateRequest
+  response_models:
+    - VendorResponse
+    - VendorDTO
+    - VendorAddressResponse
+    - VendorAddressDTO
+    - DeleteVendorAddressResponse
+    - VendorBankResponse
+    - VendorBankDTO
+    - DeleteVendorBankResponse
+    - VendorTaxResponse
+    - VendorTaxDTO
+    - DeleteVendorTaxResponse
+    - TaxTypeResponse
+    - TaxTypeDTO
+    - DeleteTaxTypeResponse
+    - PaymentTermResponse
+    - PaymentTermDTO
+    - DeletePaymentTermResponse
+    - SystemConfigDTO
+    - UpdateSystemConfigResponse (defined but unused — no route returns this exact model; PUT /system-configuration/{config_key} returns SystemConfigDTO instead)
+    - CountryResponse
+    - CountryDTO
+    - CountryListResponse (defined but unused by any route)
+    - DeleteCountryResponse
+    - CurrencyResponse
+    - CurrencyDTO
+    - CurrencyListResponse (defined but unused by any route)
+    - DeleteCurrencyResponse
+    - StatusMasterDTO
+  orm_models:
+    - { name: Vendor, table: ap.vendor, exposed_via_api: true }
+    - { name: VendorAddress, table: ap.vendor_address, exposed_via_api: true }
+    - { name: VendorBank, table: ap.vendor_bank, exposed_via_api: true }
+    - { name: VendorTax, table: ap.vendor_tax, exposed_via_api: true }
+    - { name: Country, table: ap.country, exposed_via_api: true }
+    - { name: Currency, table: ap.currency, exposed_via_api: true }
+    - { name: PaymentTerm, table: ap.payment_term, exposed_via_api: true }
+    - { name: StatusMaster, table: ap.status_master, exposed_via_api: true }
+    - { name: SystemConfiguration, table: ap.system_configuration, exposed_via_api: true }
+    - { name: TaxType, table: ap.tax_type, exposed_via_api: true }
+    - { name: AuditLog, table: ap.audit_log, exposed_via_api: false, note: "internal audit trail, written by services on every mutation; no read endpoint exists" }
+    - { name: Invoice, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: InvoiceLine, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: InvoiceIssue, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: InvoiceAttachment, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: InvoiceApproval, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: Payment, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: PaymentInvoice, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: PurchaseOrder, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: GoodsReceipt, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+    - { name: InboundDocument, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
+  exclusion_note: "Invoice, Payment, PurchaseOrder, GoodsReceipt, InboundDocument, and InvoiceApproval ORM models are registered with SQLAlchemy (Backend/Data_Access_Layer/models/__init__.py) but have no corresponding route, service, or DAO code anywhere in the scanned tree — excluded from the `apis` section per 'implemented APIs only' scope. Do not build frontend screens against these until backend endpoints exist."
+
+lookups:
+  - endpoint: /apm/system/country
+    values: "Dynamic, admin-managed via Country CRUD endpoints. country_code constrained to ISO 3166-1 alpha-2 (see enums.country_code)."
+    used_by: ["Vendor.country_id", "VendorAddress.country_id", "TaxType.country_id"]
+  - endpoint: /apm/system/currency
+    values: "Dynamic, admin-managed via Currency CRUD endpoints."
+    used_by: ["Vendor.currency_id"]
+  - endpoint: "/apm/system/status?module_name=VENDOR"
+    values: "Dynamic (seeded), read-only creation — known codes referenced in code: PENDING (default on create), ACTIVE, INACTIVE (used by the status-toggle endpoint). Full set/labels/order come from the API response."
+    used_by: ["Vendor.status_id"]
+  - endpoint: /apm/master/payment-term
+    values: "Dynamic, admin-managed via Payment Term CRUD endpoints."
+    used_by: ["Vendor.payment_term_id"]
+  - endpoint: /apm/master/tax-type
+    values: "Dynamic, admin-managed via Tax Type CRUD endpoints; filterable by country_id."
+    used_by: ["InvoiceLine.tax_type_id (model exists but no invoice API is implemented yet — reference only)"]
+  - endpoint: /apm/master/system-configuration
+    values: "Dynamic, seeded key set; only config_value/description editable, keys/data_type fixed."
+    used_by: ["Application-level settings — consumers not present in this scanned tree"]
+
+enums:
+  - name: calculation_type
+    values: [PERCENTAGE, FIXED]
+  - name: data_type (system_configuration)
+    values: [STRING, NUMBER, BOOLEAN]
+  - name: country_code
+    values: "ISO 3166-1 alpha-2 (249 codes) — full set hardcoded in Business_Layer/utils/country_validator.py VALID_ISO_CODES"
+  - name: vendor_status_code (module=VENDOR)
+    values: "Not a closed enum in code beyond PENDING/ACTIVE/INACTIVE references — fetch actual set from GET /apm/system/status?module_name=VENDOR"
+  - name: address_type
+    values: "Not enforced/enumerated in code. Default 'REGISTERED'. Treat as free text unless product defines a fixed list (e.g. REGISTERED, BILLING, SHIPPING)."
+  - name: vendor_tax.registration_type
+    values: "Not enforced/enumerated in code. Free text, normalized to uppercase by the backend (e.g. GSTIN, PAN by convention — not validated)."
+
+relationships:
+  - { parent: Vendor, child: VendorAddress, relation: "one-to-many, ON DELETE CASCADE" }
+  - { parent: Vendor, child: VendorBank, relation: "one-to-many, ON DELETE CASCADE" }
+  - { parent: VendorAddress, child: VendorTax, relation: "one-to-many, ON DELETE CASCADE" }
+  - { parent: Country, child: Vendor, relation: "one-to-many (FK, no cascade)" }
+  - { parent: Country, child: VendorAddress, relation: "one-to-many (FK, no cascade)" }
+  - { parent: Country, child: TaxType, relation: "one-to-many (FK, no cascade)" }
+  - { parent: Currency, child: Vendor, relation: "one-to-many (FK, no cascade)" }
+  - { parent: PaymentTerm, child: Vendor, relation: "one-to-many (FK, no cascade)" }
+  - { parent: StatusMaster, child: Vendor, relation: "one-to-many, module-scoped via status_id (FK, no cascade)" }
+
+validations:
+  - { endpoint: "POST /apm/vendor", field: vendor_name, rule: "required, non-empty after trim, globally unique (case-insensitive)", error_message: "vendor_name is required | A vendor with this name already exists" }
+  - { endpoint: "POST/PUT /apm/vendor", field: vendor_code, rule: "unique if provided", error_message: "A vendor with this vendor_code already exists" }
+  - { endpoint: "POST/PUT /apm/vendor", field: country_id, rule: "must reference an existing country", error_message: "Country not found for the given country_id" }
+  - { endpoint: "POST/PUT /apm/vendor", field: payment_term_id, rule: "must reference an existing payment term", error_message: "Payment term not found for the given payment_term_id" }
+  - { endpoint: "POST/PUT /apm/vendor", field: currency_id, rule: "must reference an existing currency", error_message: "Currency not found for the given currency_id" }
+  - { endpoint: "POST/PUT /apm/vendor", field: pan_number, rule: "must match ^[A-Z]{5}[0-9]{4}[A-Z]$ (case-insensitive, normalized upper)", error_message: "Invalid PAN number '<value>': must match the format AAAAA9999A" }
+  - { endpoint: "POST/PUT /apm/vendor", field: email, rule: "must match ^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", error_message: "Invalid email address '<value>'" }
+  - { endpoint: "POST/PUT /apm/vendor", field: status_id, rule: "must reference a status row with module_name = VENDOR", error_message: "status_id must reference a valid VENDOR status" }
+  - { endpoint: "POST/PUT /apm/vendor/.../addresses", field: address_line1, rule: "required, non-empty after trim", error_message: "address_line1 is required for a vendor address" }
+  - { endpoint: "POST/PUT /apm/vendor/.../addresses", field: city, rule: "required, non-empty after trim", error_message: "city is required for a vendor address" }
+  - { endpoint: "POST/PUT /apm/vendor/.../addresses", field: country_id, rule: "must reference an existing country", error_message: "Country not found for address country_id=<id>" }
+  - { endpoint: "POST/PUT /apm/vendor/.../banks", field: bank_name, rule: "required, non-empty after trim", error_message: "bank_name is required for a vendor bank account" }
+  - { endpoint: "POST/PUT /apm/vendor/.../banks", field: account_holder_name, rule: "required, non-empty after trim", error_message: "account_holder_name is required for a vendor bank account" }
+  - { endpoint: "POST/PUT /apm/addresses/{id}/taxes", field: registration_type, rule: "required, non-empty after trim, unique per (vendor_address_id, registration_type)", error_message: "registration_type is required for a vendor tax entry | A tax registration of this type already exists for the address" }
+  - { endpoint: "POST/PUT /apm/addresses/{id}/taxes", field: registration_number, rule: "required, non-empty after trim", error_message: "registration_number is required for a vendor tax entry" }
+  - { endpoint: "POST/PUT /apm/master/tax-type", field: country_id, rule: "must reference an existing country", error_message: "Country not found for the given country_id" }
+  - { endpoint: "POST/PUT /apm/master/tax-type", field: calculation_type, rule: "must be PERCENTAGE or FIXED", error_message: "Invalid calculation_type '<value>': must be one of ['FIXED', 'PERCENTAGE']" }
+  - { endpoint: "POST/PUT /apm/master/tax-type", field: rate_percent, rule: "required when calculation_type = PERCENTAGE", error_message: "rate_percent is required when calculation_type is PERCENTAGE" }
+  - { endpoint: "POST/PUT /apm/master/tax-type", field: fixed_amount, rule: "required when calculation_type = FIXED", error_message: "fixed_amount is required when calculation_type is FIXED" }
+  - { endpoint: "POST/PUT /apm/master/tax-type", field: effective_to, rule: "must not be earlier than effective_from", error_message: "effective_to cannot be earlier than effective_from" }
+  - { endpoint: "POST /apm/master/tax-type", field: "country_id + tax_code + effective_from", rule: "combination must be unique", error_message: "A tax type with this country, tax_code and effective_from already exists." }
+  - { endpoint: "DELETE /apm/master/tax-type/{id}", field: is_system_default, rule: "cannot delete a system-default tax type", error_message: "System-default tax types cannot be deleted. Deactivate it instead." }
+  - { endpoint: "POST /apm/master/payment-term", field: term_name, rule: "must be unique", error_message: "A payment term with this name already exists." }
+  - { endpoint: "DELETE /apm/master/payment-term/{id}", field: is_system_default, rule: "cannot delete a system-default payment term", error_message: "System-default payment terms cannot be deleted. Deactivate it instead." }
+  - { endpoint: "PUT /apm/master/system-configuration/{key}", field: config_value, rule: "must parse according to the config key's locked data_type (NUMBER must be float-parseable; BOOLEAN must be 'true'/'false')", error_message: "config_value '<value>' is not a valid NUMBER | config_value '<value>' is not a valid BOOLEAN (expected 'true' or 'false')" }
+  - { endpoint: "POST /apm/system/country", field: country_code, rule: "must be a valid ISO 3166-1 alpha-2 code", error_message: "Invalid country code '<value>': must be a valid ISO 3166-1 alpha-2 code" }
+  - { endpoint: "POST /apm/system/country", field: country_code, rule: "must be globally unique", error_message: "Country code already exists" }
+  - { endpoint: "POST /apm/system/currency", field: currency_code, rule: "must be globally unique (normalized uppercase)", error_message: "Currency code already exists." }
+  - { endpoint: "all mutating endpoints", field: "(implicit) auth token", rule: "decoded JWT payload must contain 'user_id' or 'sub' claim", error_message: "Token payload missing user identifier" }
+
+integration_order:
+  - "Step 1: Authenticate against UMS (external OIDC provider) to obtain a bearer JWT; attach 'Authorization: Bearer <token>' to every request except the public docs/health paths."
+  - "Step 2: Prefetch static reference/lookup data used across screens: GET /apm/system/country, GET /apm/system/currency, GET /apm/master/payment-term, GET /apm/system/status?module_name=VENDOR."
+  - "Step 3: Build Master Configuration screens (admin area) — Country, Currency, Status Master, Tax Type, Payment Term, System Configuration — each is a self-contained CRUD (or read+update-only for Status Master/System Configuration) using the lookups from Step 2 for country_id dropdowns on Tax Type."
+  - "Step 4: Build the Vendor List screen (GET /apm/vendor) with status_id/country_id filters and search, using Step 2 lookups to render filter dropdowns and status/country labels."
+  - "Step 5: Build Vendor Create (POST /apm/vendor) and Vendor Edit (PUT /apm/vendor/{id}) forms, and the Activate/Deactivate toggle (PATCH /apm/vendor/{id}/status), using Step 2 lookups for country/currency/payment-term/status selects."
+  - "Step 6: Build the Vendor Detail page's Addresses tab (POST/GET/PUT/DELETE /apm/vendor/{id}/addresses[/{address_id}]), reusing the country lookup; wire the optional GSTIN auto-fill (GET /apm/system/gstin/{gstin}) as an assist action."
+  - "Step 7: Build the Vendor Detail page's Bank Accounts tab (POST/GET/PUT/DELETE /apm/vendor/{id}/banks[/{bank_id}]), surfacing the primary/versioning (effective_from/effective_to) behavior in the UI."
+  - "Step 8: Build the Tax Registrations sub-section nested under each address row (POST/GET/PUT/DELETE /apm/addresses/{vendor_address_id}/taxes[/{tax_id}]) — depends on Step 6 having created at least one address."
+  - "Step 9: Wire cache invalidation so that any address/bank/tax mutation also invalidates the parent vendor detail query key (['vendors', vendorId]), since VendorDTO embeds all three nested collections."

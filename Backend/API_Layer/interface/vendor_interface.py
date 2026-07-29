@@ -13,11 +13,13 @@ from pydantic import BaseModel, Field
 class VendorTaxCreateRequest(BaseModel):
     registration_type: str
     registration_number: str
+    is_verified: bool = Field(default=False)
 
 
 class VendorTaxUpdateRequest(BaseModel):
     registration_type: Optional[str] = None
     registration_number: Optional[str] = None
+    is_verified: Optional[bool] = None
 
 
 class VendorTaxResponse(BaseModel):
@@ -155,6 +157,11 @@ class VendorCreateRequest(BaseModel):
     phone_number: Optional[str] = None
     email: Optional[str] = None
     status_id: Optional[int] = None
+    # When provided, signals a GST-verified registration for this request only
+    # (re-verified via the existing GSTIN lookup service): vendor_name/PAN
+    # skip the stricter MANUAL_VENDOR format rules since GST data is
+    # authoritative. Not persisted on the vendor record.
+    gstin: Optional[str] = None
 
 
 class VendorUpdateRequest(BaseModel):
