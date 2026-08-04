@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 
 from Backend.Data_Access_Layer.models.audit import AuditLog
@@ -11,6 +11,7 @@ from Backend.Data_Access_Layer.models.master import (
     Currency,
     PaymentTerm,
     StatusMaster,
+    SystemConfiguration,
 )
 from Backend.Data_Access_Layer.models.vendor import (
     Vendor,
@@ -61,6 +62,42 @@ class VendorDAO:
         query = self.db.query(Vendor).filter(
             func.lower(Vendor.vendor_name) == vendor_name.strip().lower()
         )
+        if exclude_vendor_id is not None:
+            query = query.filter(Vendor.vendor_id != exclude_vendor_id)
+
+        return query.first() is not None
+
+    def pan_number_exists(
+        self,
+        pan_number: str,
+        exclude_vendor_id: Optional[int] = None,
+    ) -> bool:
+
+        query = self.db.query(Vendor).filter(Vendor.pan_number == pan_number)
+        if exclude_vendor_id is not None:
+            query = query.filter(Vendor.vendor_id != exclude_vendor_id)
+
+        return query.first() is not None
+
+    def phone_number_exists(
+        self,
+        phone_number: str,
+        exclude_vendor_id: Optional[int] = None,
+    ) -> bool:
+
+        query = self.db.query(Vendor).filter(Vendor.phone_number == phone_number)
+        if exclude_vendor_id is not None:
+            query = query.filter(Vendor.vendor_id != exclude_vendor_id)
+
+        return query.first() is not None
+
+    def email_exists(
+        self,
+        email: str,
+        exclude_vendor_id: Optional[int] = None,
+    ) -> bool:
+
+        query = self.db.query(Vendor).filter(func.lower(Vendor.email) == email.lower())
         if exclude_vendor_id is not None:
             query = query.filter(Vendor.vendor_id != exclude_vendor_id)
 
@@ -252,6 +289,64 @@ class VendorDAO:
     def delete_vendor_bank(self, bank: VendorBank) -> None:
         self.db.delete(bank)
         self.db.flush()
+
+    @staticmethod
+    def _account_identifier_clause(account_number: Optional[str], iban: Optional[str]):
+        clauses = []
+        if account_number:
+            clauses.append(VendorBank.account_number == account_number)
+        if iban:
+            clauses.append(VendorBank.iban == iban)
+        return or_(*clauses) if clauses else None
+
+    def account_identifier_exists_for_vendor(
+        self,
+        vendor_id: int,
+        account_number: Optional[str],
+        iban: Optional[str],
+        exclude_bank_id: Optional[int] = None,
+    ) -> bool:
+
+        clause = self._account_identifier_clause(account_number, iban)
+        if clause is None:
+            return False
+
+        query = self.db.query(VendorBank).filter(
+            VendorBank.vendor_id == vendor_id, clause
+        )
+        if exclude_bank_id is not None:
+            query = query.filter(VendorBank.vendor_bank_id != exclude_bank_id)
+
+        return query.first() is not None
+
+    def account_identifier_exists_across_vendors(
+        self,
+        account_number: Optional[str],
+        iban: Optional[str],
+        exclude_vendor_id: Optional[int] = None,
+    ) -> bool:
+
+        clause = self._account_identifier_clause(account_number, iban)
+        if clause is None:
+            return False
+
+        query = self.db.query(VendorBank).filter(clause)
+        if exclude_vendor_id is not None:
+            query = query.filter(VendorBank.vendor_id != exclude_vendor_id)
+
+        return query.first() is not None
+
+    # =====================================================
+    # System Configuration (read-only; keys are seeded)
+    # =====================================================
+
+    def get_config_value(self, config_key: str) -> Optional[str]:
+        config = (
+            self.db.query(SystemConfiguration)
+            .filter(SystemConfiguration.config_key == config_key)
+            .first()
+        )
+        return config.config_value if config is not None else None
 
     # =====================================================
     # Vendor Tax

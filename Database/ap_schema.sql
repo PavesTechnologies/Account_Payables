@@ -488,4 +488,5 @@ INSERT INTO system_configuration (config_key, config_value, data_type, descripti
 ('PO_MANDATORY', 'FALSE', 'BOOLEAN', 'Whether every invoice must reference a PO'),
 ('GRN_MANDATORY', 'FALSE', 'BOOLEAN', 'Whether goods-based invoices require a matching GRN'),
 ('PAYMENT_REMINDER_DAYS_BEFORE_DUE', '3', 'NUMBER', 'Days before due_date to notify AP Executive of an unscheduled invoice'),
-('DEFAULT_BASE_CURRENCY', 'INR', 'STRING', 'Company base currency for reporting and threshold comparisons');
+('DEFAULT_BASE_CURRENCY', 'INR', 'STRING', 'Company base currency for reporting and threshold comparisons'),
+('VENDOR_BANK_DUPLICATE_ACROSS_VENDORS', 'false', 'BOOLEAN', 'Whether a vendor bank account_number/IBAN must be unique across all vendors, not just within one vendor');
