@@ -15,7 +15,7 @@ text.
 
 from pathlib import Path
 
-from Backend.API_Layer.interface.intake_process_interface import TechnicalDocumentType
+from Backend.API_Layer.interface.invoice_process_interface import TechnicalDocumentType
 
 # from __future__ import annotations
 

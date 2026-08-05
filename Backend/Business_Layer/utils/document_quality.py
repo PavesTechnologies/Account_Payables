@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import List
 
-from Backend.API_Layer.interface.intake_process_interface import DocumentQuality, DocumentResult, Page
+from Backend.API_Layer.interface.invoice_process_interface import DocumentQuality, DocumentResult, Page
 
 MIN_WORDS_PER_PAGE = 15
 MIN_OCR_CONFIDENCE = 60.0

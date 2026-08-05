@@ -13,7 +13,7 @@ import decimal
 import re
 from typing import List, Optional
 
-from Backend.API_Layer.interface.intake_process_interface import ExtractedInvoice, ValidationResult
+from Backend.API_Layer.interface.invoice_process_interface import ExtractedInvoice, ValidationResult
 
 _GSTIN_FORMAT = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9]Z[A-Z0-9]$")
 TOTAL_TOLERANCE = decimal.Decimal("1.00")

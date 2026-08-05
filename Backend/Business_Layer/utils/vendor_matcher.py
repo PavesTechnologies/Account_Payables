@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from Backend.API_Layer.interface.intake_process_interface import ExtractedInvoice, VendorMatch
+from Backend.API_Layer.interface.invoice_process_interface import ExtractedInvoice, VendorMatch
 
 GSTIN_MATCH_CONFIDENCE = 98.0
 NAME_MATCH_CONFIDENCE = 85.0

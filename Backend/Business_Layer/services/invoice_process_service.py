@@ -29,7 +29,7 @@ from Backend.Business_Layer.utils.document_classifier import (
 )
 from Backend.Business_Layer.utils.document_quality import calculate_quality_score
 from Backend.Business_Layer.utils.exceptions import UnsupportedFileType
-from Backend.API_Layer.interface.intake_process_interface import (
+from Backend.API_Layer.interface.invoice_process_interface import (
     DocumentResult,
     ExtractedInvoice,
     FinalResponse,

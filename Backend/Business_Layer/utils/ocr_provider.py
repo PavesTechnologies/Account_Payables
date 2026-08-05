@@ -16,7 +16,7 @@ from typing import List, Protocol
 import numpy as np
 
 from Backend.Business_Layer.utils.exceptions import OCRFailure
-from Backend.API_Layer.interface.intake_process_interface import DocumentResult, Word
+from Backend.API_Layer.interface.invoice_process_interface import DocumentResult, Word
 
 
 class OCRProvider(Protocol):

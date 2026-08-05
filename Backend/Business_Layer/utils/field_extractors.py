@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Pattern, Tuple
 
 from Backend.Business_Layer.utils.exceptions import FieldExtractionError
-from Backend.API_Layer.interface.intake_process_interface import DocumentResult, ExtractedInvoice
+from Backend.API_Layer.interface.invoice_process_interface import DocumentResult, ExtractedInvoice
 
 ANCHOR_MATCH_CONFIDENCE = 90.0
 FALLBACK_MATCH_CONFIDENCE = 55.0

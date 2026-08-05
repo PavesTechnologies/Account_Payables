@@ -13,7 +13,7 @@ import fitz  # PyMuPDF
 
 from Backend.Business_Layer.utils.document_classifier import is_text_usable
 from Backend.Business_Layer.utils.exceptions import OCRFailure
-from Backend.API_Layer.interface.intake_process_interface import Page, Word
+from Backend.API_Layer.interface.invoice_process_interface import Page, Word
 
 
 def open_pdf(content: bytes) -> fitz.Document:

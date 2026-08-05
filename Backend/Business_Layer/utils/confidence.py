@@ -7,7 +7,7 @@ single FinalConfidence, weighted so extraction and validation
 """
 from __future__ import annotations
 
-from Backend.API_Layer.interface.intake_process_interface import (
+from Backend.API_Layer.interface.invoice_process_interface import (
     ConfidenceResult,
     DocumentQuality,
     DocumentResult,

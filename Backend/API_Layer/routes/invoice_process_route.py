@@ -26,7 +26,7 @@ from Backend.Business_Layer.utils.exceptions import (
     ValidationFailure,
     VendorNotFound,
 )
-from Backend.API_Layer.interface.intake_process_interface import (
+from Backend.API_Layer.interface.invoice_process_interface import (
     DocumentResult,
     ExtractedInvoice,
     FinalResponse,
