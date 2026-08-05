@@ -6,3 +6,9 @@ sqlalchemy
 psycopg2-binary
 python-jose[cryptography]
 httpx
+PyMuPDF
+rapidocr-onnxruntime
+onnxruntime
+opencv-python
+numpy
+Pillow

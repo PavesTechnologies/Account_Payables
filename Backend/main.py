@@ -7,7 +7,13 @@ from fastapi.openapi.utils import get_openapi
 
 from Backend.API_Layer.middleware.db_middleware import DBSessionMiddleware
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
-from Backend.API_Layer.routes import master_route, system_route, vendor_route, intake_route
+from Backend.API_Layer.routes import (
+    intake_route,
+    invoice_process_route,
+    master_route,
+    system_route,
+    vendor_route,
+)
 from Backend.Data_Access_Layer import models  # noqa: F401 - registers all model classes with SQLAlchemy before metadata/mapper use
 from Backend.Data_Access_Layer.models.base import Base
 from Backend.Data_Access_Layer.utils.database import engine
@@ -100,6 +106,9 @@ api_router.include_router(system_route.router, tags=["System Defaults"], prefix=
 api_router.include_router(master_route.router, tags=["Master Configuration"], prefix="/master")
 api_router.include_router(vendor_route.router, tags=["Vendor Management"], prefix="/vendor")
 api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake")
+api_router.include_router(
+    invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"
+)
 app.include_router(api_router)
 
 
