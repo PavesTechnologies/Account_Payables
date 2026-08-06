@@ -13,3 +13,4 @@ opencv-python
 numpy
 Pillow
 pytest
+python-multipart
