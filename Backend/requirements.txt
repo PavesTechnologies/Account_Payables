@@ -12,3 +12,4 @@ onnxruntime
 opencv-python
 numpy
 Pillow
+pytest

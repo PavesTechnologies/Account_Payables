@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime
 import decimal
 import enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -102,27 +102,51 @@ class DocumentQuality(BaseModel):
 # =====================================================
 
 
+class FieldExtractionMeta(BaseModel):
+    """Provenance for one extracted field: what was found, and why it was trusted.
+
+    Produced by the rule-based extraction engine in
+    Backend.Business_Layer.utils.extraction — every extractor's winning
+    candidate becomes one of these. ``method`` is a "+"-joined set of
+    tags (e.g. "ANCHOR+SAME_LINE+GEOMETRY") describing how the value
+    was located, for debugging and UI provenance display.
+    """
+
+    value: Optional[Any] = None
+    confidence: float = 0.0
+    matched_anchor: Optional[str] = None
+    page: Optional[int] = None
+    method: str = "NONE"
+
+
 class ExtractedInvoice(BaseModel):
     """Business fields extracted from an invoice document.
 
     Each field is a plain value so this model can be used directly as
     a request body for the validation and vendor-matching endpoints.
-    Per-field extraction confidence (0-100) is carried separately in
-    ``field_confidences`` keyed by field name.
+    Per-field extraction confidence (0-100) is carried in
+    ``field_confidences`` keyed by field name (kept for backward
+    compatibility with Backend.Business_Layer.utils.confidence); full
+    provenance (matched anchor, page, method) is in ``field_metadata``.
     """
 
     invoice_number: Optional[str] = None
     invoice_date: Optional[datetime.date] = None
     due_date: Optional[datetime.date] = None
     gstin: Optional[str] = None
+    buyer_gstin: Optional[str] = None
     vendor_name: Optional[str] = None
     po_number: Optional[str] = None
     subtotal: Optional[decimal.Decimal] = None
     cgst: Optional[decimal.Decimal] = None
     sgst: Optional[decimal.Decimal] = None
     igst: Optional[decimal.Decimal] = None
+    cess: Optional[decimal.Decimal] = None
     total: Optional[decimal.Decimal] = None
+    payment_terms: Optional[str] = None
+    currency: Optional[str] = None
     field_confidences: Dict[str, float] = Field(default_factory=dict)
+    field_metadata: Dict[str, FieldExtractionMeta] = Field(default_factory=dict)
 
 
 # =====================================================
