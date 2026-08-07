@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 import requests
 
 from Backend.config.env_loader import get_env_var
+from Backend.API_Layer.utils.s3_utils import upload_to_s3, view_from_s3, download_from_s3
 
 router = APIRouter()
 
@@ -59,3 +60,7 @@ def get_mails():
 
     return response.json()
 
+@router.post("/upload-to-s3")
+def upload_file_to_s3(file: UploadFile = File(...)):
+    """Uploads a file to AWS S3."""
+    return upload_to_s3(file)
