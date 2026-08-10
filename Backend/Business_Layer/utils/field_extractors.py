@@ -22,6 +22,9 @@ from Backend.Business_Layer.utils.extraction.amounts import (
     IGSTExtractor,
     SGSTExtractor,
     SubtotalExtractor,
+    TaxAmountExtractor,
+    TaxRateExtractor,
+    TaxTypeExtractor,
 )
 from Backend.Business_Layer.utils.extraction.base import BaseFieldExtractor, Candidate
 from Backend.Business_Layer.utils.extraction.currency import CurrencyExtractor
@@ -55,6 +58,9 @@ __all__ = [
     "IGSTExtractor",
     "CessExtractor",
     "GrandTotalExtractor",
+    "TaxTypeExtractor",
+    "TaxRateExtractor",
+    "TaxAmountExtractor",
     "PaymentTermsExtractor",
     "CurrencyExtractor",
 ]

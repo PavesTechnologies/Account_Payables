@@ -15,6 +15,13 @@ _TERM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# The bare "terms" anchor also matches a "Terms and Conditions" section
+# heading, which is not a payment-terms label at all. Unlike the
+# specific anchors ("payment terms", "credit days"), it is never
+# trusted to hand back raw right-of-anchor text — only a real
+# structured term (matched by _TERM_PATTERN) is accepted from it.
+_GENERIC_ANCHOR = r"\bterms\b"
+
 
 class PaymentTermsExtractor(BaseFieldExtractor):
     field_name = "payment_terms"
@@ -31,7 +38,7 @@ class PaymentTermsExtractor(BaseFieldExtractor):
             match = _TERM_PATTERN.search(remainder)
             if match:
                 candidates.append(self._build(match.group(0), hit.line, hit, SAME_LINE))
-            else:
+            elif hit.pattern != _GENERIC_ANCHOR:
                 cleaned = remainder.strip(" :-\t")
                 if cleaned:
                     candidates.append(self._build(cleaned, hit.line, hit, SAME_LINE))

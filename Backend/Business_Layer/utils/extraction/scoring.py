@@ -24,6 +24,13 @@ PENALTY_NEAR_SHIP_TO = -20.0
 PENALTY_INSIDE_TABLE = -15.0
 PENALTY_INVALID_FORMAT = -30.0
 
+# Under PREFER_BUYER polarity (buyer_gstin), a Ship-To/consignee
+# association is a weaker signal than an actual Buyer/Bill-To heading:
+# the consignee receiving goods is not necessarily the same legal
+# entity as the buyer being billed, so a ship-to GSTIN must never
+# fully tie with — and outrank on a technicality — the real buyer's.
+BONUS_NEAR_SHIP_TO_AS_BUYER = 8.0
+
 MIN_ACCEPT_SCORE = 15.0
 
 

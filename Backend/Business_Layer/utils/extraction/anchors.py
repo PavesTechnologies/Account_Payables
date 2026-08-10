@@ -67,23 +67,45 @@ DUE_DATE_ANCHORS = [r"due\s*date", r"payment\s*due\s*date", r"payment\s*due"]
 SUBTOTAL_ANCHORS = [
     r"sub\s*-?\s*total", r"basic\s*amount", r"taxable\s*(?:value|amount)",
     r"net\s*amount", r"gross\s*before\s*tax", r"assessable\s*value",
+    r"net\s*value", r"net\s*charges", r"net\s*worth", r"amount\s*before\s*tax",
 ]
 CGST_ANCHORS = [r"\bcgst\b"]
 SGST_ANCHORS = [r"\bsgst\b"]
 IGST_ANCHORS = [r"\bigst\b"]
 CESS_ANCHORS = [r"\bcess\b"]
-GRAND_TOTAL_ANCHORS = [
+
+# Explicit grand-total semantics — outrank the generic "total" anchor
+# below (see amounts.py's anchor-strength scoring bonus), since a
+# generic label is a much weaker signal that a given line is really
+# the document's grand total.
+GRAND_TOTAL_STRONG_ANCHORS = [
     r"grand\s*total", r"invoice\s*total", r"total\s*amount",
     r"net\s*payable", r"amount\s*payable", r"amount\s*due",
-    # bare "total" must not match inside "Subtotal"/"Sub Total"
-    r"(?<!sub)(?<!sub-)(?<!sub\s)\btotal\b",
+    r"total\s*payable", r"gross\s*total", r"gross\s*worth",
 ]
+# Bare "total" is the weakest possible anchor: it must not match inside
+# "Subtotal"/"Sub Total", nor match "Total GST"/"Total Tax"/"Total
+# Discount" (a tax or discount subtotal, not the grand total) or "Tax
+# Total"/"Line Total"/"Item Total" (someone else's total, not this
+# document's).
+GRAND_TOTAL_WEAK_ANCHOR = (
+    r"(?<!sub)(?<!sub-)(?<!sub\s)(?<!tax\s)(?<!line\s)(?<!item\s)"
+    r"\btotal\b(?!\s*gst)(?!\s*tax)(?!\s*discount)"
+)
+GRAND_TOTAL_ANCHORS = GRAND_TOTAL_STRONG_ANCHORS + [GRAND_TOTAL_WEAK_ANCHOR]
 
 # ---------------------------------------------------------------------------
 # Payment terms / currency
 # ---------------------------------------------------------------------------
 
-PAYMENT_TERMS_ANCHORS = [r"payment\s*terms", r"\bterms\b", r"credit\s*days"]
+PAYMENT_TERMS_ANCHORS = [
+    r"payment\s*terms", r"\bterms\b", r"credit\s*days",
+    # Free-text payment sentences ("Payment is due within 7 days from
+    # the date of invoice.") carry no "terms" word at all — anchoring
+    # on the sentence's own due-date phrasing is the only way to find
+    # them without touching the generic bare "terms" anchor above.
+    r"payment\s*is\s*due", r"due\s*within",
+]
 CURRENCY_ANCHORS = [r"\bcurrency\b", r"\bcurr\b"]
 
 # ---------------------------------------------------------------------------
@@ -100,8 +122,12 @@ BUYER_MARKERS = [
     # physical copy this is, not a "Buyer:" section heading, and must
     # never be mistaken for one.
     r"(?<!for\s)\bbuyer\b", r"bill(?:ed)?\s*to", r"\bconsignee\b", r"invoice\s*to",
+    # "(?!\s*care)" excludes "Customer Care" (a support contact line,
+    # not a buyer-section heading).
+    r"\bcustomer\b(?!\s*care)", r"\bclient\b", r"issued\s*to", r"sold\s*to", r"\brecipient\b",
 ]
 SHIP_TO_MARKERS = [r"ship(?:ped)?\s*to"]
+ENTITY_BOUNDARY_MARKERS = BUYER_MARKERS + SHIP_TO_MARKERS
 
 # ---------------------------------------------------------------------------
 # Vendor-name line classification
@@ -110,8 +136,10 @@ SHIP_TO_MARKERS = [r"ship(?:ped)?\s*to"]
 VENDOR_LINE_BLOCKLIST = [
     r"tax\s*invoice", r"\binvoice\b", r"\boriginal\b", r"\bduplicate\b", r"\bcopy\b",
     r"\bgstin\b", r"\bgst\b", r"\bbuyer\b", r"bill\s*to", r"ship\s*to", r"\bconsignee\b",
+    r"\bcustomer\b(?!\s*care)", r"\bclient\b", r"sold\s*to", r"\brecipient\b",
     r"\btransport\b", r"e-?way\s*bill", r"acknowledge?ment", r"\birn\b", r"qr\s*code",
     r"\bhsn\b", r"\bsac\b", r"\bpan\b", r"\bcin\b", r"reverse\s*charge",
+    r"issued\s*to", r"billing\s*(?:&|and)\s*shipping",
 ]
 
 COMPANY_SUFFIXES = [

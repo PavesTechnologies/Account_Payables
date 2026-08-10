@@ -7,6 +7,11 @@ Rs., INR, $, USD...). Candidates are gathered from anywhere in the
 document, not just from a labelled anchor, then ranked the same way
 as every other field — a currency token seen right next to the grand
 total wins over one seen only once near a stray line-item figure.
+
+A GST invoice (any document carrying a GSTIN) is necessarily an
+Indian-domestic invoice, so when no explicit currency token exists
+anywhere at all, INR is a safe last-resort default — scored low enough
+that any real detected symbol/code still wins.
 """
 from __future__ import annotations
 
@@ -20,6 +25,12 @@ from Backend.Business_Layer.utils.extraction.base import NEAREST, Candidate, SAM
 _CURRENCY_TOKEN = re.compile(r"₹|Rs\.?|INR|USD|EUR|GBP|AED|SGD|\$|€|£", re.IGNORECASE)
 _NEAR_TOTAL_BONUS = 15.0
 _NEAR_TOTAL_LINE_SPAN = 1
+
+# NEAREST alone scores 30 (see scoring.SCORE_NEAREST_FALLBACK) — this
+# penalty pulls the GSTIN-implied default down to 16, just above
+# scoring.MIN_ACCEPT_SCORE (15) so it's only ever picked when nothing
+# else was found, and always loses to a real currency token (30+).
+_GSTIN_IMPLIES_INR_PENALTY = -14.0
 
 
 class CurrencyExtractor(BaseFieldExtractor):
@@ -46,6 +57,19 @@ class CurrencyExtractor(BaseFieldExtractor):
                 if near_total:
                     candidate.score_bonus += _NEAR_TOTAL_BONUS
                 candidates.append(candidate)
+
+        if document.pages and any(normalizers.GSTIN_PATTERN.search(page.text) for page in document.pages):
+            fallback = Candidate(
+                value="INR",
+                raw_text="(inferred from GSTIN presence)",
+                page_number=document.pages[0].page_number,
+                anchor_text=None,
+                has_anchor=False,
+                relation=NEAREST,
+                valid_format=True,
+            )
+            fallback.score_bonus = _GSTIN_IMPLIES_INR_PENALTY
+            candidates.append(fallback)
 
         return candidates
 

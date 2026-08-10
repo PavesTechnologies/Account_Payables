@@ -58,6 +58,13 @@ class Candidate:
     near_seller: bool = False
     inside_table: bool = False
     context_polarity: str = AVOID_BUYER
+    # Which anchor occurrence (line) this candidate came from, when it
+    # differs from ``line`` (e.g. a BELOW candidate's value sits on a
+    # different line than the label it belongs to). Lets callers group
+    # a SAME_LINE and a BELOW candidate that both trace back to the
+    # same labelled occurrence, instead of treating them as two
+    # independent tax-slab occurrences. ``None`` when not applicable.
+    anchor_line_index: Optional[int] = None
     # Free-form adjustment for domain-specific signals (company suffix,
     # top-of-page position, GSTIN checksum, ...) that don't fit the
     # generic anchor/relation/context categories below. This is the
@@ -76,8 +83,8 @@ def score_candidate(candidate: Candidate) -> float:
     if candidate.context_polarity == PREFER_BUYER:
         if candidate.near_buyer:
             points -= scoring.PENALTY_NEAR_BUYER
-        if candidate.near_ship_to:
-            points -= scoring.PENALTY_NEAR_SHIP_TO
+        elif candidate.near_ship_to:
+            points += scoring.BONUS_NEAR_SHIP_TO_AS_BUYER
         if candidate.near_seller:
             points += scoring.PENALTY_NEAR_BUYER
     else:
@@ -122,6 +129,18 @@ class BaseFieldExtractor(ABC):
     @abstractmethod
     def collect_candidates(self, document: DocumentResult) -> List[Candidate]:
         """Return every plausible candidate for this field. Never stop at the first match."""
+
+    def extract_candidates(self, document: DocumentResult) -> List[Candidate]:
+        """Every valid candidate for this field, ranked highest-first.
+
+        Unlike :meth:`extract`, does not stop at the first acceptable
+        candidate or apply ``MIN_ACCEPT_SCORE`` — used by cross-field
+        reconciliation (see ``extraction.registry``) to consider
+        alternates when the single best-ranked candidate contradicts
+        another field's independently-extracted value.
+        """
+        candidates = self.collect_candidates(document)
+        return [c for c in rank_candidates(candidates) if c.value is not None]
 
     def extract(self, document: DocumentResult) -> FieldExtractionMeta:
         candidates = self.collect_candidates(document)
