@@ -33,6 +33,7 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     DocumentResult,
     ExtractedInvoice,
     FinalResponse,
+    UploadInvoiceRequest,
     Page,
     TechnicalDocumentType,
     ValidationResult,
@@ -207,4 +208,10 @@ def process_invoice(filename: str, content: bytes, db) -> FinalResponse:
     )
 def upload_to_db(invoice, db):
     invoice_dao = InvoiceDAO(db)
-    invoice_dao.create_invoice(invoice)
+    confidence_score = invoice.confidence
+    if confidence_score >=0.8:
+        vendor_id = invoice.vendor_match.vendor_id if invoice.vendor_match else None
+        extracted_invoice = invoice.extracted_invoice
+        invoice_type = "PO" if extracted_invoice.po_number else "NON_PO"
+
+        

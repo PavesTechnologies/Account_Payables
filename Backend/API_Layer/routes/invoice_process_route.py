@@ -138,15 +138,10 @@ def match_vendor(
 # ---------------------------------------------------------
 # 5. Process Invoice (production API)
 # ---------------------------------------------------------
-@router.post("/process-invoice", response_model=FinalResponse)
+@router.post("/process-invoice")
 async def process_invoice(http_request: Request, file: UploadFile = File(...)):
-    """Run the complete invoice processing pipeline end to end.
-
-    extract_document -> quality_assessment -> (Textract fallback if poor)
-    -> extract_invoice_fields -> validate_invoice -> match_vendor
-    -> calculate_confidence -> FinalResponse.
-
-    Reuses the exact same service functions as the developer APIs above.
+    """Uploading a document into aws s3 bucket which returns status, filename and filepath
+    then process invoice by calling invoice_process_service which returns response and confidence score
     """
     content = await file.read()
 
@@ -154,7 +149,7 @@ async def process_invoice(http_request: Request, file: UploadFile = File(...)):
         upload_result =upload_to_s3(file.filename, content)
         db = http_request.state.db
         process_result = service.process_invoice(file.filename, content, db)
-        update_result = service.upload_to_db()
+        update_result = service.upload_to_db(process_result, db)
 
 
     except UnsupportedFileType as e:

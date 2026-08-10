@@ -60,7 +60,42 @@ def get_mails():
 
     return response.json()
 
-@router.post("/upload-to-s3")
-def upload_file_to_s3(file: UploadFile = File(...)):
-    """Uploads a file to AWS S3."""
-    return upload_to_s3(file)
+@router.post("/send-mail")
+def send_mail(message: dict, to_address:str):
+    token = get_graph_token()["access_token"]
+    sender_address = get_env_var("MAIL_ADDRESS")  # Replace with your sender address
+
+    url = "https://graph.microsoft.com/v1.0/me/sendMail"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "message": {
+            "subject": message.get("subject", "No Subject"),
+            "body": {
+                "contentType": "Text",
+                "content": message.get("body", "")
+            },
+            "toRecipients": [
+                {
+                    "emailAddress": {
+                        "address": to_address
+                    }
+                }
+            ]
+        },
+        "saveToSentItems": "true"
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=response.json()
+        )
+
+    return response.json()
