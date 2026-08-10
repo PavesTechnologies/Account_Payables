@@ -119,6 +119,28 @@ class FieldExtractionMeta(BaseModel):
     method: str = "NONE"
 
 
+class ExtractedInvoiceLine(BaseModel):
+    """One line item extracted from an invoice's item table.
+
+    Produced by the geometry-based line-item extractor in
+    Backend.Business_Layer.utils.extraction.line_items — every field is
+    optional because a row may not expose every column (e.g. no
+    quantity/unit price column). ``confidence`` reflects how many of
+    description/quantity/unit_price/line_amount were actually found,
+    never a fabricated estimate.
+    """
+
+    line_number: int
+    description: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+    line_amount: Optional[Decimal] = None
+    tax_amount: Optional[Decimal] = None
+    tax_type: Optional[str] = None
+    tax_rate: Optional[Decimal] = None
+    confidence: float = 0.0
+
+
 class ExtractedInvoice(BaseModel):
     """Business fields extracted from an invoice document.
 
@@ -148,6 +170,7 @@ class ExtractedInvoice(BaseModel):
     total: Optional[Decimal] = None
     payment_terms: Optional[str] = None
     currency: Optional[str] = None
+    lines: List[ExtractedInvoiceLine] = Field(default_factory=list)
     field_confidences: Dict[str, float] = Field(default_factory=dict)
     field_metadata: Dict[str, FieldExtractionMeta] = Field(default_factory=dict)
 
@@ -225,6 +248,55 @@ class FinalResponse(BaseModel):
     validation: ValidationResult
     vendor_match: VendorMatch
     confidence: ConfidenceResult
+    inbound_document_id: Optional[int] = None
+    invoice_id: Optional[int] = None
+    invoice_status: Optional[str] = None
+
+
+# =====================================================
+# Manual OCR Review
+# =====================================================
+
+
+class InvoiceLineReviewRequest(BaseModel):
+    """AP Executive correction for one invoice line during OCR review.
+
+    ``line_number`` identifies which extracted line this correction
+    applies to; a ``line_number`` with no matching existing line is
+    treated as a new line to add.
+    """
+
+    line_number: int
+    description: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+    line_amount: Optional[Decimal] = None
+    tax_amount: Optional[Decimal] = None
+    tax_type_id: Optional[int] = None
+
+
+class InvoiceOCRReviewRequest(BaseModel):
+    """AP Executive correction/confirmation of an OCR-extracted invoice.
+
+    Submitted against PATCH /inbound-documents/{inbound_document_id}/ocr-review.
+    ``vendor_id`` is required the first time this is submitted for a
+    document whose vendor could not be auto-matched (Path B); optional
+    thereafter, when merely confirming/correcting an already-matched invoice.
+    """
+
+    vendor_id: Optional[int] = None
+    invoice_number: Optional[str] = None
+    invoice_type: Optional[InvoiceType] = None
+    invoice_date: Optional[date] = None
+    due_date: Optional[date] = None
+    currency_id: Optional[int] = None
+    gross_amount: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    tax_amount: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
+    po_id: Optional[int] = None
+    payment_term_id: Optional[int] = None
+    lines: Optional[List[InvoiceLineReviewRequest]] = None
 
 class UploadDocumentResponse(BaseModel):
     status: str

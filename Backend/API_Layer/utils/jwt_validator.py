@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Optional
 
@@ -7,21 +8,68 @@ from jose.exceptions import JWTError
 
 from Backend.config.env_loader import get_env_var
 
+logger = logging.getLogger(__name__)
+
 UMS_URL = get_env_var("UMS_URL").rstrip("/")
 OPENID_CONFIG_URL = f"{UMS_URL}/.well-known/openid-configuration"
+
 JWKS_CACHE_TTL_SECONDS = 3600
 HTTP_TIMEOUT_SECONDS = 5.0
 
-_cache = {"openid_config": None, "jwks": None, "jwks_fetched_at": 0.0}
+_cache = {
+    "openid_config": None,
+    "jwks": None,
+    "jwks_fetched_at": 0.0,
+}
 
 
 async def _get_openid_config() -> dict:
-    if _cache["openid_config"] is None:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+    if _cache["openid_config"] is not None:
+        return _cache["openid_config"]
+
+    try:
+        logger.info(
+            "Fetching OpenID configuration from %s",
+            OPENID_CONFIG_URL,
+        )
+
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=5.0,
+                read=5.0,
+                write=5.0,
+                pool=5.0,
+            )
+        ) as client:
             response = await client.get(OPENID_CONFIG_URL)
             response.raise_for_status()
+
             _cache["openid_config"] = response.json()
-    return _cache["openid_config"]
+
+            logger.info("OpenID configuration fetched successfully")
+
+            return _cache["openid_config"]
+
+    except httpx.TimeoutException:
+        logger.exception(
+            "Timeout while fetching OpenID configuration: %s",
+            OPENID_CONFIG_URL,
+        )
+        raise
+
+    except httpx.HTTPError:
+        logger.exception(
+            "HTTP error while fetching OpenID configuration: %s",
+            OPENID_CONFIG_URL,
+        )
+        raise
+
+    except Exception:
+        logger.exception(
+            "Unexpected error while fetching OpenID configuration: %s",
+            OPENID_CONFIG_URL,
+        )
+        raise
 
 
 async def _get_jwks(force_refresh: bool = False) -> dict:

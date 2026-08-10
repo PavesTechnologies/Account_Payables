@@ -1,10 +1,16 @@
+import re
+import uuid
+from datetime import datetime
+from typing import Optional
+
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from Backend.config.env_loader import get_env_var
-from datetime import datetime
+
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 AWS_ACCESS_KEY = get_env_var("AWS_ACCESS_KEY_ID")
@@ -26,35 +32,42 @@ s3_client = boto3.client(
 
 
 
-def upload_to_s3(file: UploadFile) -> dict:
+def upload_to_s3(filename: str, content: bytes, content_type: Optional[str] = None) -> dict:
+    """Upload raw file bytes to S3 under a collision-safe key.
+
+    Takes ``(filename, content)`` rather than an ``UploadFile`` because
+    every caller already has the raw bytes in hand (needed for the
+    extraction pipeline too) and FastAPI's ``UploadFile.file`` can only
+    be read once per request.
+    """
     try:
         now = datetime.utcnow()
+        safe_filename = _UNSAFE_FILENAME_CHARS.sub("_", filename) if filename else "upload"
 
         s3_key = (
             f"invoices/"
             f"{now.year}/"
             f"{now.month:02d}/"
-            f"{file.filename}"
+            f"{uuid.uuid4().hex}_{safe_filename}"
         )
 
-        s3_client.upload_fileobj(
-            file.file,
-            BUCKET_NAME,
-            s3_key,
-            ExtraArgs={
-                "ContentType": file.content_type
-            }
+        extra_args = {"ContentType": content_type} if content_type else {}
+        s3_client.put_object(
+            Bucket=BUCKET_NAME,
+            Key=s3_key,
+            Body=content,
+            **extra_args,
         )
 
         return {
             "status": "success",
-            "filename": file.filename,
+            "filename": filename,
             "filepath": s3_key,
         }
 
     except ClientError as e:
         raise HTTPException(
-            status_code=500,
+            status_code=502,
             detail=f"S3 Upload failed: {e.response['Error']['Message']}"
         )
 

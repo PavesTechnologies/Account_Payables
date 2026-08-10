@@ -457,8 +457,13 @@ INSERT INTO payment_term (term_name, due_days, discount_percent, discount_days, 
 ('Net 45', 45, 0, 0, TRUE),
 ('Net 60', 60, 0, 0, TRUE);
 
+-- NOTE: this INSERT previously omitted INVOICE/OCR_REVIEW_PENDING and
+-- INVOICE/OCR_FAILED (present only in the comments below, not the actual
+-- VALUES list) and had a stray duplicated "status_master (...)" line that
+-- made this statement invalid SQL. Both are fixed here; see also
+-- Database/migrations/2026-08-10_invoice_status_master_ocr_codes.sql for
+-- adding these two codes to already-provisioned databases.
 INSERT INTO status_master (module_name, status_code, status_name, display_order) VALUES
-status_master (module_name, status_code, status_name, display_order)
 -- 1	"VENDOR"	"PENDING"	"Pending Approval"	1
 -- 2	"VENDOR"	"ACTIVE"	"Active"	2
 -- 3	"VENDOR"	"INACTIVE"	"Inactive"	3
@@ -484,10 +489,11 @@ status_master (module_name, status_code, status_name, display_order)
 -- 23	"PAYMENT"	"FAILED"	"Failed"	4
 ('VENDOR','PENDING','Pending Approval',1), ('VENDOR','ACTIVE','Active',2),
 ('VENDOR','INACTIVE','Inactive',3), ('VENDOR','BLOCKED','Blocked',4),
-('INVOICE','DRAFT','Draft',1), ('INVOICE','PENDING_APPROVAL','Pending Approval',2),
-('INVOICE','APPROVED','Approved',3), ('INVOICE','REJECTED','Rejected',4),
-('INVOICE','PARTIALLY_PAID','Partially Paid',5), ('INVOICE','PAID','Paid',6),
-('INVOICE','DISPUTED','Disputed',7),
+('INVOICE','DRAFT','Draft',1), ('INVOICE','OCR_REVIEW_PENDING','Under OCR Review',2),
+('INVOICE','OCR_FAILED','OCR Failed',3), ('INVOICE','PENDING_APPROVAL','Pending Approval',4),
+('INVOICE','APPROVED','Approved',5), ('INVOICE','REJECTED','Rejected',6),
+('INVOICE','PARTIALLY_PAID','Partially Paid',7), ('INVOICE','PAID','Paid',8),
+('INVOICE','DISPUTED','Disputed',9),
 ('PO','OPEN','Open',1), ('PO','CLOSED','Closed',2), ('PO','CANCELLED','Cancelled',3),
 ('APPROVAL','PENDING','Pending',1), ('APPROVAL','APPROVED','Approved',2), ('APPROVAL','REJECTED','Rejected',3),
 ('PAYMENT','SCHEDULED','Scheduled',1), ('PAYMENT','SENT','Sent',2),

@@ -37,6 +37,7 @@ from Backend.Business_Layer.utils.extraction.currency import CurrencyExtractor
 from Backend.Business_Layer.utils.extraction.dates import DueDateExtractor, InvoiceDateExtractor
 from Backend.Business_Layer.utils.extraction.gstin import BuyerGSTINExtractor, VendorGSTINExtractor
 from Backend.Business_Layer.utils.extraction.identifiers import InvoiceNumberExtractor, PONumberExtractor
+from Backend.Business_Layer.utils.extraction.line_items import extract_invoice_lines
 from Backend.Business_Layer.utils.extraction.payment_terms import PaymentTermsExtractor
 from Backend.Business_Layer.utils.extraction.vendor import VendorNameExtractor
 
@@ -139,5 +140,9 @@ def extract_invoice_fields(document: DocumentResult) -> ExtractedInvoice:
 
     values = {name: meta.value for name, meta in metadata.items() if name in _MODEL_ATTRS}
     confidences = {name: meta.confidence for name, meta in metadata.items()}
+
+    # Line-item extraction returns a list, not a single scalar FieldExtractionMeta,
+    # so it can't go through the generic per-field loop above.
+    values["lines"] = extract_invoice_lines(document)
 
     return ExtractedInvoice(field_confidences=confidences, field_metadata=metadata, **values)

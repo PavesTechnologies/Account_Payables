@@ -17,10 +17,13 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Request
+from sqlalchemy.exc import IntegrityError
 
 from Backend.Business_Layer.services import invoice_process_service as service
 from Backend.Business_Layer.utils.exceptions import (
+    DuplicateInvoiceError,
     FieldExtractionError,
+    InvalidUploadFile,
     OCRFailure,
     UnsupportedFileType,
     ValidationFailure,
@@ -30,15 +33,36 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     DocumentResult,
     ExtractedInvoice,
     FinalResponse,
+    InvoiceOCRReviewRequest,
     ValidationResult,
     VendorMatch,
     UploadDocumentResponse,
 )
+from Backend.API_Layer.utils.file_validation import validate_upload_file
+from Backend.API_Layer.utils.response_utils import success_response
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor as vendor_matcher
 from Backend.API_Layer.utils.s3_utils import upload_to_s3
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _get_user_id(http_request: Request) -> str:
+    """Extract the authenticated user id from the JWT payload set by JWTMiddleware.
+
+    Duplicated from master_route.py/vendor_route.py's identical helper
+    rather than factored into a shared module, to avoid touching routes
+    unrelated to this feature.
+    """
+    user_id = (
+        http_request.state.user.get("user_id")
+        or http_request.state.user.get("sub")
+    )
+
+    if user_id is None:
+        raise ValueError("Token payload missing user identifier")
+
+    return user_id
 
 
 # ---------------------------------------------------------
@@ -138,26 +162,103 @@ def match_vendor(
 # ---------------------------------------------------------
 # 5. Process Invoice (production API)
 # ---------------------------------------------------------
-@router.post("/process-invoice")
+@router.post("/process-invoice", response_model=FinalResponse)
 async def process_invoice(http_request: Request, file: UploadFile = File(...)):
-    """Uploading a document into aws s3 bucket which returns status, filename and filepath
-    then process invoice by calling invoice_process_service which returns response and confidence score
+    """Full production pipeline: validate -> S3 upload -> InboundDocument ->
+    OCR/extraction/validation/vendor-matching/confidence (service.process_invoice,
+    unchanged) -> persist (Invoice/InvoiceLine/InvoiceAttachment/InvoiceIssue, or
+    just InboundDocument + notification if the vendor couldn't be matched).
     """
     content = await file.read()
 
     try:
-        upload_result =upload_to_s3(file.filename, content)
-        db = http_request.state.db
-        process_result = service.process_invoice(file.filename, content, db)
-        update_result = service.upload_to_db(process_result, db)
+        print("Validating upload file...")
+        validate_upload_file(file, content)
+    except (UnsupportedFileType, InvalidUploadFile) as e:
+        status_code = 415 if isinstance(e, UnsupportedFileType) else 400
+        raise HTTPException(status_code=status_code, detail=str(e))
 
-
-    except UnsupportedFileType as e:
-        raise HTTPException(status_code=415, detail=str(e))
-
-    except (OCRFailure, FieldExtractionError) as e:
+    try:
+        user_id = _get_user_id(http_request)
+    except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    db = http_request.state.db
+
+    upload_result = upload_to_s3(file.filename, content, file.content_type)
+    s3_key = upload_result["filepath"]
+
+    inbound_document = service.create_pending_inbound_document(file.filename, s3_key, db)
+
+    try:
+        final_response = service.process_invoice(file.filename, content, db)
+    except (OCRFailure, FieldExtractionError) as e:
+        service.mark_inbound_document_failed(inbound_document, db)
+        raise HTTPException(status_code=422, detail=str(e))
+    except UnsupportedFileType as e:
+        service.mark_inbound_document_failed(inbound_document, db)
+        raise HTTPException(status_code=415, detail=str(e))
     except Exception as e:
-        logger.exception("process-invoice failed for '%s'", file.filename)
-        raise HTTPException(status_code=500, detail=str(e))
+        service.mark_inbound_document_failed(inbound_document, db)
+        logger.exception("process-invoice extraction failed for '%s'", file.filename)
+        raise HTTPException(status_code=500, detail="Invoice processing failed unexpectedly")
+
+    try:
+        outcome = service.persist_processed_invoice(final_response, inbound_document, db, user_id)
+    except FieldExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except DuplicateInvoiceError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This invoice conflicts with an existing record")
+    except Exception as e:
+        logger.exception("process-invoice persistence failed for '%s'", file.filename)
+        raise HTTPException(status_code=500, detail="Invoice processing failed unexpectedly")
+
+    final_response.inbound_document_id = outcome.inbound_document_id
+    final_response.invoice_id = outcome.invoice_id
+    final_response.invoice_status = outcome.invoice_status
+    return final_response
+
+
+# ---------------------------------------------------------
+# 6. Manual OCR Review (AP Executive correction/confirmation)
+# ---------------------------------------------------------
+@router.patch("/inbound-documents/{inbound_document_id}/ocr-review")
+def ocr_review(
+    inbound_document_id: int,
+    review: InvoiceOCRReviewRequest,
+    http_request: Request,
+):
+    """AP Executive confirms/corrects an OCR-extracted invoice.
+
+    Creates the Invoice for the first time when this document's vendor
+    could not be auto-matched at /process-invoice time (``vendor_id`` is
+    then required in the body), or updates the existing invoice
+    otherwise. Either way, ends at PENDING_APPROVAL.
+    """
+    try:
+        user_id = _get_user_id(http_request)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    db = http_request.state.db
+
+    try:
+        invoice = service.apply_ocr_review(inbound_document_id, review, db, user_id)
+    except DuplicateInvoiceError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This invoice conflicts with an existing record")
+    except Exception:
+        logger.exception("ocr-review failed for inbound_document_id=%s", inbound_document_id)
+        raise HTTPException(status_code=500, detail="OCR review failed unexpectedly")
+
+    return success_response(
+        data={"invoice_id": invoice.invoice_id, "status_id": invoice.status_id},
+        message="Invoice review completed; moved to PENDING_APPROVAL.",
+    )

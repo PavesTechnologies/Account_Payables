@@ -5,6 +5,7 @@ from typing import List, Optional
 from Backend.Data_Access_Layer.models.master import (
     Country,
     PaymentTerm,
+    Currency,
     SystemConfiguration,
     TaxType,
 )
@@ -24,6 +25,12 @@ class MasterDAO:
             .filter(Country.country_id == country_id)
             .first()
             is not None
+        )
+    def get_currency_by_code(self, currency_code: str) -> Optional[Currency]:
+        return (
+            self.db.query(Currency)
+            .filter(Currency.currency_code == currency_code)
+            .first()
         )
 
     # =====================================================

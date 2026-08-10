@@ -1,5 +1,8 @@
 # Backend/Data_Access_Layer/dao/invoice_dao.py
 from typing import List, Optional
+
+from sqlalchemy.orm import selectinload
+
 from Backend.Data_Access_Layer.models.invoice import (
     Invoice,
     InvoiceAttachment,
@@ -7,6 +10,10 @@ from Backend.Data_Access_Layer.models.invoice import (
     InvoiceIssue,
 )
 from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
+from Backend.Data_Access_Layer.models.master import StatusMaster
+
+INVOICE_STATUS_MODULE = "INVOICE"
+
 
 class InvoiceDAO:
     def __init__(self, db):
@@ -16,6 +23,7 @@ class InvoiceDAO:
         self.db.add(invoice)
         self.db.flush()
         return invoice
+
     def create_invoice_attachment(self, attachment: InvoiceAttachment) -> InvoiceAttachment:
         self.db.add(attachment)
         self.db.flush()
@@ -25,4 +33,57 @@ class InvoiceDAO:
         self.db.add(line)
         self.db.flush()
         return line
-    
+
+    def create_invoice_lines(self, lines: List[InvoiceLine]) -> List[InvoiceLine]:
+        self.db.add_all(lines)
+        self.db.flush()
+        return lines
+
+    def create_invoice_issue(self, issue: InvoiceIssue) -> InvoiceIssue:
+        self.db.add(issue)
+        self.db.flush()
+        return issue
+
+    def get_invoice_by_id(self, invoice_id: int) -> Optional[Invoice]:
+        return (
+            self.db.query(Invoice)
+            .options(
+                selectinload(Invoice.invoice_line),
+                selectinload(Invoice.invoice_attachment),
+                selectinload(Invoice.invoice_issue),
+            )
+            .filter(Invoice.invoice_id == invoice_id)
+            .first()
+        )
+
+    def get_invoice_by_vendor_and_number(
+        self, vendor_id: int, invoice_number: str
+    ) -> Optional[Invoice]:
+        return (
+            self.db.query(Invoice)
+            .filter(
+                Invoice.vendor_id == vendor_id,
+                Invoice.invoice_number == invoice_number,
+            )
+            .first()
+        )
+
+    def get_open_invoice_issues(self, invoice_id: int) -> List[InvoiceIssue]:
+        return (
+            self.db.query(InvoiceIssue)
+            .filter(
+                InvoiceIssue.invoice_id == invoice_id,
+                InvoiceIssue.resolved_at.is_(None),
+            )
+            .all()
+        )
+
+    def get_status_by_code(self, status_code: str) -> Optional[StatusMaster]:
+        return (
+            self.db.query(StatusMaster)
+            .filter(
+                StatusMaster.module_name == INVOICE_STATUS_MODULE,
+                StatusMaster.status_code == status_code,
+            )
+            .first()
+        )

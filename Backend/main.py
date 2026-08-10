@@ -13,6 +13,7 @@ from Backend.API_Layer.routes import (
     master_route,
     system_route,
     vendor_route,
+    invoice_details_route,
 )
 from Backend.Data_Access_Layer import models  # noqa: F401 - registers all model classes with SQLAlchemy before metadata/mapper use
 from Backend.Data_Access_Layer.models.base import Base
@@ -109,6 +110,7 @@ api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake"
 api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"
 )
+api_router.include_router(invoice_details_route.router, tags=["Invoice Details"], prefix="/invoice-details")
 app.include_router(api_router)
 
 

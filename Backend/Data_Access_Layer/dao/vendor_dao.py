@@ -73,9 +73,34 @@ class VendorDAO:
         exclude_vendor_id: Optional[int] = None,
     ) -> Optional[Vendor]:
 
-        query = self.db.query(Vendor).filter(Vendor.gstin == gstin)
+        vendor_tax = (
+            self.db.query(VendorTax)
+            .filter(VendorTax.registration_number == gstin)
+            .first()
+        )
+
+        if vendor_tax is None:
+            return None
+
+        vendor_address = (
+            self.db.query(VendorAddress)
+            .filter(
+                VendorAddress.vendor_address_id == vendor_tax.vendor_address_id
+            )
+            .first()
+        )
+
+        if vendor_address is None:
+            return None
+
+        query = self.db.query(Vendor).filter(
+            Vendor.vendor_id == vendor_address.vendor_id
+        )
+
         if exclude_vendor_id is not None:
-            query = query.filter(Vendor.vendor_id != exclude_vendor_id)
+            query = query.filter(
+                Vendor.vendor_id != exclude_vendor_id
+            )
 
         return query.first()
 

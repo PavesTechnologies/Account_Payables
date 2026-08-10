@@ -159,3 +159,60 @@ CONTACT_MARKERS = [
     r"[\w.\-]+@[\w.\-]+\.\w+", r"www\.", r"https?://",
     r"\bphone\b", r"\bmobile\b", r"\btel\b", r"\+?\d[\d\-\s]{8,}\d",
 ]
+
+# ---------------------------------------------------------------------------
+# Line-item table columns
+# ---------------------------------------------------------------------------
+# Regex fragments used by extraction.line_items to detect a table header
+# line and label each of its columns. A header line is one that matches
+# at least a handful of these across distinct columns (see
+# line_items.detect_header). Order doesn't matter — column position is
+# inferred from where each pattern matches on the header line, not from
+# this list's order.
+
+LINE_ITEM_SNO_ANCHORS = [r"^s\.?\s*no\.?$", r"^sr\.?\s*no\.?$", r"item\s*no\.?", r"^#$"]
+LINE_ITEM_DESCRIPTION_ANCHORS = [
+    r"description", r"particulars", r"item\s*(?:name|description)?", r"product",
+    r"service", r"goods",
+]
+LINE_ITEM_HSN_ANCHORS = [r"\bhsn\b"]
+LINE_ITEM_SAC_ANCHORS = [r"\bsac\b"]
+LINE_ITEM_QTY_ANCHORS = [r"\bqty\b", r"\bquantity\b"]
+LINE_ITEM_UOM_ANCHORS = [r"\buom\b"]
+LINE_ITEM_UNIT_PRICE_ANCHORS = [r"unit\s*price", r"\brate\b", r"price\s*/\s*unit", r"price\s*per\s*unit"]
+LINE_ITEM_AMOUNT_ANCHORS = [r"\bamount\b", r"\btotal\b", r"line\s*total", r"taxable\s*value"]
+LINE_ITEM_TAX_ANCHORS = [r"\bgst\b", r"\btax\b", r"\bcgst\b", r"\bsgst\b", r"\bigst\b"]
+LINE_ITEM_DISCOUNT_ANCHORS = [r"\bdiscount\b"]
+
+# Table-row-shaped column groups, keyed by the ExtractedInvoiceLine field
+# they populate. First matching pattern within a header cell wins.
+LINE_ITEM_COLUMN_ANCHORS = {
+    "sno": LINE_ITEM_SNO_ANCHORS,
+    "description": LINE_ITEM_DESCRIPTION_ANCHORS,
+    "hsn_sac": LINE_ITEM_HSN_ANCHORS + LINE_ITEM_SAC_ANCHORS,
+    "quantity": LINE_ITEM_QTY_ANCHORS,
+    "uom": LINE_ITEM_UOM_ANCHORS,
+    "unit_price": LINE_ITEM_UNIT_PRICE_ANCHORS,
+    "discount": LINE_ITEM_DISCOUNT_ANCHORS,
+    "tax": LINE_ITEM_TAX_ANCHORS,
+    "amount": LINE_ITEM_AMOUNT_ANCHORS,
+}
+
+# Lines that end the item table even though they may contain numbers —
+# summary/footer rows that must never be mistaken for a line item.
+LINE_ITEM_STOP_ANCHORS = (
+    SUBTOTAL_ANCHORS
+    + GRAND_TOTAL_ANCHORS
+    + CGST_ANCHORS
+    + SGST_ANCHORS
+    + IGST_ANCHORS
+    + CESS_ANCHORS
+    + [
+        r"amount\s*in\s*words", r"rupees\s*only", r"\bonly\b\s*$",
+        r"\bbank\b", r"\bifsc\b", r"account\s*no", r"\bswift\b",
+        r"round\s*-?\s*off", r"\bdiscount\s*total\b",
+        r"terms\s*(?:&|and)\s*conditions", r"payment\s*terms",
+        r"page\s*\d+\s*(?:of|/)\s*\d+", r"declaration",
+        r"authorised?\s*signatory", r"for\s+[\w\s]+(?:pvt|ltd|llp)",
+    ]
+)

@@ -33,3 +33,11 @@ class ValidationFailure(InvoiceProcessingError):
 
 class VendorNotFound(InvoiceProcessingError):
     """Raised when vendor matching cannot find any candidate vendor."""
+
+
+class InvalidUploadFile(InvoiceProcessingError):
+    """Raised when an uploaded file fails basic validation (empty, oversized, no filename)."""
+
+
+class DuplicateInvoiceError(InvoiceProcessingError):
+    """Raised when a matched vendor already has an invoice with the same invoice_number."""
