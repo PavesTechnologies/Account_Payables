@@ -67,6 +67,18 @@ class VendorDAO:
 
         return query.first() is not None
 
+    def get_vendor_by_gstin(
+        self,
+        gstin: str,
+        exclude_vendor_id: Optional[int] = None,
+    ) -> Optional[Vendor]:
+
+        query = self.db.query(Vendor).filter(Vendor.gstin == gstin)
+        if exclude_vendor_id is not None:
+            query = query.filter(Vendor.vendor_id != exclude_vendor_id)
+
+        return query.first()
+
     def pan_number_exists(
         self,
         pan_number: str,

@@ -458,6 +458,30 @@ INSERT INTO payment_term (term_name, due_days, discount_percent, discount_days, 
 ('Net 60', 60, 0, 0, TRUE);
 
 INSERT INTO status_master (module_name, status_code, status_name, display_order) VALUES
+status_master (module_name, status_code, status_name, display_order)
+-- 1	"VENDOR"	"PENDING"	"Pending Approval"	1
+-- 2	"VENDOR"	"ACTIVE"	"Active"	2
+-- 3	"VENDOR"	"INACTIVE"	"Inactive"	3
+-- 4	"VENDOR"	"BLOCKED"	"Blocked"	4
+-- 5	"INVOICE"	"DRAFT"	"Draft"	1
+-- 6	"INVOICE"	"OCR_REVIEW_PENDING"	"Under OCR Review"	2
+-- 7	"INVOICE"	"OCR_FAILED"	"OCR Failed"	3
+-- 8	"INVOICE"	"PENDING_APPROVAL"	"Pending Approval"	4
+-- 9	"INVOICE"	"APPROVED"	"Approved"	5
+-- 10	"INVOICE"	"REJECTED"	"Rejected"	6
+-- 11	"INVOICE"	"PARTIALLY_PAID"	"Partially Paid"	7
+-- 12	"INVOICE"	"PAID"	"Paid"	8
+-- 13	"INVOICE"	"DISPUTED"	"Disputed"	9
+-- 14	"PO"	"OPEN"	"Open"	1
+-- 15	"PO"	"CLOSED"	"Closed"	2
+-- 16	"PO"	"CANCELLED"	"Cancelled"	3
+-- 17	"APPROVAL"	"PENDING"	"Pending"	1
+-- 18	"APPROVAL"	"APPROVED"	"Approved"	2
+-- 19	"APPROVAL"	"REJECTED"	"Rejected"	3
+-- 20	"PAYMENT"	"SCHEDULED"	"Scheduled"	1
+-- 21	"PAYMENT"	"SENT"	"Sent"	2
+-- 22	"PAYMENT"	"CLEARED"	"Cleared"	3
+-- 23	"PAYMENT"	"FAILED"	"Failed"	4
 ('VENDOR','PENDING','Pending Approval',1), ('VENDOR','ACTIVE','Active',2),
 ('VENDOR','INACTIVE','Inactive',3), ('VENDOR','BLOCKED','Blocked',4),
 ('INVOICE','DRAFT','Draft',1), ('INVOICE','PENDING_APPROVAL','Pending Approval',2),

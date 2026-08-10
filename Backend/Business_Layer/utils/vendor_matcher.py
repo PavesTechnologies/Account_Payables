@@ -12,35 +12,33 @@ Backend.Business_Layer.services.vendor_service, keeping this module's
 from __future__ import annotations
 
 from typing import Dict
+from sqlalchemy.orm import Session
 
 from Backend.API_Layer.interface.invoice_process_interface import ExtractedInvoice, VendorMatch
+from Backend.Data_Access_Layer.dao.vendor_dao import VendorDAO
 
-GSTIN_MATCH_CONFIDENCE = 98.0
-NAME_MATCH_CONFIDENCE = 85.0
+GSTIN_MATCH_CONFIDENCE = 100.0
 
-# Placeholder vendor directory — stands in for the real vendor master lookup.
-_MOCK_VENDORS_BY_GSTIN: Dict[str, int] = {
-    "27ABCDE1234F1Z5": 1,
-}
-_MOCK_VENDORS_BY_NAME: Dict[str, int] = {
-    "abc enterprises": 1,
-}
+def match_vendor(
+    extracted: ExtractedInvoice,
+    db: Session,
+) -> VendorMatch:
+    vendor_dao = VendorDAO(db)
 
-
-def match_vendor(extracted: ExtractedInvoice) -> VendorMatch:
-    """Match an ExtractedInvoice against the (currently mocked) vendor master.
-
-    Tries GSTIN first (unique and authoritative when present), then
-    falls back to a normalized vendor-name lookup.
-    """
     if extracted.gstin:
-        vendor_id = _MOCK_VENDORS_BY_GSTIN.get(extracted.gstin.strip().upper())
-        if vendor_id is not None:
-            return VendorMatch(matched=True, vendor_id=vendor_id, confidence=GSTIN_MATCH_CONFIDENCE)
+        vendor_details = vendor_dao.get_vendor_by_gstin(
+            extracted.gstin
+        )
 
-    if extracted.vendor_name:
-        vendor_id = _MOCK_VENDORS_BY_NAME.get(extracted.vendor_name.strip().lower())
-        if vendor_id is not None:
-            return VendorMatch(matched=True, vendor_id=vendor_id, confidence=NAME_MATCH_CONFIDENCE)
+        if vendor_details:
+            return VendorMatch(
+                matched=True,
+                vendor_id=vendor_details.vendor_id,
+                confidence=GSTIN_MATCH_CONFIDENCE,
+            )
 
-    return VendorMatch(matched=False, vendor_id=None, confidence=0.0)
+    return VendorMatch(
+        matched=False,
+        vendor_id=None,
+        confidence=0.0,
+    )

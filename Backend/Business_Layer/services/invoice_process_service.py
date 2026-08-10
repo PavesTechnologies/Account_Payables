@@ -41,7 +41,8 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     UploadDocumentResponse,
     UploadPageSummary,
 )
-
+from Backend.Business_Layer.utils.vendor_matcher import match_vendor
+from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 logger = logging.getLogger(__name__)
 
 _IMAGE_CONTAINERS = {"PNG", "JPEG", "TIFF"}
@@ -158,10 +159,6 @@ def validate_invoice(extracted: ExtractedInvoice) -> ValidationResult:
     return validators.validate_invoice(extracted)
 
 
-def match_vendor(extracted: ExtractedInvoice) -> VendorMatch:
-    """Stage: vendor master matching (placeholder until vendor DB integration)."""
-    return vendor_matcher.match_vendor(extracted)
-
 
 def _apply_textract_fallback(document: DocumentResult, filename: str) -> DocumentResult:
     """Escalate to AWS Textract when quality assessment flags the document as poor.
@@ -181,7 +178,7 @@ def _apply_textract_fallback(document: DocumentResult, filename: str) -> Documen
         return document
 
 
-def process_invoice(filename: str, content: bytes) -> FinalResponse:
+def process_invoice(filename: str, content: bytes, db) -> FinalResponse:
     """Production pipeline: reuses every stage above plus quality-gated OCR fallback."""
     document = extract_document(filename, content)
 
@@ -196,7 +193,7 @@ def process_invoice(filename: str, content: bytes) -> FinalResponse:
 
     extracted = extract_invoice_fields(document)
     validation = validate_invoice(extracted)
-    vendor_match = match_vendor(extracted)
+    vendor_match = match_vendor(extracted, db=db)
     final_confidence = confidence_util.calculate_confidence(
         document, quality, extracted, validation, vendor_match
     )
@@ -208,3 +205,6 @@ def process_invoice(filename: str, content: bytes) -> FinalResponse:
         vendor_match=vendor_match,
         confidence=final_confidence,
     )
+def upload_to_db(invoice, db):
+    invoice_dao = InvoiceDAO(db)
+    invoice_dao.create_invoice(invoice)

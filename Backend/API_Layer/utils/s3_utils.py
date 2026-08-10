@@ -4,6 +4,7 @@ from fastapi import UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from Backend.config.env_loader import get_env_var
+from datetime import datetime
 
 
 AWS_ACCESS_KEY = get_env_var("AWS_ACCESS_KEY_ID")
@@ -24,18 +25,38 @@ s3_client = boto3.client(
 )
 
 
+
 def upload_to_s3(file: UploadFile) -> dict:
-    """Streams a file into S3 while retaining its content formatting."""
     try:
+        now = datetime.utcnow()
+
+        s3_key = (
+            f"invoices/"
+            f"{now.year}/"
+            f"{now.month:02d}/"
+            f"{file.filename}"
+        )
+
         s3_client.upload_fileobj(
             file.file,
             BUCKET_NAME,
-            file.filename,
-            ExtraArgs={"ContentType": file.content_type}
+            s3_key,
+            ExtraArgs={
+                "ContentType": file.content_type
+            }
         )
-        return {"status": "success", "filename": file.filename}
+
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "filepath": s3_key,
+        }
+
     except ClientError as e:
-        raise HTTPException(status_code=500, detail=f"S3 Upload failed: {e.response['Error']['Message']}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"S3 Upload failed: {e.response['Error']['Message']}"
+        )
 
 
 def view_from_s3(filename: str) -> StreamingResponse:

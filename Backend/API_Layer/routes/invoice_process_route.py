@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Request
 
 from Backend.Business_Layer.services import invoice_process_service as service
 from Backend.Business_Layer.utils.exceptions import (
@@ -34,7 +34,8 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     VendorMatch,
     UploadDocumentResponse,
 )
-
+from Backend.Business_Layer.utils.vendor_matcher import match_vendor as vendor_matcher
+from Backend.API_Layer.utils.s3_utils import upload_to_s3
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -106,24 +107,39 @@ def validate_fields(extracted_invoice: ExtractedInvoice):
 # 4. Match Vendor (developer API)
 # ---------------------------------------------------------
 @router.post("/match-vendor", response_model=VendorMatch)
-def match_vendor(extracted_invoice: ExtractedInvoice):
-    """Match an ExtractedInvoice against the vendor master (currently mocked)."""
+def match_vendor(
+    extracted_invoice: ExtractedInvoice,
+    http_request: Request,
+):
+    """Match an ExtractedInvoice against the vendor master."""
+
     try:
-        return service.match_vendor(extracted_invoice)
+        db = http_request.state.db
+
+        return vendor_matcher(
+            extracted=extracted_invoice,
+            db=db,
+        )
 
     except VendorNotFound as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(
+            status_code=404,
+            detail=str(e),
+        )
 
     except Exception as e:
         logger.exception("match-vendor failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
 
 
 # ---------------------------------------------------------
 # 5. Process Invoice (production API)
 # ---------------------------------------------------------
 @router.post("/process-invoice", response_model=FinalResponse)
-async def process_invoice(file: UploadFile = File(...)):
+async def process_invoice(http_request: Request, file: UploadFile = File(...)):
     """Run the complete invoice processing pipeline end to end.
 
     extract_document -> quality_assessment -> (Textract fallback if poor)
@@ -135,7 +151,11 @@ async def process_invoice(file: UploadFile = File(...)):
     content = await file.read()
 
     try:
-        return service.process_invoice(file.filename, content)
+        upload_result =upload_to_s3(file.filename, content)
+        db = http_request.state.db
+        process_result = service.process_invoice(file.filename, content, db)
+        update_result = service.upload_to_db()
+
 
     except UnsupportedFileType as e:
         raise HTTPException(status_code=415, detail=str(e))

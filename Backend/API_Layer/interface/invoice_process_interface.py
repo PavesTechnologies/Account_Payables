@@ -9,9 +9,9 @@ on the same shapes without importing each other.
 """
 from __future__ import annotations
 
-import datetime
-import decimal
-import enum
+from datetime import date
+from decimal import Decimal
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 # =====================================================
 
 
-class TechnicalDocumentType(str, enum.Enum):
+class TechnicalDocumentType(str, Enum):
     """Result of technical (non-business) document classification."""
 
     TEXT_PDF = "TEXT_PDF"
@@ -131,18 +131,18 @@ class ExtractedInvoice(BaseModel):
     """
 
     invoice_number: Optional[str] = None
-    invoice_date: Optional[datetime.date] = None
-    due_date: Optional[datetime.date] = None
+    invoice_date: Optional[date] = None
+    due_date: Optional[date] = None
     gstin: Optional[str] = None
     buyer_gstin: Optional[str] = None
     vendor_name: Optional[str] = None
     po_number: Optional[str] = None
-    subtotal: Optional[decimal.Decimal] = None
-    cgst: Optional[decimal.Decimal] = None
-    sgst: Optional[decimal.Decimal] = None
-    igst: Optional[decimal.Decimal] = None
-    cess: Optional[decimal.Decimal] = None
-    total: Optional[decimal.Decimal] = None
+    subtotal: Optional[Decimal] = None
+    cgst: Optional[Decimal] = None
+    sgst: Optional[Decimal] = None
+    igst: Optional[Decimal] = None
+    cess: Optional[Decimal] = None
+    total: Optional[Decimal] = None
     payment_terms: Optional[str] = None
     currency: Optional[str] = None
     field_confidences: Dict[str, float] = Field(default_factory=dict)
@@ -192,6 +192,25 @@ class ConfidenceResult(BaseModel):
 # =====================================================
 # Final Orchestrated Response
 # =====================================================
+
+class InvoiceType(str, Enum):
+    PO = "PO"
+    NON_PO = "NON_PO"
+
+
+class UploadInvoiceRequest(BaseModel):
+    invoice_number: str
+    vendor_id: int
+    invoice_type: InvoiceType
+    invoice_date: date
+    due_date: date
+    currency_id: int
+
+    gross_amount: Decimal
+    discount_amount: Decimal = Field(default=Decimal("0"))
+    tax_amount: Decimal = Field(default=Decimal("0"))
+    net_amount: Decimal
+
 
 
 class FinalResponse(BaseModel):
