@@ -142,6 +142,9 @@ class ExtractedInvoice(BaseModel):
     sgst: Optional[Decimal] = None
     igst: Optional[Decimal] = None
     cess: Optional[Decimal] = None
+    tax_type: Optional[str] = None
+    tax_rate: Optional[Decimal] = None
+    tax_amount: Optional[Decimal] = None
     total: Optional[Decimal] = None
     payment_terms: Optional[str] = None
     currency: Optional[str] = None

@@ -18,6 +18,7 @@ of preferring "Manan Agency" over "GSTIN..." or "Tax Invoice".
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Set
 
 from Backend.API_Layer.interface.invoice_process_interface import DocumentResult
@@ -36,6 +37,14 @@ _TOP_SECTION_BONUS = 20.0
 _NEAR_VENDOR_GSTIN_BONUS = 15.0
 _TITLE_OR_UPPER_CASE_BONUS = 8.0
 _BOTTOM_SECTION_PENALTY = -15.0
+_ENTITY_BOUNDARY_PATTERN = re.compile(
+    r"\b(?:client|buyer|bill\s*to|customer|ship\s*to|consignee|sold\s*to|recipient)\b",
+    re.IGNORECASE,
+)
+_COMPANY_SUFFIX_BOUNDARY_PATTERN = re.compile(
+    r"\b(?:pvt\.?\s*ltd\.?|private\s*limited|ltd\.?|llp|inc\.?|llc|corp\.?)\b",
+    re.IGNORECASE,
+)
 
 
 def _digit_ratio(text: str) -> float:
@@ -47,9 +56,65 @@ def _digit_ratio(text: str) -> float:
 def _is_blocklisted(text: str) -> bool:
     return anchors.matches_any(text, anchors.VENDOR_LINE_BLOCKLIST)
 
+def _is_party_label(text: str) -> bool:
+    """Return True when text is another party/role label, not a vendor name."""
+    normalized = " ".join(text.lower().split()).strip(" :-")
+
+    party_labels = {
+        "vendor",
+        "seller",
+        "supplier",
+        "from",
+        "billed by",
+        "sold by",
+
+        # Buyer-side labels
+        "client",
+        "buyer",
+        "customer",
+        "bill to",
+        "billed to",
+        "sold to",
+        "ship to",
+        "shipped to",
+        "consignee",
+        "recipient",
+    }
+
+    return normalized in party_labels
+
+
+def _trim_at_entity_boundary(text: str) -> str:
+    """Keep the seller name and drop any following buyer/client entity block."""
+    cleaned = text.strip(" :-\t")
+    match = _ENTITY_BOUNDARY_PATTERN.search(cleaned)
+    if match:
+        cleaned = cleaned[:match.start()].strip(" :-\t")
+
+    suffix_match = _COMPANY_SUFFIX_BOUNDARY_PATTERN.search(cleaned)
+    if suffix_match:
+        remainder = cleaned[suffix_match.end():].strip(" :-\t")
+        if remainder and _looks_like_new_entity(remainder):
+            cleaned = cleaned[:suffix_match.end()].strip(" :-\t")
+
+    return cleaned
+
+
+def _looks_like_new_entity(text: str) -> bool:
+    """Best-effort guard for OCR-merged seller/client names on one line."""
+    if anchors.matches_any(text, anchors.ENTITY_BOUNDARY_MARKERS):
+        return True
+    words = [word for word in re.split(r"\s+", text.strip()) if word]
+    if len(words) < 2:
+        return False
+    titleish = sum(1 for word in words[:4] if word[:1].isupper() or word.isupper())
+    return titleish >= 2 and _digit_ratio(text) <= _MAX_DIGIT_RATIO
+
 
 def _is_rejected_line(line: geometry.Line, text: str) -> bool:
     """Lines that can never be a vendor name, regardless of how company-like they look."""
+    if _is_party_label(text):
+        return True
     if not (_MIN_LINE_LENGTH <= len(text) <= _MAX_LINE_LENGTH):
         return True
     if _is_blocklisted(text):
@@ -100,16 +165,21 @@ class VendorNameExtractor(BaseFieldExtractor):
     def _label_candidates(self, hit: geometry.AnchorHit, page_lines: List[geometry.Line]) -> List[Candidate]:
         found: List[Candidate] = []
 
-        same_line_text = geometry.extract_right_of_anchor(hit).strip(" :-\t")
-        if same_line_text and not _is_blocklisted(same_line_text) and _digit_ratio(same_line_text) < _MAX_DIGIT_RATIO:
+        same_line_text = _trim_at_entity_boundary(geometry.extract_right_of_anchor(hit))
+        if (
+            same_line_text
+            and not _is_party_label(same_line_text)
+            and not _is_blocklisted(same_line_text)
+            and _digit_ratio(same_line_text) < _MAX_DIGIT_RATIO
+        ):
             found.append(Candidate(
                 value=same_line_text, raw_text=same_line_text, page_number=hit.line.page_number,
                 line=hit.line, anchor_text=hit.matched_text, relation=SAME_LINE,
             ))
-
+        
         for below in geometry.extract_below_anchor(page_lines, hit, max_lines=1):
-            text = below.text.strip()
-            if text and not _is_blocklisted(text) and _digit_ratio(text) < _MAX_DIGIT_RATIO:
+            text = _trim_at_entity_boundary(below.text)
+            if text and not _is_party_label(text) and not _is_blocklisted(text) and _digit_ratio(text) < _MAX_DIGIT_RATIO:
                 found.append(Candidate(
                     value=text, raw_text=text, page_number=below.page_number,
                     line=below, anchor_text=hit.matched_text, relation=BELOW,
@@ -120,7 +190,7 @@ class VendorNameExtractor(BaseFieldExtractor):
     def _line_candidate(
         self, line: geometry.Line, page_height: float, vendor_gstin_line_indexes: Set[int]
     ) -> Optional[Candidate]:
-        text = line.text.strip()
+        text = _trim_at_entity_boundary(line.text)
         if _is_rejected_line(line, text):
             return None
 

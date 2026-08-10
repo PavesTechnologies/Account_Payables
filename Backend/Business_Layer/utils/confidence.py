@@ -31,6 +31,18 @@ WEIGHTS = {
     "vendor": 0.20,
 }
 
+# Fields that are frequently and legitimately absent from a valid
+# invoice (single-GSTIN invoices have no buyer_gstin, cash invoices
+# have no due_date/payment_terms, non-PO invoices have no po_number,
+# many invoices carry no cess). Counting their "not found" 0.0
+# confidence in the average would penalize a correct extraction the
+# same as a genuine miss on a required field, so they're excluded from
+# the average whenever the extractor came back empty for them.
+OPTIONAL_FIELDS = frozenset({
+    "due_date", "buyer_gstin", "po_number", "cess", "payment_terms", "currency",
+    "tax_type", "tax_rate", "tax_amount",
+})
+
 
 def _ocr_confidence(document: DocumentResult, quality: DocumentQuality) -> float:
     scanned_confidences = [
@@ -46,7 +58,10 @@ def _ocr_confidence(document: DocumentResult, quality: DocumentQuality) -> float
 
 
 def _extraction_confidence(extracted: ExtractedInvoice) -> float:
-    scores = list(extracted.field_confidences.values())
+    scores = [
+        conf for name, conf in extracted.field_confidences.items()
+        if not (name in OPTIONAL_FIELDS and getattr(extracted, name, None) is None)
+    ]
     return sum(scores) / len(scores) if scores else 0.0
 
 

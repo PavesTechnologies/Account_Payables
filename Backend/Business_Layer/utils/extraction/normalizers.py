@@ -26,7 +26,12 @@ NON_VALUE_WORDS = frozenset({
     "date", "no", "number", "the", "of", "to", "for", "on", "at", "and", "page",
 })
 
-AMOUNT_PATTERN = re.compile(r"(?<![\d.])\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})?(?!\d)|(?<![\d.])\d+(?:\.\d{1,2})?(?!\d)")
+AMOUNT_PATTERN = re.compile(r"(?<!\d)\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})?(?!\d)|(?<!\d)\d+(?:\.\d{1,2})?(?!\d)")
+
+# A number immediately followed by "%" is a tax *rate*, never a tax
+# *amount* ("CGST 9% Rs.225.00" must yield 225.00, not 9) — checked
+# right after every AMOUNT_PATTERN match via ``iter_amount_matches``.
+_PERCENT_SUFFIX = re.compile(r"\s*%")
 
 DATE_PATTERN = re.compile(
     r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}"
@@ -98,6 +103,21 @@ def normalize_date(raw: str) -> datetime.date:
         except ValueError:
             continue
     raise ValueError(f"Unrecognized date format: {raw!r}")
+
+
+def iter_amount_matches(text: str):
+    """Every ``AMOUNT_PATTERN`` match in ``text`` that is not a tax rate.
+
+    A rate ("9%") and its amount ("Rs.225.00") often sit on the same
+    label's line; both are digit runs, so a plain ``AMOUNT_PATTERN``
+    scan would offer the rate as a candidate value too. Skipping any
+    match immediately followed by "%" is what keeps CGST/SGST/IGST/
+    CESS extraction from ever returning a percentage as the amount.
+    """
+    for match in AMOUNT_PATTERN.finditer(text):
+        if _PERCENT_SUFFIX.match(text, match.end()):
+            continue
+        yield match
 
 
 def normalize_amount(raw: str) -> decimal.Decimal:

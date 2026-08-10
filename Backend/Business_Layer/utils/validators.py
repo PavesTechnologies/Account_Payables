@@ -68,6 +68,8 @@ def validate_totals(
     sgst: Optional[decimal.Decimal],
     igst: Optional[decimal.Decimal],
     total: Optional[decimal.Decimal],
+    cess: Optional[decimal.Decimal] = None,
+    tax_amount: Optional[decimal.Decimal] = None,
 ) -> List[str]:
     errors: List[str] = []
 
@@ -76,7 +78,15 @@ def validate_totals(
     if total is None:
         errors.append("Total is required")
 
-    amounts = {"subtotal": subtotal, "cgst": cgst, "sgst": sgst, "igst": igst, "total": total}
+    amounts = {
+        "subtotal": subtotal,
+        "cgst": cgst,
+        "sgst": sgst,
+        "igst": igst,
+        "cess": cess,
+        "tax_amount": tax_amount,
+        "total": total,
+    }
     for name, value in amounts.items():
         if value is not None and value < 0:
             errors.append(f"{name} cannot be negative ({value})")
@@ -87,7 +97,14 @@ def validate_totals(
         errors.append("Invoice cannot have both CGST/SGST and IGST applied")
 
     if subtotal is not None and total is not None:
-        expected_total = (subtotal or 0) + (cgst or 0) + (sgst or 0) + (igst or 0)
+        expected_total = (
+            (subtotal or 0)
+            + (cgst or 0)
+            + (sgst or 0)
+            + (igst or 0)
+            + (cess or 0)
+            + (tax_amount or 0)
+        )
         if abs(expected_total - total) > TOTAL_TOLERANCE:
             errors.append(
                 f"Total {total} does not match subtotal + taxes {expected_total} "
@@ -106,7 +123,8 @@ def validate_invoice(extracted: ExtractedInvoice) -> ValidationResult:
     errors.extend(validate_invoice_date(extracted.invoice_date, extracted.due_date))
     errors.extend(
         validate_totals(
-            extracted.subtotal, extracted.cgst, extracted.sgst, extracted.igst, extracted.total
+            extracted.subtotal, extracted.cgst, extracted.sgst, extracted.igst,
+            extracted.total, extracted.cess, extracted.tax_amount,
         )
     )
 

@@ -158,6 +158,29 @@ def extract_right_of_anchor(hit: AnchorHit) -> str:
     """Text on the anchor's own line, after the anchor label."""
     return hit.line.text[hit.end_char:]
 
+def horizontal_gap(a: Line, b: Line) -> float:
+    if a.x1 < b.x0:
+        return b.x0 - a.x1
+    if b.x1 < a.x0:
+        return a.x0 - b.x1
+    return 0.0
+
+
+def horizontal_overlap(a: Line, b: Line) -> float:
+    overlap = min(a.x1, b.x1) - max(a.x0, b.x0)
+    return max(0.0, overlap)
+
+
+def is_same_spatial_region(
+    anchor: Line,
+    candidate: Line,
+    max_horizontal_gap: float = 150.0,
+) -> bool:
+    gap = horizontal_gap(anchor, candidate)
+    overlap = horizontal_overlap(anchor, candidate)
+
+    return overlap > 0 or gap <= max_horizontal_gap
+
 
 def extract_below_anchor(page_lines: Sequence[Line], hit: AnchorHit, max_lines: int = 2) -> List[Line]:
     """Up to ``max_lines`` lines directly below the anchor's line on the same page."""
@@ -206,9 +229,14 @@ def nearest_section(
         candidate = by_index.get(index)
         if candidate is None:
             continue
+        matches = []
         for key, patterns in pattern_groups.items():
-            if any(re.search(pattern, candidate.text, re.IGNORECASE) for pattern in patterns):
-                return key
+            for pattern in patterns:
+                match = re.search(pattern, candidate.text, re.IGNORECASE)
+                if match:
+                    matches.append((match.start(), key))
+        if matches:
+            return min(matches, key=lambda item: item[0])[1]
         if looks_like_table_row(candidate):
             return None
 
