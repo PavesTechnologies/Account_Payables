@@ -223,6 +223,10 @@ def _patch_daos(monkeypatch):
     monkeypatch.setattr(svc, "MasterDAO", _FakeMasterDAO)
     monkeypatch.setattr(svc, "InboundDocumentDAO", _FakeInboundDocumentDAO)
     monkeypatch.setattr(svc.notifications, "notify_vendor_not_found", lambda *a, **k: None)
+    # Default: automatic vendor onboarding is not eligible, so a vendor-not-matched
+    # FinalResponse exercises the existing manual-fallback path unless a test
+    # overrides this to simulate a successful (or failing) auto-onboarding.
+    monkeypatch.setattr(svc.vendor_auto_onboarding, "auto_create_vendor_from_extraction", lambda *a, **k: None)
     yield
 
 
@@ -288,7 +292,7 @@ def test_persist_processed_invoice_duplicate_raises_and_links_inbound_document()
     assert inbound_document.invoice_id == 999
 
 
-def test_persist_processed_invoice_path_b_vendor_not_matched():
+def test_persist_processed_invoice_path_b_vendor_not_matched_and_not_auto_onboarded():
     db = _FakeDB()
     inbound_document = _inbound_document()
     final_response = _final_response(_extracted(), VendorMatch(matched=False, vendor_id=None, confidence=0.0))
@@ -299,6 +303,43 @@ def test_persist_processed_invoice_path_b_vendor_not_matched():
     assert outcome.invoice_status == invoice_status.RESPONSE_STATUS_PENDING_VENDOR_ONBOARDING
     assert inbound_document.vendor_id is None
     assert inbound_document.extraction_status == "EXTRACTED"
+
+
+def test_persist_processed_invoice_auto_onboards_vendor_and_creates_invoice(monkeypatch):
+    db = _FakeDB()
+    inbound_document = _inbound_document()
+    final_response = _final_response(_extracted(), VendorMatch(matched=False, vendor_id=None, confidence=0.0))
+
+    notify_calls = []
+    monkeypatch.setattr(svc.vendor_auto_onboarding, "auto_create_vendor_from_extraction", lambda *a, **k: 777)
+    monkeypatch.setattr(svc.notifications, "notify_vendor_not_found", lambda *a, **k: notify_calls.append(a))
+
+    outcome = svc.persist_processed_invoice(final_response, inbound_document, db, user_id="user-1")
+
+    assert outcome.invoice_id == 555  # from _FakeInvoiceDAO.create_invoice
+    assert outcome.invoice_status == invoice_status.STATUS_CODE_OCR_REVIEW_PENDING
+    assert inbound_document.vendor_id == 777
+    assert notify_calls == []  # no vendor-not-found notification once auto-onboarding succeeded
+
+    dao_instance = _FakeInvoiceDAO.instances[-1]
+    assert dao_instance.created_invoice.vendor_id == 777
+
+
+def test_persist_processed_invoice_auto_onboarding_failure_rolls_back(monkeypatch):
+    db = _FakeDB()
+    inbound_document = _inbound_document()
+    final_response = _final_response(_extracted(), VendorMatch(matched=False, vendor_id=None, confidence=0.0))
+
+    def _raise(*a, **k):
+        raise RuntimeError("DB write failed while creating the auto-onboarded vendor")
+
+    monkeypatch.setattr(svc.vendor_auto_onboarding, "auto_create_vendor_from_extraction", _raise)
+
+    with pytest.raises(RuntimeError):
+        svc.persist_processed_invoice(final_response, inbound_document, db, user_id="user-1")
+
+    assert db.rolled_back >= 1
+    assert db.committed == 0
 
 
 def test_persist_processed_invoice_unusable_extraction_marks_failed():

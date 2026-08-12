@@ -43,6 +43,17 @@ class SystemDAO:
             .first()
         )
 
+    def get_country_by_code(
+        self,
+        country_code: str,
+    ) -> Optional[Country]:
+
+        return (
+            self.db.query(Country)
+            .filter(Country.country_code == country_code)
+            .first()
+        )
+
     def delete_country(
         self,
         country: Country,

@@ -27,6 +27,7 @@ from Backend.Business_Layer.utils import (
     ocr_provider,
     pdf_utils,
     validators,
+    vendor_auto_onboarding,
     vendor_matcher,
 )
 from Backend.Business_Layer.utils.document_classifier import (
@@ -341,6 +342,38 @@ def _sum_header_tax(extracted: ExtractedInvoice) -> Decimal:
     )
 
 
+def _handle_vendor_not_found(
+    extracted: ExtractedInvoice,
+    inbound_document: InboundDocument,
+    final_response: FinalResponse,
+    db,
+) -> PersistenceOutcome:
+    """Path B: no vendor matched and automatic onboarding wasn't possible either.
+
+    Only the InboundDocument is updated (full extraction kept in
+    raw_extracted_data); Invoice creation is deferred to the manual
+    OCR-review endpoint, once a vendor is supplied. See the vendor_id
+    NOT NULL constraint discussion in the implementation plan.
+    """
+    inbound_document.vendor_id = None
+    inbound_document.extraction_status = "EXTRACTED"
+    inbound_document.extraction_confidence = _to_confidence_decimal(
+        final_response.confidence.overall_confidence
+    )
+    inbound_document.raw_extracted_data = extracted.model_dump(mode="json")
+    db.commit()
+
+    notifications.notify_vendor_not_found(
+        db, extracted, inbound_document, reason="No vendor matched the extracted GSTIN"
+    )
+
+    return PersistenceOutcome(
+        inbound_document_id=inbound_document.inbound_document_id,
+        invoice_id=None,
+        invoice_status=invoice_status.RESPONSE_STATUS_PENDING_VENDOR_ONBOARDING,
+    )
+
+
 def persist_processed_invoice(
     final_response: FinalResponse,
     inbound_document: InboundDocument,
@@ -349,15 +382,20 @@ def persist_processed_invoice(
 ) -> PersistenceOutcome:
     """Persist the result of ``process_invoice`` per the Path A / Path B split.
 
-    Path A (vendor matched): Invoice + InvoiceLine(s) + InvoiceAttachment +
-    InvoiceIssue(s) in one transaction, status OCR_REVIEW_PENDING.
-    Path B (vendor not matched): only InboundDocument is updated (full
-    extraction kept in raw_extracted_data); Invoice creation is deferred to
-    the manual OCR-review endpoint, once a vendor is supplied. See the
-    vendor_id NOT NULL constraint discussion in the implementation plan.
+    Path A (vendor matched, or auto-onboarded from a GST-verified GSTIN):
+    Invoice + InvoiceLine(s) + InvoiceAttachment + InvoiceIssue(s) in one
+    transaction, status OCR_REVIEW_PENDING. When a new vendor is
+    auto-created, it is part of that same transaction (see
+    vendor_auto_onboarding.auto_create_vendor_from_extraction) — nothing
+    commits until the invoice itself is ready to commit.
+    Path B (vendor not matched and not eligible for automatic onboarding):
+    see _handle_vendor_not_found.
     """
     extracted = final_response.extracted_invoice
-
+    print("Confidence Matrix:", final_response.confidence.overall_confidence)
+    print("ocr_confidence:", final_response.confidence.ocr_confidence)
+    print("extraction_confidence:", final_response.confidence.extraction_confidence)
+    print("validation_confidence:", final_response.confidence.validation_confidence)
     unusable_reason = invoice_status.is_extraction_unusable(extracted)
     if unusable_reason is not None:
         mark_inbound_document_failed(inbound_document, db, final_response)
@@ -368,26 +406,19 @@ def persist_processed_invoice(
     vendor_match = final_response.vendor_match
     invoice_dao = InvoiceDAO(db)
 
-    if not vendor_match.matched or not vendor_match.vendor_id:
-        inbound_document.vendor_id = None
-        inbound_document.extraction_status = "EXTRACTED"
-        inbound_document.extraction_confidence = _to_confidence_decimal(
-            final_response.confidence.overall_confidence
-        )
-        inbound_document.raw_extracted_data = extracted.model_dump(mode="json")
-        db.commit()
+    if vendor_match.matched and vendor_match.vendor_id:
+        vendor_id = vendor_match.vendor_id
+    else:
+        try:
+            vendor_id = vendor_auto_onboarding.auto_create_vendor_from_extraction(
+                extracted, final_response.confidence.ocr_confidence, db, user_id,
+            )
+        except Exception:
+            db.rollback()
+            raise
 
-        notifications.notify_vendor_not_found(
-            db, extracted, inbound_document, reason="No vendor matched the extracted GSTIN"
-        )
-
-        return PersistenceOutcome(
-            inbound_document_id=inbound_document.inbound_document_id,
-            invoice_id=None,
-            invoice_status=invoice_status.RESPONSE_STATUS_PENDING_VENDOR_ONBOARDING,
-        )
-
-    vendor_id = vendor_match.vendor_id
+        if vendor_id is None:
+            return _handle_vendor_not_found(extracted, inbound_document, final_response, db)
 
     existing = invoice_dao.get_invoice_by_vendor_and_number(vendor_id, extracted.invoice_number)
     if existing is not None:

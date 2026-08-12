@@ -144,14 +144,36 @@ class BaseFieldExtractor(ABC):
 
     def extract(self, document: DocumentResult) -> FieldExtractionMeta:
         candidates = self.collect_candidates(document)
+
+        print(f"\n===== {self.field_name} =====")
+        print(f"Candidates collected: {len(candidates)}")
+
         if not candidates:
+            print("NO CANDIDATES")
             return FieldExtractionMeta()
 
-        for candidate in rank_candidates(candidates):
+        ranked = rank_candidates(candidates)
+
+        for candidate in ranked:
+            print(
+                f"RAW={candidate.raw_text!r} "
+                f"VALUE={candidate.value!r} "
+                f"ANCHOR={candidate.anchor_text!r} "
+                f"RELATION={candidate.relation} "
+                f"VALID={candidate.valid_format} "
+                f"SCORE={candidate.score} "
+                f"MIN_ACCEPT={scoring.MIN_ACCEPT_SCORE}"
+            )
+
             if candidate.value is None:
                 continue
+
             if candidate.score < scoring.MIN_ACCEPT_SCORE:
+                print("REJECTED: score below MIN_ACCEPT_SCORE")
                 break
+
+            print("ACCEPTED")
+
             return FieldExtractionMeta(
                 value=candidate.value,
                 confidence=scoring.confidence_from_score(candidate.score),
@@ -160,4 +182,5 @@ class BaseFieldExtractor(ABC):
                 method="+".join(candidate.method_tags) or "NONE",
             )
 
+        print("NO USABLE CANDIDATE")
         return FieldExtractionMeta()

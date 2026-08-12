@@ -76,7 +76,7 @@ def notify_vendor_not_found(
     message = _build_message(extracted, inbound_document, reason)
     for recipient in recipients:
         try:
-            send_mail(message=message, to_address=recipient)
+            send_mail(to_mail=recipient, subject=message["subject"], content=message["body"])
         except Exception:
             logger.exception(
                 "Failed to send vendor-not-found notification to '%s' for inbound_document_id=%s",

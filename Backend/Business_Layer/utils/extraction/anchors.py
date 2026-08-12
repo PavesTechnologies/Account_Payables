@@ -50,16 +50,16 @@ VENDOR_GSTIN_ANCHORS = [
 # ---------------------------------------------------------------------------
 
 INVOICE_DATE_ANCHORS = [
-    r"invoice\s*date", r"date\s*of\s*invoice", r"bill\s*date",
-    # Bare "Date:" is extremely common as the sole invoice-date label
-    # on compact invoices (often sharing a line with "Invoice No").
-    # Excluded whenever it's actually some other date field's label —
-    # PO/dispatch/due/order/delivery/ship date all use "Date" as their
-    # own suffix and must never be mistaken for the invoice date.
-    r"(?<!po\s)(?<!dispatch\s)(?<!due\s)(?<!order\s)(?<!delivery\s)(?<!ship\s)\bdate\b",
+    r"\binvoice\s*date\b",
+    r"\bdate\s*of\s*invoice\b",
+    r"\bbill\s*date\b",
 ]
-DUE_DATE_ANCHORS = [r"due\s*date", r"payment\s*due\s*date", r"payment\s*due"]
 
+DUE_DATE_ANCHORS = [
+    r"\bdue\s*date\b",
+    r"\bpayment\s*due\s*date\b",
+    r"\bpayment\s*due\b",
+]
 # ---------------------------------------------------------------------------
 # Amounts
 # ---------------------------------------------------------------------------

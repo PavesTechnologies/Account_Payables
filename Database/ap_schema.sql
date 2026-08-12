@@ -519,4 +519,5 @@ INSERT INTO system_configuration (config_key, config_value, data_type, descripti
 ('GRN_MANDATORY', 'FALSE', 'BOOLEAN', 'Whether goods-based invoices require a matching GRN'),
 ('PAYMENT_REMINDER_DAYS_BEFORE_DUE', '3', 'NUMBER', 'Days before due_date to notify AP Executive of an unscheduled invoice'),
 ('DEFAULT_BASE_CURRENCY', 'INR', 'STRING', 'Company base currency for reporting and threshold comparisons'),
-('VENDOR_BANK_DUPLICATE_ACROSS_VENDORS', 'false', 'BOOLEAN', 'Whether a vendor bank account_number/IBAN must be unique across all vendors, not just within one vendor');
+('VENDOR_BANK_DUPLICATE_ACROSS_VENDORS', 'false', 'BOOLEAN', 'Whether a vendor bank account_number/IBAN must be unique across all vendors, not just within one vendor'),
+('INVOICE_INTAKE_NOTIFICATION_EMAILS', 'Jagadish.Pannala@pavestechnologies.com', 'STRING', 'Email recipients for invoice vendor-not-found and vendor-auto-onboarding notifications');

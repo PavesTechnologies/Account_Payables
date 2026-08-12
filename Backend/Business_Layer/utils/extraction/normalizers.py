@@ -34,16 +34,49 @@ AMOUNT_PATTERN = re.compile(r"(?<!\d)\d{1,3}(?:,\d{2,3})*(?:\.\d{1,2})?(?!\d)|(?
 _PERCENT_SUFFIX = re.compile(r"\s*%")
 
 DATE_PATTERN = re.compile(
-    r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}"
+    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}"
+    r"|\d{1,2}[/.-][A-Za-z]{3,9}[/.-]\d{2,4}"
     r"|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}"
-    r"|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}"
+    r"|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}",
+    re.IGNORECASE,
 )
 _DATE_FORMATS = (
-    "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
-    "%d/%m/%y", "%d-%m-%y",
-    "%d %B %Y", "%d %b %Y",
-    "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y",
-    "%Y-%m-%d", "%Y/%m/%d",
+    # Numeric Indian formats
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%d.%m.%Y",
+    "%d/%m/%y",
+    "%d-%m-%y",
+    "%d.%m.%y",
+
+    # Day-MonthName-Year
+    "%d-%b-%Y",
+    "%d-%b-%y",
+    "%d/%b/%Y",
+    "%d/%b/%y",
+    "%d.%b.%Y",
+    "%d.%b.%y",
+
+    "%d %b %Y",
+    "%d %b %y",
+    "%d %B %Y",
+    "%d %B %y",
+
+    # MonthName-Day-Year
+    "%b %d, %Y",
+    "%b %d, %y",
+    "%B %d, %Y",
+    "%B %d, %y",
+
+    "%b %d %Y",
+    "%b %d %y",
+    "%B %d %Y",
+    "%B %d %y",
+
+    # ISO
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%Y.%m.%d",
 )
 
 _CURRENCY_SYMBOLS = {"₹": "INR", "$": "USD", "€": "EUR", "£": "GBP"}
@@ -93,6 +126,14 @@ def normalize_gstin(raw: str) -> str:
     if not match:
         raise ValueError(f"Not a valid GSTIN: {raw!r}")
     return match.group(1)
+
+
+def pan_from_gstin(gstin: str) -> str:
+    """Extract the embedded PAN (GSTIN positions 3-12) from a valid-format GSTIN."""
+    cleaned = gstin.strip().upper()
+    if not is_valid_gstin_format(cleaned):
+        raise ValueError(f"Cannot extract PAN from an invalid GSTIN: {gstin!r}")
+    return cleaned[2:12]
 
 
 def normalize_date(raw: str) -> datetime.date:
