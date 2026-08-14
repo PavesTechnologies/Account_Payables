@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from Backend.Data_Access_Layer.models.base import Base
 
 if TYPE_CHECKING:
-    from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, GoodsReceipt
+    from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, GoodsReceipt, PurchaseOrderLine
     from Backend.Data_Access_Layer.models.vendor import Vendor
     from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
     from Backend.Data_Access_Layer.models.approval import InvoiceApproval
@@ -122,6 +122,7 @@ class InvoiceLine(Base):
     __table_args__ = (
         ForeignKeyConstraint(['invoice_id'], ['ap.invoice.invoice_id'], ondelete='CASCADE', name='invoice_line_invoice_id_fkey'),
         ForeignKeyConstraint(['tax_type_id'], ['ap.tax_type.tax_type_id'], name='invoice_line_tax_type_id_fkey'),
+        ForeignKeyConstraint(['po_line_id'], ['ap.purchase_order_line.po_line_id'], ondelete='SET NULL', name='invoice_line_po_line_id_fkey'),
         PrimaryKeyConstraint('invoice_line_id', name='invoice_line_pkey'),
         UniqueConstraint('invoice_id', 'line_number', name='invoice_line_invoice_id_line_number_key'),
         {'schema': 'ap'}
@@ -136,6 +137,8 @@ class InvoiceLine(Base):
     line_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     tax_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default=text('0'))
     tax_type_id: Mapped[Optional[int]] = mapped_column(Integer)
+    po_line_id: Mapped[Optional[int]] = mapped_column(Integer)
 
     invoice: Mapped['Invoice'] = relationship('Invoice', back_populates='invoice_line')
     tax_type: Mapped[Optional['TaxType']] = relationship('TaxType', back_populates='invoice_line')
+    po_line: Mapped[Optional['PurchaseOrderLine']] = relationship('PurchaseOrderLine', back_populates='invoice_line')

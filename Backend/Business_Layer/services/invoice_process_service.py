@@ -56,6 +56,7 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     UploadDocumentResponse,
     UploadPageSummary,
 )
+from Backend.Business_Layer.utils.vendor_auto_onboarding import get_numeric_system_config
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor
 from Backend.Data_Access_Layer.dao.inbound_document_dao import InboundDocumentDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
@@ -67,6 +68,17 @@ from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceAttachment,
 logger = logging.getLogger(__name__)
 
 _IMAGE_CONTAINERS = {"PNG", "JPEG", "TIFF"}
+
+PO_MANDATORY_CONFIG_KEY = "PO_MANDATORY"
+AUTO_APPROVAL_LIMIT_CONFIG_KEY = "AUTO_APPROVAL_LIMIT"
+ISSUE_TYPE_PO_REQUIRED = "PO_REQUIRED"
+
+
+def _config_bool(db, key: str) -> bool:
+    config = MasterDAO(db).get_system_config_by_key(key)
+    if config is None:
+        return False
+    return config.config_value.strip().lower() == "true"
 
 
 def _average_word_confidence(words):
@@ -596,12 +608,49 @@ def apply_ocr_review(
         invoice.status_id = approval_status.status_id
         invoice.updated_by = user_id
 
+        if _config_bool(db, PO_MANDATORY_CONFIG_KEY) and invoice.po_id is None:
+            po_required_issue = invoice_status.build_issue(
+                invoice_status.ISSUE_SOURCE_VALIDATION,
+                ISSUE_TYPE_PO_REQUIRED,
+                invoice_status.SEVERITY_ERROR,
+                "PO_MANDATORY is enabled but this invoice has no linked purchase order",
+            )
+            po_required_issue.invoice_id = invoice.invoice_id
+            invoice_dao.create_invoice_issue(po_required_issue)
+
+        _maybe_auto_approve(invoice, invoice_dao, db)
+
         db.commit()
         db.refresh(invoice)
         return invoice
     except Exception:
         db.rollback()
         raise
+
+
+def _maybe_auto_approve(invoice: Invoice, invoice_dao: InvoiceDAO, db) -> None:
+    """AUTO_APPROVAL_LIMIT (system_configuration): invoices at or below this
+    amount skip manual approval entirely IF no open InvoiceIssue remains —
+    per Database/Database_README.md Module 6, the fully-automated path never
+    creates an InvoiceApproval row, it just moves straight to APPROVED.
+    Only applies while the invoice is currently PENDING_APPROVAL.
+    """
+    pending_status = invoice_dao.get_status_by_code(invoice_status.STATUS_CODE_PENDING_APPROVAL)
+    if pending_status is None or invoice.status_id != pending_status.status_id:
+        return
+
+    limit = get_numeric_system_config(db, AUTO_APPROVAL_LIMIT_CONFIG_KEY)
+    if limit is None or invoice.net_amount > limit:
+        return
+
+    if invoice_dao.get_open_invoice_issues(invoice.invoice_id):
+        return
+
+    approved_status = invoice_dao.get_status_by_code("APPROVED")
+    if approved_status is None:
+        return
+
+    invoice.status_id = approved_status.status_id
 
 
 def _create_invoice_from_review(
@@ -703,3 +752,59 @@ def _apply_line_review_updates(existing_line: InvoiceLine, line_review: InvoiceL
         value = getattr(line_review, field_name)
         if value is not None:
             setattr(existing_line, field_name, value)
+
+
+def get_review_queue(db, skip: int = 0, limit: int = 50) -> tuple[list, int, int]:
+    """OCR review queue, derived from existing rows (no dedicated queue table):
+
+    Path A: Invoice.status_code == OCR_REVIEW_PENDING (invoice already
+    created, awaiting the AP Executive's confirmation).
+    Path B: InboundDocument.extraction_status == EXTRACTED and invoice_id
+    IS NULL (vendor was never matched, so no Invoice exists yet).
+
+    Both sets are fetched in full (queue volume is operational, not
+    unbounded) and merged by created_at/received_at descending before
+    skip/limit is applied as one combined pagination window.
+    """
+    invoice_dao = InvoiceDAO(db)
+    inbound_document_dao = InboundDocumentDAO(db)
+
+    path_a_invoices = invoice_dao.get_invoices_by_status_code(invoice_status.STATUS_CODE_OCR_REVIEW_PENDING)
+    path_b_documents = inbound_document_dao.get_awaiting_vendor_assignment()
+
+    combined = [("A", invoice.created_at, invoice) for invoice in path_a_invoices]
+    combined += [("B", document.received_at, document) for document in path_b_documents]
+    combined.sort(key=lambda entry: entry[1], reverse=True)
+
+    window = combined[skip: skip + limit]
+
+    items = []
+    for path, _, record in window:
+        if path == "A":
+            items.append({
+                "path": "PATH_A",
+                "inbound_document_id": record.inbound_document_id,
+                "invoice_id": record.invoice_id,
+                "invoice_number": record.invoice_number,
+                "vendor_id": record.vendor_id,
+                "file_name": None,
+                "status_code": invoice_status.STATUS_CODE_OCR_REVIEW_PENDING,
+                "net_amount": record.net_amount,
+                "extraction_confidence": None,
+                "created_at": record.created_at,
+            })
+        else:
+            items.append({
+                "path": "PATH_B",
+                "inbound_document_id": record.inbound_document_id,
+                "invoice_id": None,
+                "invoice_number": None,
+                "vendor_id": record.vendor_id,
+                "file_name": record.file_name,
+                "status_code": record.extraction_status,
+                "net_amount": None,
+                "extraction_confidence": record.extraction_confidence,
+                "created_at": record.received_at,
+            })
+
+    return items, len(path_a_invoices), len(path_b_documents)

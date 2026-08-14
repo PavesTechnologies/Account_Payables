@@ -1,5 +1,5 @@
 # Backend/Data_Access_Layer/dao/inbound_document_dao.py
-from typing import Optional
+from typing import List, Optional
 
 from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
 
@@ -18,4 +18,17 @@ class InboundDocumentDAO:
             self.db.query(InboundDocument)
             .filter(InboundDocument.inbound_document_id == inbound_document_id)
             .first()
+        )
+
+    def get_awaiting_vendor_assignment(self) -> List[InboundDocument]:
+        """Path B of the OCR review queue: extraction finished but no vendor
+        could be matched, so no Invoice was ever created for this document."""
+        return (
+            self.db.query(InboundDocument)
+            .filter(
+                InboundDocument.extraction_status == "EXTRACTED",
+                InboundDocument.invoice_id.is_(None),
+            )
+            .order_by(InboundDocument.received_at.desc())
+            .all()
         )
