@@ -46,44 +46,44 @@ class InvoiceApprovalService:
             )
         return invoice
 
-    def approve_invoice(self, invoice_id: int, approver_name: str, comments: str | None) -> InvoiceApproval:
-        try:
-            invoice = self._require_pending_invoice(invoice_id)
+    # def approve_invoice(self, invoice_id: int, approver_name: str, comments: str | None) -> InvoiceApproval:
+    #     try:
+    #         invoice = self._require_pending_invoice(invoice_id)
 
-            approved_status = self.approval_dao.get_status_by_module_code(
-                INVOICE_STATUS_MODULE, STATUS_CODE_APPROVED
-            )
-            if approved_status is None:
-                raise ValueError(f"Status '{STATUS_CODE_APPROVED}' is not configured for the INVOICE module")
+    #         approved_status = self.approval_dao.get_status_by_module_code(
+    #             INVOICE_STATUS_MODULE, STATUS_CODE_APPROVED
+    #         )
+    #         if approved_status is None:
+    #             raise ValueError(f"Status '{STATUS_CODE_APPROVED}' is not configured for the INVOICE module")
 
-            approval = InvoiceApproval(
-                invoice_id=invoice.invoice_id,
-                approver_name=approver_name,
-                decision=DECISION_APPROVED,
-                comments=comments,
-                decided_at=datetime.datetime.utcnow(),
-            )
-            self.approval_dao.create_approval(approval)
+    #         approval = InvoiceApproval(
+    #             invoice_id=invoice.invoice_id,
+    #             approver_name=approver_name,
+    #             decision=DECISION_APPROVED,
+    #             comments=comments,
+    #             decided_at=datetime.datetime.utcnow(),
+    #         )
+    #         self.approval_dao.create_approval(approval)
 
-            invoice.status_id = approved_status.status_id
-            invoice.updated_by = approver_name
+    #         invoice.status_id = approved_status.status_id
+    #         invoice.updated_by = approver_name
 
-            self.approval_dao.create_audit_log(
-                AuditLog(
-                    table_name="invoice",
-                    record_id=invoice.invoice_id,
-                    action="APPROVE",
-                    changed_by=approver_name,
-                    new_values={"status_code": STATUS_CODE_APPROVED, "comments": comments},
-                )
-            )
+    #         self.approval_dao.create_audit_log(
+    #             AuditLog(
+    #                 table_name="invoice",
+    #                 record_id=invoice.invoice_id,
+    #                 action="APPROVE",
+    #                 changed_by=approver_name,
+    #                 new_values={"status_code": STATUS_CODE_APPROVED, "comments": comments},
+    #             )
+    #         )
 
-            self.db.commit()
-            self.db.refresh(approval)
-            return approval
-        except Exception:
-            self.db.rollback()
-            raise
+    #         self.db.commit()
+    #         self.db.refresh(approval)
+    #         return approval
+    #     except Exception:
+    #         self.db.rollback()
+    #         raise
 
     def reject_invoice(self, invoice_id: int, approver_name: str, comments: str) -> InvoiceApproval:
         try:
@@ -129,3 +129,35 @@ class InvoiceApprovalService:
         if invoice is None:
             raise ValueError(f"Invoice {invoice_id} not found")
         return self.approval_dao.get_approvals_by_invoice_id(invoice_id)
+    def update_invoice_status(self, invoice_id: int, status_id: int, user_id: int) -> InvoiceApproval:
+        try:
+            invoice = self.invoice_dao.get_invoice_by_id_locked(invoice_id)
+            if invoice is None:
+                raise ValueError(f"Invoice {invoice_id} not found")
+
+            status = self.invoice_dao.get_status_details(status_id)
+            if status is None:
+                raise ValueError(f"Status ID {status_id} not found")
+
+            invoice.status_id = status.status_id
+            invoice.updated_by = str(user_id)  # or some other identifier for the updater
+            self.invoice_dao.update_invoice(invoice)
+
+            self.approval_dao.create_audit_log(
+                AuditLog(
+                    table_name="invoice",
+                    record_id=invoice.invoice_id,
+                    action="STATUS_UPDATE",
+                    changed_by=str(user_id),  # or some other identifier for the updater
+                    new_values={"status_code": status.status_code},
+                )
+            )
+
+            self.db.commit()
+            return invoice
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def get_all_statuses(self):
+        return self.invoice_dao.get_all_statuses()

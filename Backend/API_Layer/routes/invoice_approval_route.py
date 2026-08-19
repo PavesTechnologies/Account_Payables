@@ -12,6 +12,7 @@ from Backend.API_Layer.interface.approval_interface import (
     InvoiceApprovalDTO,
     InvoiceApprovalDecisionRequest,
     InvoiceRejectionRequest,
+    StatusResponse
 )
 from Backend.Business_Layer.services.invoice_approval_service import InvoiceApprovalService
 
@@ -33,20 +34,30 @@ def _get_user_id(http_request: Request) -> str:
 @router.post("/{invoice_id}/approve", response_model=InvoiceApprovalActionResponse)
 def approve_invoice(
     invoice_id: int,
-    payload: InvoiceApprovalDecisionRequest,
+    payload: InvoiceApprovalDecisionRequest,  # FastAPI automatically parses the JSON body here
     http_request: Request,
 ):
     db = http_request.state.db
+    user_id = _get_user_id(http_request)
 
     try:
-        approver = _get_user_id(http_request)
-        approval = InvoiceApprovalService(db).approve_invoice(invoice_id, approver, payload.comments)
+        # Access the comments sent by the frontend using payload.comments
+        comments = payload.comments 
+
+        # Update the invoice status
+        InvoiceApprovalService(db).update_invoice_status(
+            invoice_id=invoice_id, 
+            status_id=9, 
+            user_id=user_id
+        )
+
+        # CRITICAL: Commit the changes to the database
+        db.commit() 
 
         return InvoiceApprovalActionResponse(
             invoice_id=invoice_id,
-            invoice_approval_id=approval.invoice_approval_id,
-            status_code="APPROVED",
-            message="Invoice approved",
+            status_id=9,
+            message=f"Invoice approved. Comments: {comments}",
         )
 
     except ValueError as e:
@@ -57,6 +68,7 @@ def approve_invoice(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/{invoice_id}/reject", response_model=InvoiceApprovalActionResponse)
@@ -99,4 +111,41 @@ def get_invoice_approval_history(invoice_id: int, http_request: Request):
         raise HTTPException(status_code=404, detail=str(e))
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/get-all-statuses", response_model=list[StatusResponse])
+def get_all_statuses(http_request: Request):
+    db = http_request.state.db
+
+    try:
+        return InvoiceApprovalService(db).get_all_statuses()
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/status-update/{invoice_id}", response_model=InvoiceApprovalActionResponse)
+def update_invoice_status(invoice_id: int, status_id: int, http_request: Request):
+    db = http_request.state.db
+    user_id = _get_user_id(http_request)
+
+    try:
+        approver = _get_user_id(http_request)
+        approval = InvoiceApprovalService(db).update_invoice_status(invoice_id, status_id, user_id)
+
+        return InvoiceApprovalActionResponse(
+            invoice_id=invoice_id,
+            status_id=approval.status_id,
+            message="Invoice status updated",
+        )
+
+    except ValueError as e:
+        db.rollback()
+        status_code = 404 if "not found" in str(e) else 422
+        raise HTTPException(status_code=status_code, detail=str(e))
+
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

@@ -28,6 +28,8 @@ class InvoiceApprovalDTO(BaseModel):
 
 class InvoiceApprovalActionResponse(BaseModel):
     invoice_id: int
-    invoice_approval_id: Optional[int] = None
-    status_code: str
+    status_id: int
     message: str
+class StatusResponse(BaseModel):
+    status_id: int
+    status_name: str

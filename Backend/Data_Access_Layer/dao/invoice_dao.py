@@ -113,3 +113,20 @@ class InvoiceDAO:
             .with_for_update()
             .first()
         )
+    def get_status_details(self, status_id:int):
+        return (
+            self.db.query(StatusMaster)
+            .filter(StatusMaster.status_id == status_id)
+            .first()
+        )
+
+    def update_invoice(self, invoice: Invoice) -> Invoice:
+        self.db.merge(invoice)
+        return invoice
+    def get_all_statuses(self) -> List[StatusMaster]:
+        return (
+            self.db.query(StatusMaster)
+            .filter(StatusMaster.module_name == INVOICE_STATUS_MODULE)
+            .order_by(StatusMaster.display_order)
+            .all()
+        )
