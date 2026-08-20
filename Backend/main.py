@@ -12,6 +12,7 @@ from Backend.API_Layer.routes import (
     intake_route,
     invoice_approval_route,
     invoice_process_route,
+    invoice_extraction_route,
     master_route,
     payment_route,
     purchase_order_route,
@@ -42,7 +43,7 @@ app = FastAPI(
 
 FRONTEND_URL = get_env_var("FRONTEND_URL", "http://localhost:5173")
 
-app.add_middleware(JWTMiddleware)
+# app.add_middleware(JWTMiddleware)
 app.add_middleware(DBSessionMiddleware)
 
 # Add CORS last so it wraps *all* responses
@@ -110,6 +111,7 @@ api_router = APIRouter(prefix="/apm")
 api_router.include_router(system_route.router, tags=["System Defaults"], prefix="/system")
 api_router.include_router(master_route.router, tags=["Master Configuration"], prefix="/master")
 api_router.include_router(vendor_route.router, tags=["Vendor Management"], prefix="/vendor")
+api_router.include_router(invoice_extraction_route.router, tags=["Invoice Extraction"], prefix="/invoice-extract")
 api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake")
 api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"
