@@ -3319,6 +3319,9 @@ def build_response(
             tax_type=extracted.get(
                 "tax_type"
             ),
+            hsn_sac=extracted.get(
+                "hsn_sac"
+            ),
             cgst_rate=extracted.get(
                 "cgst_rate"
             ),

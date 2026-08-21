@@ -227,6 +227,12 @@ class InvoiceTax(BaseModel):
 
     tax_type: Optional[str] = None
 
+    # Invoice-level (header) HSN/SAC - populated when an invoice states
+    # one classification for the whole document instead of per line
+    # (e.g. SaaS/cloud billing invoices). Falls back to this when a
+    # line has no hsn_sac of its own.
+    hsn_sac: Optional[str] = None
+
     cgst_rate: Optional[float] = None
     sgst_rate: Optional[float] = None
     igst_rate: Optional[float] = None
@@ -367,12 +373,15 @@ class ExtractedInvoiceResult(BaseModel):
 #     field: str
 #     code: str
 #     message: str
-
+class ValidationSummary(BaseModel):
+    validation_type: str
+    source: str
 
 class ValidationResult(BaseModel):
     is_valid: bool
     requires_manual_review: bool
     issues:list[str]
+    success:list[ValidationSummary]
 
 # ============================================================
 # Invoice - final validated data to be stored
