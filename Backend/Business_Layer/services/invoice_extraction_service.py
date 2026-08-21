@@ -1,5 +1,6 @@
 import datetime
 import logging
+import time
 import types
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
@@ -7,10 +8,17 @@ from typing import Any, Dict, List, Optional
 from Backend.Data_Access_Layer.dao.invoice_extraction_dao import (
     InvoiceExtractionDAO,
 )
+from Backend.Data_Access_Layer.utils.database import SessionLocal
 from Backend.API_Layer.interface.invoice_extraction_interface import (
     ValidationResult,
     ValidationSummary,
     InboundDocumentRequest,
+)
+from Backend.API_Layer.utils.validation_progress import (
+    complete_validation_job,
+    fail_validation_job,
+    skip_remaining_stages,
+    update_validation_stage,
 )
 from Backend.config.env_loader import get_env_var
 
@@ -134,6 +142,7 @@ class InvoiceExtractionService:
         self,
         extracted,
         file_path: str,
+        job_id: Optional[str] = None,
     ) -> ValidationResult:
 
         # Stops at the first failing check - extraction, then vendor,
@@ -142,6 +151,14 @@ class InvoiceExtractionService:
         # checks that actually ran and passed; a failing check's
         # issues are returned on their own (not merged with anything
         # from checks that never got a chance to run).
+        #
+        # When job_id is given, each stage's RUNNING/SUCCESS/FAILED
+        # transition (plus timing) is mirrored into Redis for the
+        # frontend's progress polling (see validation_progress.py).
+        # This is purely a UI-progress side effect: every Redis call
+        # is best-effort and never raises, so passing job_id=None
+        # (the default, used by direct/synchronous callers and
+        # existing tests) reproduces the exact prior behavior.
 
         success: List[ValidationSummary] = []
 
@@ -149,20 +166,29 @@ class InvoiceExtractionService:
         # 1. Extraction validation
         # --------------------------------------------------------
 
-        extraction_result = self.validate_extraction(extracted)
+        extraction_result = self._execute_stage(
+            job_id,
+            "extraction",
+            "Validating extraction...",
+            lambda: self.validate_extraction(extracted),
+        )
 
         if not extraction_result["is_valid"]:
+
+            if job_id:
+                skip_remaining_stages(job_id, "extraction")
 
             self._create_inbound_document(
                 extracted=extracted,
                 file_path=file_path,
             )
 
-            return ValidationResult(
-                is_valid=False,
-                requires_manual_review=True,
-                issues=extraction_result["issues"],
-                success=success,
+            return self._finalize(
+                job_id,
+                False,
+                True,
+                extraction_result["issues"],
+                success,
             )
 
         success.append(
@@ -176,14 +202,24 @@ class InvoiceExtractionService:
         # 2. Vendor validation
         # --------------------------------------------------------
 
-        vendor_result = self.validate_vendor(extracted)
+        vendor_result = self._execute_stage(
+            job_id,
+            "vendor",
+            "Validating vendor...",
+            lambda: self.validate_vendor(extracted),
+        )
 
         if not vendor_result["is_valid"]:
-            return ValidationResult(
-                is_valid=False,
-                requires_manual_review=True,
-                issues=vendor_result["issues"],
-                success=success,
+
+            if job_id:
+                skip_remaining_stages(job_id, "vendor")
+
+            return self._finalize(
+                job_id,
+                False,
+                True,
+                vendor_result["issues"],
+                success,
             )
 
         success.append(
@@ -197,14 +233,24 @@ class InvoiceExtractionService:
         # 3. Buyer validation
         # --------------------------------------------------------
 
-        buyer_result = self.validate_buyer(extracted)
+        buyer_result = self._execute_stage(
+            job_id,
+            "buyer",
+            "Validating buyer...",
+            lambda: self.validate_buyer(extracted),
+        )
 
         if not buyer_result["is_valid"]:
-            return ValidationResult(
-                is_valid=False,
-                requires_manual_review=True,
-                issues=buyer_result["issues"],
-                success=success,
+
+            if job_id:
+                skip_remaining_stages(job_id, "buyer")
+
+            return self._finalize(
+                job_id,
+                False,
+                True,
+                buyer_result["issues"],
+                success,
             )
 
         success.append(
@@ -218,17 +264,23 @@ class InvoiceExtractionService:
         # 4. Tax validation
         # --------------------------------------------------------
 
-        tax_result = self.validate_tax(
-            extracted=extracted,
-            vendor_details=vendor_result.get("vendor_details"),
+        tax_result = self._execute_stage(
+            job_id,
+            "gst",
+            "Validating GST tax...",
+            lambda: self.validate_tax(
+                extracted=extracted,
+                vendor_details=vendor_result.get("vendor_details"),
+            ),
         )
 
         if not tax_result["is_valid"]:
-            return ValidationResult(
-                is_valid=False,
-                requires_manual_review=True,
-                issues=tax_result["issues"],
-                success=success,
+            return self._finalize(
+                job_id,
+                False,
+                True,
+                tax_result["issues"],
+                success,
             )
 
         success.append(
@@ -242,10 +294,74 @@ class InvoiceExtractionService:
         # Final validation result - every check ran and passed.
         # --------------------------------------------------------
 
+        return self._finalize(job_id, True, False, [], success)
+
+    def _execute_stage(
+        self,
+        job_id: Optional[str],
+        stage: str,
+        running_message: str,
+        check_fn,
+    ) -> Dict[str, Any]:
+
+        if job_id:
+            update_validation_stage(
+                job_id,
+                stage,
+                "RUNNING",
+                message=running_message,
+            )
+
+        start_time = time.perf_counter()
+
+        result = check_fn()
+
+        duration_ms = round((time.perf_counter() - start_time) * 1000)
+
+        if job_id:
+            if result["is_valid"]:
+                update_validation_stage(
+                    job_id,
+                    stage,
+                    "SUCCESS",
+                    message=result.get("summary"),
+                    issues=[],
+                    duration_ms=duration_ms,
+                )
+            else:
+                update_validation_stage(
+                    job_id,
+                    stage,
+                    "FAILED",
+                    message=None,
+                    issues=result["issues"],
+                    duration_ms=duration_ms,
+                )
+
+        return result
+
+    def _finalize(
+        self,
+        job_id: Optional[str],
+        is_valid: bool,
+        requires_manual_review: bool,
+        issues: List[str],
+        success: List[ValidationSummary],
+    ) -> ValidationResult:
+
+        if job_id:
+            complete_validation_job(
+                job_id,
+                is_valid,
+                requires_manual_review,
+                issues,
+                success=[entry.model_dump() for entry in success],
+            )
+
         return ValidationResult(
-            is_valid=True,
-            requires_manual_review=False,
-            issues=[],
+            is_valid=is_valid,
+            requires_manual_review=requires_manual_review,
+            issues=issues,
             success=success,
         )
 
@@ -1006,3 +1122,54 @@ class InvoiceExtractionService:
             self.invoice_extraction_dao
             .create_inbound_document(request)
         )
+
+
+# ============================================================
+# Background job entry point
+#
+# Runs as a FastAPI BackgroundTask (see invoice_extraction_route.py)
+# - i.e. in a worker thread, AFTER the POST /validate-fields response
+# has already been sent. It cannot reuse the request-scoped DB
+# session (DBSessionMiddleware tears that down once the response is
+# on its way out), so it opens and closes its own session here.
+#
+# Any unexpected/system error (DB unreachable, etc.) - as opposed to
+# a normal validation failure - marks the job FAILED via
+# fail_validation_job so the frontend's poll loop doesn't hang
+# forever waiting for a job that silently died.
+# ============================================================
+
+def run_validation_job(
+    job_id: str,
+    extracted,
+    file_path: str,
+) -> None:
+
+    db = SessionLocal()
+
+    try:
+        service = InvoiceExtractionService(db)
+        service.validate_invoice(
+            extracted,
+            file_path,
+            job_id=job_id,
+        )
+
+    except Exception:
+        logger.exception(
+            "Unexpected error while running validation job '%s'",
+            job_id,
+        )
+        fail_validation_job(
+            job_id,
+            "Unexpected error during validation. Please retry.",
+        )
+
+    finally:
+        try:
+            db.close()
+        except Exception:
+            logger.exception(
+                "Failed to close DB session for validation job '%s'",
+                job_id,
+            )

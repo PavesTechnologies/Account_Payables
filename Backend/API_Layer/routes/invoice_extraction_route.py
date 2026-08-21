@@ -2,14 +2,17 @@
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     File,
     HTTPException,
     UploadFile,
-    Request,
 )
 
 from Backend.API_Layer.interface.invoice_extraction_interface import (
-    ExtractedInvoiceResponse, ValidationResult, ExtractedInvoiceResult
+    ExtractedInvoiceResponse,
+    ExtractedInvoiceResult,
+    ValidationJobQueued,
+    ValidationJobStatus,
 )
 
 from Backend.API_Layer.utils.invoice_extraction_fields import (
@@ -21,7 +24,15 @@ from Backend.API_Layer.utils.s3_utils import (
     upload_to_s3,
 )
 
-from Backend.Business_Layer.services.invoice_extraction_service import InvoiceExtractionService
+from Backend.API_Layer.utils.validation_progress import (
+    get_validation_status,
+    init_validation_job,
+    new_job_id,
+)
+
+from Backend.Business_Layer.services.invoice_extraction_service import (
+    run_validation_job,
+)
 
 
 router = APIRouter()
@@ -151,31 +162,62 @@ async def extract_invoice_fields(
     #             # temporary cleanup failed.
     #             pass
 
-@router.post("/validate-fields", response_model=ValidationResult)
+@router.post(
+    "/validate-fields",
+    response_model=ValidationJobQueued,
+)
 async def validate_fields(
     extracted_data: ExtractedInvoiceResult,
-    http_request: Request
+    background_tasks: BackgroundTasks,
 ):
-    db = http_request.state.db
-    service = InvoiceExtractionService(db)
 
-    try:
-        extracted_invoice = extracted_data.extracted_invoice
-        file_path = extracted_data.file_path
+    # ========================================================
+    # Create the job and initialize its Redis progress record
+    # up front, so a GET .../status immediately after this
+    # response always finds something (QUEUED, every stage
+    # WAITING) rather than a 404 race.
+    # ========================================================
 
-        return service.validate_invoice(
-            extracted_invoice,
-            file_path
-        )
+    job_id = new_job_id()
 
-    except HTTPException as e:
+    init_validation_job(job_id)
+
+    # ========================================================
+    # The actual extraction/vendor/buyer/GST pipeline runs in
+    # the background, after this response is sent - it opens
+    # its own DB session (see run_validation_job) since the
+    # request-scoped session is gone by then. This endpoint
+    # never blocks on the pipeline.
+    # ========================================================
+
+    background_tasks.add_task(
+        run_validation_job,
+        job_id,
+        extracted_data.extracted_invoice,
+        extracted_data.file_path,
+    )
+
+    return ValidationJobQueued(
+        job_id=job_id,
+        status="QUEUED",
+    )
+
+
+@router.get(
+    "/validate-fields/{job_id}/status",
+    response_model=ValidationJobStatus,
+)
+async def get_validate_fields_status(job_id: str):
+
+    job = get_validation_status(job_id)
+
+    if job is None:
         raise HTTPException(
-            status_code=e.status_code,
-            detail=str(e.detail)
+            status_code=404,
+            detail=(
+                "Validation job not found - it may have expired "
+                "or never existed."
+            ),
         )
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+    return job

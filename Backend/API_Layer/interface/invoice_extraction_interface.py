@@ -383,6 +383,44 @@ class ValidationResult(BaseModel):
     issues:list[str]
     success:list[ValidationSummary]
 
+
+# ============================================================
+# Validation job - async progress tracking (Redis-backed)
+# ============================================================
+
+class ValidationJobQueued(BaseModel):
+    job_id: str
+    status: str
+
+
+class ValidationStageStatus(BaseModel):
+    label: Optional[str] = None
+    status: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_ms: Optional[int] = None
+    message: Optional[str] = None
+    issues: List[str] = Field(default_factory=list)
+
+
+class ValidationJobStatus(BaseModel):
+    job_id: str
+    status: str
+    current_stage: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    stages: Dict[str, ValidationStageStatus] = Field(
+        default_factory=dict
+    )
+
+    # Populated once status is COMPLETED/FAILED - same shape as the
+    # synchronous ValidationResult this replaces waiting on directly.
+    is_valid: Optional[bool] = None
+    requires_manual_review: Optional[bool] = None
+    issues: List[str] = Field(default_factory=list)
+    success: List[ValidationSummary] = Field(default_factory=list)
+
+
 # ============================================================
 # Invoice - final validated data to be stored
 # ============================================================

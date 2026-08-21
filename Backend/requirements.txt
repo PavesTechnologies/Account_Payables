@@ -14,3 +14,4 @@ numpy
 Pillow
 pytest
 python-multipart
+redis
