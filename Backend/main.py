@@ -43,7 +43,7 @@ app = FastAPI(
 
 FRONTEND_URL = get_env_var("FRONTEND_URL", "http://localhost:5173")
 
-# app.add_middleware(JWTMiddleware)
+app.add_middleware(JWTMiddleware)
 app.add_middleware(DBSessionMiddleware)
 
 # Add CORS last so it wraps *all* responses

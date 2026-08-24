@@ -5,20 +5,43 @@ import types
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
 
+from Backend.Data_Access_Layer.dao.inbound_document_dao import (
+    InboundDocumentDAO,
+)
+from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.invoice_extraction_dao import (
     InvoiceExtractionDAO,
 )
+from Backend.Data_Access_Layer.dao.master_dao import MasterDAO
+from Backend.Data_Access_Layer.models.inbound_document import (
+    InboundDocument,
+)
+from Backend.Data_Access_Layer.models.invoice import (
+    Invoice,
+    InvoiceAttachment,
+    InvoiceLine,
+)
 from Backend.Data_Access_Layer.utils.database import SessionLocal
 from Backend.API_Layer.interface.invoice_extraction_interface import (
+    CustomInvoiceRequest,
+    InboundDocumentRequest,
+    InvoiceAttachmentRequest,
+    InvoiceLineRequest,
+    InvoiceRequest,
+    InvoiceType,
     ValidationResult,
     ValidationSummary,
-    InboundDocumentRequest,
 )
 from Backend.API_Layer.utils.validation_progress import (
     complete_validation_job,
     fail_validation_job,
     skip_remaining_stages,
     update_validation_stage,
+)
+from Backend.Business_Layer.utils import invoice_status
+from Backend.Business_Layer.utils.exceptions import (
+    DuplicateInvoiceError,
+    FieldExtractionError,
 )
 from Backend.config.env_loader import get_env_var
 
@@ -132,6 +155,7 @@ def _format_rate(rate: Decimal) -> str:
 class InvoiceExtractionService:
 
     def __init__(self, db):
+        self.db = db
         self.invoice_extraction_dao = InvoiceExtractionDAO(db)
 
     # ============================================================
@@ -178,10 +202,12 @@ class InvoiceExtractionService:
             if job_id:
                 skip_remaining_stages(job_id, "extraction")
 
-            self._create_inbound_document(
-                extracted=extracted,
-                file_path=file_path,
-            )
+            # No InboundDocument/Invoice persistence here anymore -
+            # validate-fields is a pure validation check now. Every
+            # outcome (pass, fail, or needs review) is persisted by
+            # the separate POST /create-invoice call the frontend
+            # makes once it has this result, regardless of whether
+            # validation passed or requires manual review.
 
             return self._finalize(
                 job_id,
@@ -1092,36 +1118,461 @@ class InvoiceExtractionService:
         }
 
     # ============================================================
-    # Inbound document / audit
+    # Create invoice
+    #
+    # Persists an Invoice + InvoiceLine(s) + InvoiceAttachment +
+    # InboundDocument from the same ExtractedInvoiceResult shape
+    # /validate-fields takes - this is deliberately a separate call
+    # (not a side effect of validation) so a document is persisted
+    # exactly once, on demand, at whatever point the frontend's
+    # upload -> extraction -> validation -> create-invoice flow
+    # calls it - regardless of whether validation passed or flagged
+    # issues. Always lands at OCR_REVIEW_PENDING; a human moves it
+    # to PENDING_APPROVAL from Invoice Management afterward (that
+    # transition is out of scope here - see apply_ocr_review in
+    # invoice_process_service.py for the equivalent on the other
+    # ingestion pipeline).
     # ============================================================
 
-    def _create_inbound_document(
+    def create_invoice(
         self,
         extracted,
         file_path: str,
-    ):
+        created_by: str,
+    ) -> Dict[str, Any]:
 
-        request = InboundDocumentRequest(
-            source_type="UPLOAD",
-            file_name=(
-                extracted.document.original_filename
-            ),
-            file_path=file_path,
-            extraction_status=(
-                extracted.validation.status
-            ),
-            extraction_confidence=(
-                extracted.extraction.confidence
-            ),
-            raw_extracted_data=(
-                extracted.model_dump(mode="json")
-            ),
+        custom_request = build_custom_invoice_request(
+            extracted, file_path
         )
 
-        return (
+        invoice_dao = InvoiceDAO(self.db)
+        inbound_document_dao = InboundDocumentDAO(self.db)
+        master_dao = MasterDAO(self.db)
+
+        vendor_details = (
             self.invoice_extraction_dao
-            .create_inbound_document(request)
+            .get_vendor_details_by_gstin(
+                extracted.vendor.gstin,
+                extracted.vendor.name,
+            )
         )
+
+        if vendor_details is None or not vendor_details.get(
+            "vendor_id"
+        ):
+            raise FieldExtractionError(
+                "Vendor could not be matched for GSTIN "
+                f"'{extracted.vendor.gstin}' / name "
+                f"'{extracted.vendor.name}' - invoice cannot be "
+                "created without a known vendor."
+            )
+
+        vendor_id = vendor_details["vendor_id"]
+
+        existing = invoice_dao.get_invoice_by_vendor_and_number(
+            vendor_id, custom_request.invoice.invoice_number
+        )
+
+        if existing is not None:
+            raise DuplicateInvoiceError(
+                f"Invoice '{custom_request.invoice.invoice_number}' "
+                f"already exists for vendor {vendor_id} "
+                f"(invoice_id={existing.invoice_id})."
+            )
+
+        review_status = invoice_dao.get_status_by_code(
+            invoice_status.STATUS_CODE_OCR_REVIEW_PENDING
+        )
+
+        if review_status is None:
+            raise FieldExtractionError(
+                "Status "
+                f"'{invoice_status.STATUS_CODE_OCR_REVIEW_PENDING}' "
+                "is not configured in status_master."
+            )
+
+        currency_id, currency_issue = self._resolve_currency_id(
+            custom_request.invoice.currency, master_dao
+        )
+
+        payment_term_id = None
+
+        if custom_request.invoice.payment_terms:
+            term = master_dao.get_payment_term_by_name(
+                custom_request.invoice.payment_terms.strip()
+            )
+            payment_term_id = (
+                term.payment_term_id if term else None
+            )
+
+        try:
+            inbound_document = InboundDocument(
+                source_type=custom_request.inbound_document.source_type,
+                file_name=custom_request.inbound_document.file_name,
+                file_path=custom_request.inbound_document.file_path,
+                extraction_status=(
+                    custom_request.inbound_document.extraction_status
+                ),
+                extraction_confidence=(
+                    custom_request.inbound_document
+                    .extraction_confidence
+                ),
+                raw_extracted_data=(
+                    custom_request.inbound_document.raw_extracted_data
+                ),
+                vendor_id=vendor_id,
+            )
+            inbound_document_dao.create_inbound_document(
+                inbound_document
+            )
+
+            invoice = Invoice(
+                invoice_number=custom_request.invoice.invoice_number,
+                vendor_id=vendor_id,
+                invoice_type=custom_request.invoice.invoice_type.value,
+                invoice_date=custom_request.invoice.invoice_date,
+                due_date=(
+                    custom_request.invoice.due_date
+                    or custom_request.invoice.invoice_date
+                ),
+                currency_id=currency_id,
+                gross_amount=custom_request.invoice.grand_amount,
+                discount_amount=(
+                    custom_request.invoice.discount_amount
+                ),
+                tax_amount=custom_request.invoice.tax_amount,
+                net_amount=custom_request.invoice.net_amount,
+                amount_paid=custom_request.invoice.amount_paid,
+                inbound_document_id=(
+                    inbound_document.inbound_document_id
+                ),
+                payment_term_id=payment_term_id,
+                status_id=review_status.status_id,
+                created_by=created_by,
+                updated_by=created_by,
+            )
+            invoice_dao.create_invoice(invoice)
+
+            line_models, skipped_line_count = (
+                self._build_invoice_line_models(
+                    custom_request.invoice_lines
+                )
+            )
+
+            for line_model in line_models:
+                line_model.invoice_id = invoice.invoice_id
+
+            if line_models:
+                invoice_dao.create_invoice_lines(line_models)
+
+            attachment = None
+
+            if custom_request.invoice_attachment:
+                attachment = InvoiceAttachment(
+                    invoice_id=invoice.invoice_id,
+                    file_name=(
+                        custom_request.invoice_attachment.file_name
+                    ),
+                    file_path=(
+                        custom_request.invoice_attachment.file_path
+                    ),
+                )
+                invoice_dao.create_invoice_attachment(attachment)
+
+            inbound_document.invoice_id = invoice.invoice_id
+
+            self.db.commit()
+            self.db.refresh(invoice)
+
+            return {
+                "invoice_id": invoice.invoice_id,
+                "invoice_number": invoice.invoice_number,
+                "vendor_id": vendor_id,
+                "inbound_document_id": (
+                    inbound_document.inbound_document_id
+                ),
+                "invoice_attachment_id": (
+                    attachment.invoice_attachment_id
+                    if attachment
+                    else None
+                ),
+                "status_code": (
+                    invoice_status.STATUS_CODE_OCR_REVIEW_PENDING
+                ),
+                "line_count": len(line_models),
+                "skipped_line_count": skipped_line_count,
+                "warnings": (
+                    [currency_issue] if currency_issue else []
+                ),
+            }
+
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def _resolve_currency_id(
+        self,
+        currency_code: Optional[str],
+        master_dao: "MasterDAO",
+    ) -> "tuple[int, Optional[str]]":
+        """Maps a currency code to currency_id, falling back to
+        DEFAULT_CURRENCY_CODE (currency_id is NOT NULL on invoice).
+        Mirrors invoice_process_service._resolve_currency_id, kept
+        as its own copy rather than a cross-import since the two
+        ingestion pipelines are otherwise independent."""
+
+        if currency_code:
+            currency = master_dao.get_currency_by_code(currency_code)
+            if currency is not None:
+                return currency.currency_id, None
+
+        fallback = master_dao.get_currency_by_code(
+            invoice_status.DEFAULT_CURRENCY_CODE
+        )
+
+        if fallback is None:
+            raise FieldExtractionError(
+                "Default currency "
+                f"'{invoice_status.DEFAULT_CURRENCY_CODE}' is not "
+                "configured in the currency master."
+            )
+
+        reason = (
+            f"Currency '{currency_code}' could not be mapped to a "
+            "known currency; defaulted to "
+            f"{invoice_status.DEFAULT_CURRENCY_CODE}."
+            if currency_code
+            else
+            "No currency was extracted; defaulted to "
+            f"{invoice_status.DEFAULT_CURRENCY_CODE}."
+        )
+
+        return fallback.currency_id, reason
+
+    def _build_invoice_line_models(
+        self,
+        line_requests: List["InvoiceLineRequest"],
+    ) -> "tuple[List[InvoiceLine], int]":
+        """ap.invoice_line has no hsn_sac/unit/taxable_amount columns
+        (confirmed against the live schema) - those fields stay on
+        InvoiceLineRequest for the caller's own reference/audit but
+        cannot be persisted without a schema change, so they're
+        intentionally dropped here rather than silently truncated
+        into an unrelated column."""
+
+        models: List[InvoiceLine] = []
+        skipped = 0
+
+        for line in line_requests:
+
+            has_data = (
+                line.description
+                or line.line_amount is not None
+                or line.unit_price is not None
+            )
+
+            if not has_data:
+                skipped += 1
+                continue
+
+            quantity = (
+                line.quantity
+                if line.quantity is not None
+                else Decimal("1")
+            )
+            unit_price = (
+                line.unit_price
+                if line.unit_price is not None
+                else Decimal("0")
+            )
+            line_amount = (
+                line.line_amount
+                if line.line_amount is not None
+                else (quantity * unit_price)
+            )
+
+            models.append(
+                InvoiceLine(
+                    line_number=line.line_number,
+                    description=line.description or "",
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    line_amount=line_amount,
+                    tax_amount=line.tax_amount,
+                    tax_type_id=line.tax_type_id,
+                )
+            )
+
+        return models, skipped
+
+
+# ============================================================
+# ExtractedInvoiceResponse -> CustomInvoiceRequest mapping
+#
+# Pure/no DB access - reuses the same InvoiceRequest/
+# InvoiceLineRequest/InboundDocumentRequest/InvoiceAttachmentRequest
+# contracts a manual "add invoice" caller would use directly, so
+# InvoiceExtractionService.create_invoice's persistence logic below
+# doesn't care whether the data came from Textract or a manual form.
+# ============================================================
+
+def build_custom_invoice_request(
+    extracted,
+    file_path: str,
+) -> CustomInvoiceRequest:
+
+    document = extracted.document
+    amounts = extracted.amounts
+
+    grand_amount = (
+        amounts.grand_total
+        if amounts.grand_total is not None
+        else amounts.subtotal
+    )
+
+    if grand_amount is None:
+        raise FieldExtractionError(
+            "No usable amount (grand_total/subtotal) could be "
+            "extracted; invoice cannot be created."
+        )
+
+    tax_amount = amounts.total_tax
+
+    if tax_amount is None:
+        tax_amount = sum(
+            (
+                value
+                for value in (
+                    amounts.cgst_amount,
+                    amounts.sgst_amount,
+                    amounts.igst_amount,
+                    amounts.ugst_amount,
+                    amounts.cess_amount,
+                )
+                if value is not None
+            ),
+            0.0,
+        )
+
+    net_amount = grand_amount
+
+    if not document.invoice_number:
+        raise FieldExtractionError(
+            "invoice_number could not be extracted; invoice cannot "
+            "be created."
+        )
+
+    if not document.invoice_date:
+        raise FieldExtractionError(
+            "invoice_date could not be extracted; invoice cannot "
+            "be created."
+        )
+
+    invoice_request = InvoiceRequest(
+        invoice_number=document.invoice_number,
+        invoice_type=(
+            InvoiceType.PO
+            if extracted.reference.po_number
+            else InvoiceType.NON_PO
+        ),
+        invoice_date=document.invoice_date,
+        due_date=document.due_date,
+        payment_terms=extracted.payment.payment_terms,
+        currency=document.currency,
+        grand_amount=Decimal(str(grand_amount)),
+        discount_amount=(
+            Decimal(str(amounts.discount))
+            if amounts.discount is not None
+            else Decimal("0")
+        ),
+        tax_amount=Decimal(str(tax_amount)),
+        net_amount=Decimal(str(net_amount)),
+        amount_paid=(
+            Decimal(str(amounts.amount_paid))
+            if amounts.amount_paid is not None
+            else Decimal("0")
+        ),
+    )
+
+    line_requests = [
+        InvoiceLineRequest(
+            line_number=line.line_number,
+            description=line.description,
+            hsn_sac=line.hsn_sac,
+            quantity=(
+                Decimal(str(line.quantity))
+                if line.quantity is not None
+                else None
+            ),
+            unit=line.unit,
+            unit_price=(
+                Decimal(str(line.unit_price))
+                if line.unit_price is not None
+                else None
+            ),
+            line_amount=(
+                Decimal(str(line.line_total))
+                if line.line_total is not None
+                else None
+            ),
+            taxable_amount=(
+                Decimal(str(line.taxable_amount))
+                if line.taxable_amount is not None
+                else None
+            ),
+            tax_amount=Decimal(
+                str(
+                    line.total_tax
+                    if line.total_tax is not None
+                    else sum(
+                        (
+                            value
+                            for value in (
+                                line.cgst_amount,
+                                line.sgst_amount,
+                                line.igst_amount,
+                                line.ugst_amount,
+                                line.cess_amount,
+                            )
+                            if value is not None
+                        ),
+                        0.0,
+                    )
+                )
+            ),
+        )
+        for line in extracted.invoice_lines
+    ]
+
+    original_filename = (
+        document.original_filename
+        or file_path.rsplit("/", 1)[-1]
+    )
+
+    inbound_document_request = InboundDocumentRequest(
+        source_type="UPLOAD",
+        file_name=original_filename,
+        file_path=file_path,
+        extraction_status="EXTRACTED",
+        extraction_confidence=(
+            Decimal(str(round(extracted.extraction.confidence, 2)))
+            if extracted.extraction.confidence is not None
+            else None
+        ),
+        raw_extracted_data=extracted.model_dump(mode="json"),
+    )
+
+    invoice_attachment_request = InvoiceAttachmentRequest(
+        file_name=original_filename,
+        file_path=file_path,
+    )
+
+    return CustomInvoiceRequest(
+        invoice=invoice_request,
+        invoice_lines=line_requests,
+        inbound_document=inbound_document_request,
+        invoice_attachment=invoice_attachment_request,
+    )
 
 
 # ============================================================

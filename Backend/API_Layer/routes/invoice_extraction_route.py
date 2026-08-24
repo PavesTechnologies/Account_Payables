@@ -5,12 +5,14 @@ from fastapi import (
     BackgroundTasks,
     File,
     HTTPException,
+    Request,
     UploadFile,
 )
 
 from Backend.API_Layer.interface.invoice_extraction_interface import (
     ExtractedInvoiceResponse,
     ExtractedInvoiceResult,
+    InvoiceCreationResult,
     ValidationJobQueued,
     ValidationJobStatus,
 )
@@ -31,7 +33,12 @@ from Backend.API_Layer.utils.validation_progress import (
 )
 
 from Backend.Business_Layer.services.invoice_extraction_service import (
+    InvoiceExtractionService,
     run_validation_job,
+)
+from Backend.Business_Layer.utils.exceptions import (
+    DuplicateInvoiceError,
+    FieldExtractionError,
 )
 
 
@@ -47,6 +54,16 @@ ALLOWED_CONTENT_TYPES = {
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
+def _get_user_id(http_request: Request) -> str:
+    user_id = (
+        http_request.state.user.get("user_id")
+        or http_request.state.user.get("sub")
+    )
+
+    if user_id is None:
+        raise ValueError("Token payload missing user identifier")
+
+    return user_id
 
 @router.post(
     "/extract-fields",
@@ -221,3 +238,61 @@ async def get_validate_fields_status(job_id: str):
         )
 
     return job
+
+
+@router.post(
+    "/create-invoice",
+    response_model=InvoiceCreationResult,
+)
+async def create_invoice(
+    extracted_data: ExtractedInvoiceResult,
+    http_request: Request,
+):
+
+    # ========================================================
+    # Persists Invoice + InvoiceLine(s) + InvoiceAttachment +
+    # InboundDocument from the same extracted-invoice shape
+    # /validate-fields accepts. This is a synchronous DB write
+    # (a handful of inserts), not a multi-stage pipeline, so it
+    # runs directly on the request - no job/Redis involved.
+    #
+    # Called once the frontend has a validation result (pass or
+    # fail) it's ready to act on - regardless of outcome, this
+    # is what actually creates the invoice, always landing at
+    # OCR_REVIEW_PENDING for a human to review in Invoice
+    # Management afterward.
+    # ========================================================
+
+    db = http_request.state.db
+    user_id=_get_user_id(http_request)
+    service = InvoiceExtractionService(db)
+
+    try:
+        result = service.create_invoice(
+            extracted_data.extracted_invoice,
+            extracted_data.file_path,
+            created_by=str(user_id),
+        )
+
+        return InvoiceCreationResult(**result)
+
+    except DuplicateInvoiceError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except FieldExtractionError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected error while creating the invoice.",
+        ) from exc

@@ -510,3 +510,22 @@ class CustomInvoiceRequest(BaseModel):
     inbound_document: InboundDocumentRequest
 
     invoice_attachment: Optional[InvoiceAttachmentRequest] = None
+
+
+# ============================================================
+# Create-invoice response
+# ============================================================
+
+class InvoiceCreationResult(BaseModel):
+    invoice_id: int
+    invoice_number: str
+    vendor_id: int
+    inbound_document_id: int
+    invoice_attachment_id: Optional[int] = None
+
+    status_code: str
+
+    line_count: int
+    skipped_line_count: int
+
+    warnings: List[str] = Field(default_factory=list)
