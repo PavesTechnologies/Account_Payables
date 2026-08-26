@@ -38,8 +38,11 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     VendorMatch,
     UploadDocumentResponse,
 )
+from Backend.API_Layer.interface.matching_interface import MatchResult
+from Backend.API_Layer.interface.review_queue_interface import ReviewQueueResponse
 from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.response_utils import success_response
+from Backend.Business_Layer.services.matching_service import MatchingService
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor as vendor_matcher
 from Backend.API_Layer.utils.s3_utils import upload_to_s3
 logger = logging.getLogger(__name__)
@@ -262,3 +265,42 @@ def ocr_review(
         data={"invoice_id": invoice.invoice_id, "status_id": invoice.status_id},
         message="Invoice review completed; moved to PENDING_APPROVAL.",
     )
+
+
+# ---------------------------------------------------------
+# 7. OCR Review Queue (derived from invoice/inbound_document — no queue table)
+# ---------------------------------------------------------
+@router.get("/review-queue", response_model=ReviewQueueResponse)
+def get_review_queue(http_request: Request, skip: int = 0, limit: int = 50):
+    db = http_request.state.db
+
+    try:
+        items, total_path_a, total_path_b = service.get_review_queue(db, skip, limit)
+        return ReviewQueueResponse(
+            total_path_a=total_path_a,
+            total_path_b=total_path_b,
+            skip=skip,
+            limit=limit,
+            items=items,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------
+# 8. PO / GRN / Invoice Matching (2-way / 3-way, read-only)
+# ---------------------------------------------------------
+@router.get("/{invoice_id}/matching", response_model=MatchResult)
+def get_invoice_matching(invoice_id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        return MatchingService(db).match_invoice(invoice_id)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        logger.exception("matching failed for invoice_id=%s", invoice_id)
+        raise HTTPException(status_code=500, detail=str(e))

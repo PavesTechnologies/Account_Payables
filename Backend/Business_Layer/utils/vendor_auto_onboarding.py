@@ -119,8 +119,8 @@ def _call_gst_search(gstin: str) -> GSTVerificationResult:
                 error_message = payload.get("message")
                 transaction_id = payload.get("transaction_id")
 
-            except ValueError:
-                error_message = response.text
+            except Exception:
+                error_message = getattr(response, "text", None)
 
         logger.warning(
             "GST verification failed for GSTIN %s: code=%s message=%s transaction_id=%s",
@@ -273,11 +273,8 @@ def auto_create_vendor_from_extraction(
     creation has actually started are allowed to raise, so the caller's
     outer transaction rolls back cleanly.
     """
-    print("plain GSTIN:", extracted.gstin)
-    print("extracted GSTIN:", extracted.buyer_gstin)
     gstin = extracted.gstin or extracted.buyer_gstin
     gstin = _normalize_and_validate_gstin(gstin)
-    print("normalized GSTIN:", gstin)
     if gstin is None:
         logger.info("Automatic vendor onboarding skipped: GSTIN missing or invalid format")
         return None
@@ -318,7 +315,7 @@ def auto_create_vendor_from_extraction(
 
         return None
 
-    gst_details = extract_vendor_data_from_gst_response(gst_result)
+    gst_details = extract_vendor_data_from_gst_response(gst_result.data)
     if gst_details is None:
         logger.warning("Automatic vendor onboarding skipped: GST response incomplete/malformed for %s", _mask_gstin(gstin))
         return None

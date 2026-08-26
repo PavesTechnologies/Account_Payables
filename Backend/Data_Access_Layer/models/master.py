@@ -119,32 +119,311 @@ class SystemConfiguration(Base):
 class TaxType(Base):
     __tablename__ = 'tax_type'
     __table_args__ = (
-        CheckConstraint(
-            "calculation_type = 'PERCENTAGE' AND rate_percent IS NOT NULL OR calculation_type = 'FIXED' AND fixed_amount IS NOT NULL",
-            name='tax_type_check'
+        ForeignKeyConstraint(
+            ['country_id'],
+            ['ap.country.country_id'],
+            name='tax_type_country_id_fkey'
         ),
-        ForeignKeyConstraint(['country_id'], ['ap.country.country_id'], name='tax_type_country_id_fkey'),
-        PrimaryKeyConstraint('tax_type_id', name='tax_type_pkey'),
-        UniqueConstraint('country_id', 'tax_code', 'effective_from', name='tax_type_country_id_tax_code_effective_from_key'),
+        PrimaryKeyConstraint(
+            'tax_type_id',
+            name='tax_type_pkey'
+        ),
+        UniqueConstraint(
+            'country_id',
+            'tax_code',
+            name='tax_type_country_id_tax_code_key'
+        ),
         {'schema': 'ap'}
     )
 
-    tax_type_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    country_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    tax_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    tax_code: Mapped[str] = mapped_column(String(30), nullable=False)
-    calculation_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PERCENTAGE'::character varying"))
-    is_withholding: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
-    effective_from: Mapped[datetime.date] = mapped_column(Date, nullable=False)
-    is_system_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
-    rate_percent: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(6, 3))
-    fixed_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
-    effective_to: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    tax_type_id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    country_id: Mapped[int] = mapped_column(Integer,nullable=False)
+    tax_name: Mapped[str] = mapped_column(String(100),nullable=False)
+    tax_code: Mapped[str] = mapped_column(String(30),nullable=False)
+    is_withholding: Mapped[bool] = mapped_column(Boolean,nullable=False,server_default=text('false'))
+    is_system_default: Mapped[bool] = mapped_column(Boolean,nullable=False,server_default=text('false'))
+    is_active: Mapped[bool] = mapped_column(Boolean,nullable=False,server_default=text('true'))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime,nullable=False,server_default=text('now()'))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime,nullable=False,server_default=text('now()'))
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
-    country: Mapped['Country'] = relationship('Country', back_populates='tax_type')
-    invoice_line: Mapped[list['InvoiceLine']] = relationship('InvoiceLine', back_populates='tax_type')
+    country: Mapped['Country'] = relationship('Country',back_populates='tax_type')
+    invoice_line: Mapped[list['InvoiceLine']] = relationship(
+        'InvoiceLine',
+        back_populates='tax_type'
+    )
+
+    tax_rules: Mapped[list['TaxRule']] = relationship(
+        'TaxRule',
+        back_populates='tax_type',
+        cascade='all, delete-orphan'
+    )
+class TaxRule(Base):
+    __tablename__ = 'tax_rule'
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['tax_type_id'],
+            ['ap.tax_type.tax_type_id'],
+            name='tax_rule_tax_type_id_fkey'
+        ),
+        PrimaryKeyConstraint(
+            'tax_rule_id',
+            name='tax_rule_pkey'
+        ),
+        UniqueConstraint(
+            'rule_code',
+            name='tax_rule_rule_code_key'
+        ),
+        CheckConstraint(
+            'effective_to IS NULL OR effective_to >= effective_from',
+            name='tax_rule_effective_dates_chk'
+        ),
+        {'schema': 'ap'}
+    )
+
+    tax_rule_id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    rule_code: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False
+    )
+
+    rule_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False
+    )
+
+    tax_type_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False
+    )
+
+    rule_category: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False
+    )
+
+    description: Mapped[Optional[str]] = mapped_column(
+        String(255)
+    )
+
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text('100')
+    )
+
+    effective_from: Mapped[datetime.date] = mapped_column(
+        Date,
+        nullable=False
+    )
+
+    effective_to: Mapped[Optional[datetime.date]] = mapped_column(
+        Date
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text('true')
+    )
+
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text('now()')
+    )
+
+    updated_by: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )
+
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text('now()')
+    )
+
+    tax_type: Mapped['TaxType'] = relationship(
+        'TaxType',
+        back_populates='tax_rules'
+    )
+
+    conditions: Mapped[list['TaxRuleCondition']] = relationship(
+        'TaxRuleCondition',
+        back_populates='tax_rule',
+        cascade='all, delete-orphan'
+    )
+
+    rate_rules: Mapped[list['TaxRateRule']] = relationship(
+        'TaxRateRule',
+        back_populates='tax_rule',
+        cascade='all, delete-orphan'
+    )
+class TaxRateRule(Base):
+    __tablename__ = 'tax_rate_rule'
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['tax_rule_id'],
+            ['ap.tax_rule.tax_rule_id'],
+            name='tax_rate_rule_tax_rule_id_fkey'
+        ),
+        PrimaryKeyConstraint(
+            'tax_rate_rule_id',
+            name='tax_rate_rule_pkey'
+        ),
+        CheckConstraint(
+            'rate_percent >= 0',
+            name='tax_rate_non_negative_chk'
+        ),
+        CheckConstraint(
+            'effective_to IS NULL OR effective_to >= effective_from',
+            name='tax_rate_effective_dates_chk'
+        ),
+        {'schema': 'ap'}
+    )
+
+    tax_rate_rule_id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    tax_rule_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False
+    )
+
+    rate_percent: Mapped[decimal.Decimal] = mapped_column(
+        Numeric(7, 4),
+        nullable=False
+    )
+
+    calculation_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        server_default=text("'PERCENTAGE'::character varying")
+    )
+
+    fixed_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(
+        Numeric(18, 2)
+    )
+
+    effective_from: Mapped[datetime.date] = mapped_column(
+        Date,
+        nullable=False
+    )
+
+    effective_to: Mapped[Optional[datetime.date]] = mapped_column(
+        Date
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text('true')
+    )
+
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text('now()')
+    )
+
+    updated_by: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )
+
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text('now()')
+    )
+
+    tax_rule: Mapped['TaxRule'] = relationship(
+        'TaxRule',
+        back_populates='rate_rules'
+    )
+
+class TaxRuleCondition(Base):
+    __tablename__ = 'tax_rule_condition'
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['tax_rule_id'],
+            ['ap.tax_rule.tax_rule_id'],
+            name='tax_rule_condition_tax_rule_id_fkey'
+        ),
+        PrimaryKeyConstraint(
+            'tax_rule_condition_id',
+            name='tax_rule_condition_pkey'
+        ),
+        {'schema': 'ap'}
+    )
+
+    tax_rule_condition_id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    tax_rule_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False
+    )
+
+    condition_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False
+    )
+
+    operator: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False
+    )
+
+    condition_value: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False
+    )
+
+    logical_group: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text('1')
+    )
+
+    sequence_no: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text('1')
+    )
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text('now()')
+    )
+
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text('now()')
+    )
+
+    tax_rule: Mapped['TaxRule'] = relationship(
+        'TaxRule',
+        back_populates='conditions'
+    )

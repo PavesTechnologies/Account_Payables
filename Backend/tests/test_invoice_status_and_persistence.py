@@ -205,6 +205,9 @@ class _FakeMasterDAO:
     def get_tax_type_by_code(self, country_id, tax_code, effective_from):
         return None
 
+    def get_system_config_by_key(self, key):
+        return None
+
 
 class _FakeInboundDocumentDAO:
     def __init__(self, db):
@@ -222,6 +225,7 @@ def _patch_daos(monkeypatch):
     monkeypatch.setattr(svc, "InvoiceDAO", _FakeInvoiceDAO)
     monkeypatch.setattr(svc, "MasterDAO", _FakeMasterDAO)
     monkeypatch.setattr(svc, "InboundDocumentDAO", _FakeInboundDocumentDAO)
+    monkeypatch.setattr(svc, "get_numeric_system_config", lambda db, key, default=None: default)
     monkeypatch.setattr(svc.notifications, "notify_vendor_not_found", lambda *a, **k: None)
     # Default: automatic vendor onboarding is not eligible, so a vendor-not-matched
     # FinalResponse exercises the existing manual-fallback path unless a test
@@ -429,3 +433,50 @@ def test_apply_ocr_review_update_branch_resolves_open_issues():
     assert invoice.invoice_number == "INV-1-CORRECTED"
     assert invoice.status_id == 8
     assert invoice.updated_by == "reviewer-1"
+
+
+def test_apply_ocr_review_po_mandatory_flags_issue_without_blocking(monkeypatch):
+    """PO_MANDATORY=true and no po_id on the invoice: a PO_REQUIRED issue is
+    raised (non-blocking — invoice still reaches PENDING_APPROVAL) and that
+    open issue then prevents AUTO_APPROVAL_LIMIT from auto-approving it."""
+    db = _FakeDB()
+    existing_invoice = SimpleNamespace(
+        invoice_id=556, invoice_line=[], status_id=6, updated_by=None, vendor_id=42,
+        po_id=None, net_amount=Decimal("10.00"),
+    )
+    inbound_document = _inbound_document(invoice_id=556)
+    _FakeInboundDocumentDAO._store[4] = inbound_document
+
+    class POMandatoryMasterDAO(_FakeMasterDAO):
+        def get_system_config_by_key(self, key):
+            if key == "PO_MANDATORY":
+                return SimpleNamespace(config_value="true")
+            return None
+
+    class UpdateInvoiceDAO(_FakeInvoiceDAO):
+        def __init__(self, db):
+            super().__init__(db)
+            self.open_issues = []
+
+        def get_invoice_by_id(self, invoice_id):
+            return existing_invoice
+
+        def get_open_invoice_issues(self, invoice_id):
+            return self.created_issues
+
+    monkeypatch.setattr(svc, "MasterDAO", POMandatoryMasterDAO)
+    monkeypatch.setattr(svc, "get_numeric_system_config", lambda db, key, default=None: Decimal("5000"))
+    svc.InvoiceDAO = UpdateInvoiceDAO
+    try:
+        review = InvoiceOCRReviewRequest(invoice_number="INV-1-CORRECTED")
+        invoice = svc.apply_ocr_review(4, review, db, user_id="reviewer-1")
+    finally:
+        svc.InvoiceDAO = _FakeInvoiceDAO
+
+    dao_instance = UpdateInvoiceDAO.instances[-1]
+    assert len(dao_instance.created_issues) == 1
+    assert dao_instance.created_issues[0].issue_type == "PO_REQUIRED"
+    assert dao_instance.created_issues[0].invoice_id == 556
+    # Even though net_amount (10.00) is well under the 5000 AUTO_APPROVAL_LIMIT,
+    # the open PO_REQUIRED issue must block auto-approval.
+    assert invoice.status_id == 8  # PENDING_APPROVAL, not auto-approved

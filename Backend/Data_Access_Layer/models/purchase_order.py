@@ -1,20 +1,22 @@
 from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
-from sqlalchemy import Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, UniqueConstraint, text
+import decimal
+from sqlalchemy import Date, Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from Backend.Data_Access_Layer.models.base import Base
 
 if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.master import Currency, StatusMaster
-    from Backend.Data_Access_Layer.models.invoice import Invoice
+    from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceLine
     from Backend.Data_Access_Layer.models.vendor import Vendor
 
 
 class PurchaseOrder(Base):
     __tablename__ = 'purchase_order'
     __table_args__ = (
+        ForeignKeyConstraint(['currency_id'], ['ap.currency.currency_id'], name='purchase_order_currency_id_fkey'),
         ForeignKeyConstraint(['currency_id'], ['ap.currency.currency_id'], name='purchase_order_currency_id_fkey'),
         ForeignKeyConstraint(['status_id'], ['ap.status_master.status_id'], name='purchase_order_status_id_fkey'),
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='purchase_order_vendor_id_fkey'),
@@ -31,6 +33,14 @@ class PurchaseOrder(Base):
     file_path: Mapped[Optional[str]] = mapped_column(String(500))
     status_id: Mapped[Optional[int]] = mapped_column(Integer)
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
+    po_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    expected_delivery_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    currency_id: Mapped[Optional[int]] = mapped_column(Integer)
+    subtotal: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+    tax_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+    total_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+
+    currency: Mapped[Optional['Currency']] = relationship('Currency', back_populates='purchase_order')
     po_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
     expected_delivery_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
     currency_id: Mapped[Optional[int]] = mapped_column(Integer)
@@ -75,6 +85,9 @@ class PurchaseOrderLine(Base):
     goods_receipt_line: Mapped[list['GoodsReceiptLine']] = relationship(
         'GoodsReceiptLine', back_populates='po_line', passive_deletes='all'
     )
+    invoice_line: Mapped[list['InvoiceLine']] = relationship(
+        'InvoiceLine', back_populates='po_line', passive_deletes='all'
+    )
 
 
 class GoodsReceipt(Base):
@@ -94,6 +107,8 @@ class GoodsReceipt(Base):
     po_id: Mapped[Optional[int]] = mapped_column(Integer)
     file_path: Mapped[Optional[str]] = mapped_column(String(500))
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
+    grn_number: Mapped[Optional[str]] = mapped_column(String(50))
+    receipt_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
     grn_number: Mapped[Optional[str]] = mapped_column(String(50))
     receipt_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
 

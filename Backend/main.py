@@ -10,8 +10,11 @@ from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
 from Backend.API_Layer.routes import (
     goods_receipt_route,
     intake_route,
+    invoice_approval_route,
     invoice_process_route,
+    invoice_extraction_route,
     master_route,
+    payment_route,
     purchase_order_route,
     system_route,
     vendor_route,
@@ -114,17 +117,27 @@ api_router.include_router(
 api_router.include_router(
     goods_receipt_route.router, tags=["Goods Receipts"], prefix="/goods-receipt"
 )
+api_router.include_router(invoice_extraction_route.router, tags=["Invoice Extraction"], prefix="/invoice-extract")
 api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake")
 api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"
 )
+api_router.include_router(invoice_approval_route.router, tags=["Invoice Approval"], prefix="/invoice")
 api_router.include_router(invoice_details_route.router, tags=["Invoice Details"], prefix="/invoice-details")
+api_router.include_router(purchase_order_route.router, tags=["Purchase Order"], prefix="/po")
+api_router.include_router(goods_receipt_route.router, tags=["Goods Receipt"], prefix="/grn")
+api_router.include_router(payment_route.router, tags=["Payment"], prefix="/payment")
 app.include_router(api_router)
 
 
 @app.get("/")
 def read_root():
     return {"status": "Accounts Payable Module API is running"}
+
+
+@app.get("/apm/health")
+def health_check():
+    return {"status": "healthy"}
 
 
 # if __name__ == "__main__":

@@ -8,6 +8,10 @@ from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.master import Currency, StatusMaster
 from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
 from Backend.Data_Access_Layer.models.vendor import Vendor
+from Backend.Data_Access_Layer.models.master import StatusMaster
+from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
+
+PO_STATUS_MODULE = "PO"
 
 
 class PurchaseOrderDAO:
@@ -54,6 +58,7 @@ class PurchaseOrderDAO:
         vendor_id: Optional[int] = None,
         status_id: Optional[int] = None,
         search: Optional[str] = None,
+        po_number: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
     ) -> List[PurchaseOrder]:
@@ -62,6 +67,7 @@ class PurchaseOrderDAO:
             selectinload(PurchaseOrder.purchase_order_line),
             selectinload(PurchaseOrder.goods_receipt),
             selectinload(PurchaseOrder.invoice),
+            selectinload(PurchaseOrder.purchase_order_line)
         )
 
         if vendor_id is not None:
@@ -71,8 +77,11 @@ class PurchaseOrderDAO:
         if search:
             query = query.filter(PurchaseOrder.po_number.ilike(f"%{search}%"))
 
+        if po_number:
+            query = query.filter(PurchaseOrder.po_number == po_number)
+
         return (
-            query.order_by(PurchaseOrder.created_at.desc())
+            query.order_by(PurchaseOrder.po_id.desc())
             .offset(skip)
             .limit(limit)
             .all()
@@ -121,6 +130,36 @@ class PurchaseOrderDAO:
         return (
             self.db.query(StatusMaster)
             .filter(StatusMaster.status_id == status_id)
+            .first()
+        )
+    def get_purchase_order_by_id(self, po_id: int) -> Optional[PurchaseOrder]:
+        return (
+            self.db.query(PurchaseOrder)
+            .options(selectinload(PurchaseOrder.purchase_order_line))
+            .filter(PurchaseOrder.po_id == po_id)
+            .first()
+        )
+
+    def get_purchase_order_by_number(self, po_number: str) -> Optional[PurchaseOrder]:
+        return (
+            self.db.query(PurchaseOrder)
+            .options(selectinload(PurchaseOrder.purchase_order_line))
+            .filter(PurchaseOrder.po_number == po_number)
+            .first()
+        )
+
+    def get_lines_by_po_id(self, po_id: int) -> List[PurchaseOrderLine]:
+        return (
+            self.db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.po_id == po_id)
+            .order_by(PurchaseOrderLine.po_line_id.asc())
+            .all()
+        )
+
+    def get_line_by_id(self, po_line_id: int) -> Optional[PurchaseOrderLine]:
+        return (
+            self.db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.po_line_id == po_line_id)
             .first()
         )
 

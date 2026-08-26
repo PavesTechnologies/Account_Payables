@@ -1,5 +1,5 @@
 backend:
-  module: Accounts Payable (AP) - Vendor Management, Master Configuration, System Defaults
+  module: Accounts Payable (AP) - Vendor Management, Master Configuration, System Defaults, Invoice Processing/OCR, Invoice Details, Intake
   base_url: /apm
   api_version: "1.0.0"
   auth:
@@ -7,7 +7,7 @@ backend:
     header: "Authorization: Bearer <access_token>"
     required: true
     public_paths: ["/", "/apm/docs", "/apm/redoc", "/apm/openapi.json", "/apm/health"]
-    note: "/apm/health is listed as public in middleware but no such route is implemented. All other routes (system/master/vendor) require a valid bearer token; middleware sets request.state.user from the decoded payload. Mutating endpoints read user_id from claim 'user_id' (fallback 'sub') for created_by/updated_by/audit fields; missing claim raises 422 'Token payload missing user identifier'."
+    note: "/apm/health is now implemented (added 2026-08-13; returns {\"status\":\"healthy\"}) — previously listed as public in middleware with no matching route. All other routes (system/master/vendor/invoice/invoice-details/intake) require a valid bearer token; middleware sets request.state.user from the decoded payload. Mutating endpoints read user_id from claim 'user_id' (fallback 'sub') for created_by/updated_by/audit fields; missing claim raises 422 'Token payload missing user identifier'. NO role/permission checks exist anywhere in the backend — any authenticated user can call any endpoint, including deletes and master-data mutation. If Finance/AP-specific permission tiers are required, they must be added; do not assume they exist today."
   response_wrapper: none
   response_wrapper_note: "Routes return the Pydantic response_model JSON body directly (no {success,message,data} envelope). Backend_Layer/API_Layer/utils/response_utils.py defines success_response/error_response helpers but they are unused dead code — ignored per scan rules."
 
@@ -182,7 +182,7 @@ apis:
     method: GET
     description: List all currencies, sorted by currency_name.
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
-    response: { success: { status: 200, body: "CurrencyDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: CurrencyDTO[] }
+    response: { success: { status: 200, body: "CurrencyDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "CurrencyDTO[]" }
     frontend:
       screen: Currency Master, Vendor Create/Edit (currency dropdown)
       service_name: getAllCurrencies
@@ -232,7 +232,7 @@ apis:
       path_params: {}
       query_params: { module_name: "string, optional — e.g. 'VENDOR'" }
       body: null
-    response: { success: { status: 200, body: "StatusMasterDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: StatusMasterDTO[] }
+    response: { success: { status: 200, body: "StatusMasterDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "StatusMasterDTO[]" }
     frontend:
       screen: Status Master, Vendor Create/Edit (status dropdown), Vendor Activate/Deactivate
       service_name: getAllStatuses
@@ -356,7 +356,7 @@ apis:
     method: GET
     description: List all tax types, optionally filtered by country, sorted by tax_name.
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: { country_id: "integer, optional" }, body: null }
-    response: { success: { status: 200, body: "TaxTypeDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: TaxTypeDTO[] }
+    response: { success: { status: 200, body: "TaxTypeDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "TaxTypeDTO[]" }
     frontend:
       screen: Tax Type Master, Invoice/Line entry (future) tax dropdown
       service_name: getAllTaxTypes
@@ -455,7 +455,7 @@ apis:
     method: GET
     description: List all payment terms, sorted by term_name.
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
-    response: { success: { status: 200, body: "PaymentTermDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: PaymentTermDTO[] }
+    response: { success: { status: 200, body: "PaymentTermDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "PaymentTermDTO[]" }
     frontend:
       screen: Payment Term Master, Vendor Create/Edit (payment term dropdown)
       service_name: getAllPaymentTerms
@@ -525,7 +525,7 @@ apis:
     method: GET
     description: List all system configuration key/value entries. No create/delete endpoint — keys are seeded, only config_value/description are editable.
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
-    response: { success: { status: 200, body: "SystemConfigDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: SystemConfigDTO[] }
+    response: { success: { status: 200, body: "SystemConfigDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "SystemConfigDTO[]" }
     frontend: { screen: System Configuration, service_name: getAllSystemConfigs, react_query_key: "['system-configs']", cache: medium TTL, loading: skeleton, pagination: none, search: client-side, sorting: "server pre-sorted by config_key asc", filters: none, optimistic_update: n/a }
     dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/master/system-configuration/{config_key}", "PUT /apm/master/system-configuration/{config_key}"], business_rules: ["No POST/DELETE exists for this resource — treat as a fixed, seeded key set in the UI (e.g. render as an editable settings table, not a CRUD grid)."] }
 
@@ -633,7 +633,7 @@ apis:
         skip: "integer, default 0 — pagination offset"
         limit: "integer, default 100 — pagination page size"
       body: null
-    response: { success: { status: 200, body: "VendorDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: VendorDTO[] }
+    response: { success: { status: 200, body: "VendorDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "VendorDTO[]" }
     frontend:
       screen: Vendor List
       service_name: getAllVendors
@@ -769,7 +769,7 @@ apis:
     method: GET
     description: List all addresses for a vendor (does not include nested tax registrations in this list call's underlying query, but the DTO includes vendor_tax field via lazy attribute access).
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int }, query_params: {}, body: null }
-    response: { success: { status: 200, body: "VendorAddressDTO[]" }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: VendorAddressDTO[] }
+    response: { success: { status: 200, body: "VendorAddressDTO[]" }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: "VendorAddressDTO[]" }
     frontend: { screen: Vendor Detail — Addresses tab, service_name: getVendorAddresses, react_query_key: "['vendors', vendorId, 'addresses']", cache: "short TTL", loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by vendor_address_id asc", filters: none, optimistic_update: n/a }
     dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
 
@@ -868,7 +868,7 @@ apis:
     method: GET
     description: List all bank accounts (including historical/superseded ones) for a vendor.
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_id: int }, query_params: {}, body: null }
-    response: { success: { status: 200, body: "VendorBankDTO[]" }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: VendorBankDTO[] }
+    response: { success: { status: 200, body: "VendorBankDTO[]" }, error: [{ status: 404, condition: "Vendor not found" }, { status: 500, condition: "unexpected error" }], model: "VendorBankDTO[]" }
     frontend: { screen: Vendor Detail — Bank Accounts tab, service_name: getVendorBanks, react_query_key: "['vendors', vendorId, 'banks']", cache: "short TTL", loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by vendor_bank_id asc", filters: "client-side filter for effective_to == null to show only active accounts", optimistic_update: n/a }
     dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
 
@@ -962,7 +962,7 @@ apis:
     method: GET
     description: List all tax registrations for a vendor address.
     request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { vendor_address_id: int }, query_params: {}, body: null }
-    response: { success: { status: 200, body: "VendorTaxDTO[]" }, error: [{ status: 404, condition: "Address not found" }, { status: 500, condition: "unexpected error" }], model: VendorTaxDTO[] }
+    response: { success: { status: 200, body: "VendorTaxDTO[]" }, error: [{ status: 404, condition: "Address not found" }, { status: 500, condition: "unexpected error" }], model: "VendorTaxDTO[]" }
     frontend: { screen: Vendor Detail — Address → Tax Registrations, service_name: getVendorTaxes, react_query_key: "['vendor-addresses', vendorAddressId, 'taxes']", cache: "short TTL", loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by vendor_tax_id asc", filters: none, optimistic_update: n/a }
     dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
 
@@ -1007,6 +1007,617 @@ apis:
     frontend: { screen: Vendor Detail — Address → Tax Registrations, service_name: deleteVendorTax, react_query_key: "['vendor-addresses', vendorAddressId, 'taxes']", cache: "invalidate ['vendor-addresses', vendorAddressId, 'taxes']", loading: confirm dialog + spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
     dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
 
+  # =========================================================
+  # INVOICE PROCESSING / OCR (added 2026-08-13)
+  # =========================================================
+  # Pipeline: upload -> technical classification -> text extraction (native
+  # PDF text layer, or OCR via rapidocr/onnxruntime for scanned pages/images,
+  # with an AWS Textract quality-gated fallback that is stubbed/not yet
+  # implemented — see Business_Layer/utils/ocr_provider.aws_textract_extract)
+  # -> quality scoring -> field extraction (anchor/regex/geometry rules, no
+  # AI) -> business validation -> vendor matching -> confidence scoring ->
+  # persistence. /upload-document, /extract-fields, /validate-fields,
+  # /match-vendor are "developer APIs" that expose each stage individually
+  # for debugging; /process-invoice is the single production endpoint that
+  # runs the full pipeline and persists the result. All five share the same
+  # underlying functions in Business_Layer/services/invoice_process_service.py
+  # — behavior never diverges between the debug and production paths.
+  - feature: Invoice Upload (developer API)
+    endpoint: /apm/invoice/upload-document
+    method: POST
+    description: "Upload a document and run technical classification + text extraction only (no field extraction). Debugging/inspection tool, not part of the production flow."
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: multipart/form-data }
+      path_params: {}
+      query_params: {}
+      body: { fields: [{ name: file, type: file, required: true, default: null, validation: "PDF/PNG/JPEG/TIFF only", enum: null }] }
+    response:
+      success: { status: 200, body: DocumentResult }
+      error:
+        - { status: 415, condition: "unsupported file type" }
+        - { status: 422, condition: "OCR failure" }
+        - { status: 500, condition: "unexpected error" }
+      model: DocumentResult
+    frontend:
+      screen: "Developer/QA tooling only — not intended for the production upload screen (use /process-invoice instead)"
+      service_name: uploadDocumentDebug
+      react_query_key: none (mutation, no cache)
+      cache: none
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies: { lookup_apis: [], related_endpoints: ["POST /apm/invoice/extract-fields"], business_rules: ["Returns raw per-page word/text data (DocumentResult.pages[].words) — large payload, do not render directly in a table."] }
+
+  - feature: Invoice Field Extraction (developer API)
+    endpoint: /apm/invoice/extract-fields
+    method: POST
+    description: Rule-based field extraction (anchors/regex/geometry, no AI) from a DocumentResult produced by /upload-document.
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: application/json }
+      path_params: {}
+      query_params: {}
+      body: { fields: [{ name: "(entire body)", type: DocumentResult, required: true, default: null, validation: "must be the exact response of POST /upload-document", enum: null }] }
+    response:
+      success: { status: 200, body: ExtractedInvoice }
+      error: [{ status: 422, condition: "field extraction error" }, { status: 500, condition: "unexpected error" }]
+      model: ExtractedInvoice
+    frontend: { screen: "Developer/QA tooling only", service_name: extractFieldsDebug, react_query_key: none, cache: none, loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: ["POST /apm/invoice/upload-document", "POST /apm/invoice/validate-fields", "POST /apm/invoice/match-vendor"], business_rules: [] }
+
+  - feature: Invoice Field Validation (developer API)
+    endpoint: /apm/invoice/validate-fields
+    method: POST
+    description: Business validation (GSTIN format, invoice date, due date, totals, invoice number) over an ExtractedInvoice.
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: application/json }
+      path_params: {}
+      query_params: {}
+      body: { fields: [{ name: "(entire body)", type: ExtractedInvoice, required: true, default: null, validation: none, enum: null }] }
+    response:
+      success: { status: 200, body: ValidationResult }
+      error: [{ status: 422, condition: "validation failure raised as an exception (rare — most validation issues are returned inside ValidationResult.errors, not as an HTTP error)" }, { status: 500, condition: "unexpected error" }]
+      model: ValidationResult
+    frontend: { screen: "Developer/QA tooling only", service_name: validateFieldsDebug, react_query_key: none, cache: none, loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Invoice Vendor Matching (developer API)
+    endpoint: /apm/invoice/match-vendor
+    method: POST
+    description: Match an ExtractedInvoice against the vendor master (by GSTIN/name — see Business_Layer/utils/vendor_matcher.py).
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: application/json }
+      path_params: {}
+      query_params: {}
+      body: { fields: [{ name: "(entire body)", type: ExtractedInvoice, required: true, default: null, validation: none, enum: null }] }
+    response:
+      success: { status: 200, body: VendorMatch }
+      error: [{ status: 404, condition: "VendorNotFound" }, { status: 500, condition: "unexpected error" }]
+      model: VendorMatch
+    frontend: { screen: "Developer/QA tooling only", service_name: matchVendorDebug, react_query_key: none, cache: none, loading: button spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Invoice Processing (production pipeline)
+    endpoint: /apm/invoice/process-invoice
+    method: POST
+    description: "THE production upload endpoint. Validates the file, uploads it to S3, creates an InboundDocument row, runs the full OCR/extraction/validation/vendor-matching/confidence pipeline, then persists per the Path A/Path B split (see business_rules). This is what the Invoice Upload screen should call — not /upload-document."
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: multipart/form-data }
+      path_params: {}
+      query_params: {}
+      body: { fields: [{ name: file, type: file, required: true, default: null, validation: "PDF/PNG/JPEG/TIFF only, non-empty", enum: null }] }
+    response:
+      success: { status: 200, body: FinalResponse }
+      error:
+        - { status: 400, condition: "invalid/empty upload file" }
+        - { status: 415, condition: "unsupported file type" }
+        - { status: 422, condition: "missing user identifier (token); OCR/field-extraction failure (InboundDocument marked FAILED, no Invoice created); extraction produced an unusable result (missing invoice_number/invoice_date/amount)" }
+        - { status: 409, condition: "duplicate invoice for this vendor+invoice_number (InboundDocument linked to the existing invoice, no new Invoice row created)" }
+        - { status: 500, condition: "unexpected error during extraction or persistence" }
+      model: FinalResponse
+    frontend:
+      screen: Invoice Upload
+      service_name: processInvoice
+      react_query_key: none (mutation) — invalidate ["invoice-details"] list on success
+      cache: "invalidate ['invoice-details'] list on success"
+      loading: button spinner / progress indicator (OCR can be slow for scanned documents)
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["PATCH /apm/invoice/inbound-documents/{inbound_document_id}/ocr-review", "GET /apm/invoice-details/invoice/{invoice_id}"]
+      business_rules:
+        - "Path A (vendor matched by GSTIN/name, OR auto-onboarded from a GST-verified GSTIN when match fails and confidence is high enough — see vendor_auto_onboarding.py): Invoice + InvoiceLine(s) + InvoiceAttachment + InvoiceIssue(s) are created in ONE transaction at status OCR_REVIEW_PENDING. response.invoice_id and response.invoice_status are populated."
+        - "Path B (vendor not matched and not eligible for auto-onboarding): only the InboundDocument is updated (extraction_status=EXTRACTED, raw_extracted_data populated); no Invoice is created yet. response.invoice_id is null and response.invoice_status = 'PENDING_VENDOR_ONBOARDING'. A notification email is sent (Business_Layer/utils/notifications.notify_vendor_not_found). The frontend MUST branch on invoice_status: PENDING_VENDOR_ONBOARDING means the next required action is manual OCR review with a vendor_id supplied (see PATCH .../ocr-review), not a redirect to an invoice detail page."
+        - "InvoiceIssue rows are auto-created (severity WARNING/INFO, never blocking) for: overall confidence below 80, validation errors, line-total/subtotal mismatch beyond a ₹1.00 tolerance, unmapped currency (defaults to INR), or line items that had too little data to persist."
+        - "Duplicate detection is by (vendor_id, invoice_number) — if Path A's matched/onboarded vendor already has an invoice with the same invoice_number, the InboundDocument is linked to the EXISTING invoice_id and a 409 is returned; no new Invoice row is created."
+        - "This is a genuinely slow endpoint (OCR on scanned pages can take several seconds) — do not set an aggressive client-side request timeout."
+
+  - feature: Manual OCR Review
+    endpoint: /apm/invoice/inbound-documents/{inbound_document_id}/ocr-review
+    method: PATCH
+    description: "AP Executive confirms/corrects an OCR-extracted invoice. Creates the Invoice for the first time when Path B occurred at /process-invoice (vendor_id required in the body in that case), or updates the existing invoice when Path A already created one. Either way, always ends at invoice status PENDING_APPROVAL and resolves (marks resolved_by/resolved_at on) any still-open InvoiceIssue rows for that invoice."
+    request:
+      headers: { Authorization: "Bearer <token> (required)", Content-Type: application/json }
+      path_params: { inbound_document_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: vendor_id, type: integer, required: conditional, default: null, validation: "REQUIRED if this document's vendor was not auto-matched at /process-invoice time (Path B); ignored/optional otherwise", enum: null }
+          - { name: invoice_number, type: string, required: conditional, default: null, validation: "required to create (Path B first call); unique per (vendor_id, invoice_number)", enum: null }
+          - { name: invoice_type, type: string, required: false, default: NON_PO, validation: none, enum: [PO, NON_PO] }
+          - { name: invoice_date, type: date, required: conditional, default: null, validation: "required to create (Path B first call)", enum: null }
+          - { name: due_date, type: date, required: conditional, default: null, validation: "required to create (Path B first call)", enum: null }
+          - { name: currency_id, type: integer, required: conditional, default: null, validation: "required to create (Path B first call); must reference an existing currency", enum: null }
+          - { name: gross_amount, type: decimal, required: conditional, default: null, validation: "required to create (Path B first call)", enum: null }
+          - { name: discount_amount, type: decimal, required: false, default: 0, validation: none, enum: null }
+          - { name: tax_amount, type: decimal, required: false, default: 0, validation: none, enum: null }
+          - { name: net_amount, type: decimal, required: conditional, default: null, validation: "required to create (Path B first call)", enum: null }
+          - { name: po_id, type: integer, required: false, default: null, validation: "no FK existence check performed by this endpoint", enum: null }
+          - { name: payment_term_id, type: integer, required: false, default: null, validation: "no FK existence check performed by this endpoint", enum: null }
+          - { name: lines, type: "array of {line_number, description, quantity, unit_price, line_amount, tax_amount, tax_type_id}", required: false, default: null, validation: "a line_number matching an existing InvoiceLine updates it; a new line_number inserts a new line; omitting `lines` entirely leaves existing lines untouched", enum: null }
+      note: "On the CREATE branch (Path B), all of invoice_number/invoice_date/due_date/currency_id/gross_amount/net_amount are actually required — the schema marks them optional only because the same body shape is reused for the UPDATE branch."
+    response:
+      success: { status: 200, body: "{ success: true, message: string, data: { invoice_id: int, status_id: int } }" }
+      error:
+        - { status: 422, condition: "vendor_id missing on Path B create; missing required field(s) to create the invoice; missing user identifier" }
+        - { status: 409, condition: "DuplicateInvoiceError — invoice_number already exists for this vendor" }
+        - { status: 500, condition: "unexpected error, including 'InboundDocument not found' (currently surfaces as 500, not 404 — see business_rules)" }
+      model: none (uses Backend/API_Layer/utils/response_utils.success_response — the only route in this codebase that uses that helper)
+    frontend:
+      screen: OCR Review / Manual Correction
+      service_name: submitOcrReview
+      react_query_key: none (mutation) — invalidate ["invoice-details", invoiceId] and the invoice-details list on success
+      cache: "invalidate on success"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/vendor (to let the AP Executive pick a vendor for Path B)", "GET /apm/master/payment-term", "GET /apm/master/tax-type"]
+      related_endpoints: ["POST /apm/invoice/process-invoice", "GET /apm/invoice-details/invoice/{invoice_id}"]
+      business_rules:
+        - "A request for an inbound_document_id that does not exist raises a bare ValueError, which this route does NOT catch specially — it falls through to the generic except Exception -> HTTP 500, NOT a 404. Frontend should treat any 500 from this endpoint on a not-found ID as effectively 'not found', but the backend does not distinguish it cleanly today."
+        - "The response body breaks from every other route's convention: {success, message, data} instead of returning the model directly (see 'response_wrapper' note above — this is the one exception)."
+
+  # =========================================================
+  # INVOICE DETAILS (read) (added 2026-08-13)
+  # =========================================================
+  - feature: Invoice Details
+    endpoint: /apm/invoice-details/invoice/{invoice_id}
+    method: GET
+    description: "Get a single invoice's header fields plus resolved vendor_name and status_code. Does NOT include invoice lines, attachments, or issues — header only."
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { invoice_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: InvoiceDetailsResponse }
+      error: [{ status: 404, condition: "Invoice not found" }, { status: 500, condition: "unexpected error" }]
+      model: InvoiceDetailsResponse
+    frontend:
+      screen: Invoice Detail
+      service_name: getInvoiceDetailsById
+      react_query_key: "['invoice-details', invoiceId]"
+      cache: standard
+      loading: skeleton
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: n/a
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["GET /apm/invoice-details/invoice/view/{inbound_document_id}"]
+      business_rules: ["No line items/attachments/issues are returned by this response — a full invoice detail screen showing those needs a new/expanded backend response (see known_gaps_for_frontend)."]
+
+  - feature: Invoice Details
+    endpoint: /apm/invoice-details/invoice
+    method: GET
+    description: List ALL invoices' header fields (same shape as the single-invoice response). No pagination, filtering, or search.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
+    response: { success: { status: 200, body: "InvoiceDetailsResponse[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "InvoiceDetailsResponse[]" }
+    frontend:
+      screen: Invoice List
+      service_name: getAllInvoiceDetails
+      react_query_key: "['invoice-details']"
+      cache: "short TTL; invalidate on /process-invoice and /ocr-review success"
+      loading: skeleton table
+      pagination: "NONE — returns every invoice in the database in one response; will not scale, do client-side pagination for now"
+      search: "client-side only (no server-side search param)"
+      sorting: "none — DB-default order"
+      filters: "client-side only (e.g. filter by status_code) — no server-side query params exist"
+      optimistic_update: n/a
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/invoice-details/invoice/{invoice_id}"], business_rules: ["Treat as a temporary/MVP endpoint — flag to backend team if invoice volume will exceed a few hundred rows."] }
+
+  - feature: Invoice Document View
+    endpoint: /apm/invoice-details/invoice/view/{inbound_document_id}
+    method: GET
+    description: Stream/redirect to the original uploaded document file from S3 for a given InboundDocument.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { inbound_document_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: "S3 file content/redirect (see Backend/API_Layer/utils/s3_utils.view_from_s3 — return shape is whatever that helper produces, not a typed Pydantic model)" }
+      error: [{ status: 404, condition: "Invoice/document not found for this inbound_document_id" }, { status: 500, condition: "unexpected error, including S3 failures" }]
+      model: none (raw file response)
+    frontend:
+      screen: Invoice Detail — "View original document" action
+      service_name: viewInvoiceDocument
+      react_query_key: none (open in new tab / iframe src, not a react-query-cached call)
+      cache: none
+      loading: spinner while opening
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: n/a
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Requires AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION/AWS_BUCKET_NAME to be configured on the backend."] }
+
+  # =========================================================
+  # INTAKE (mailbox integration — added 2026-08-13)
+  # =========================================================
+  # These three endpoints are Microsoft Graph mailbox plumbing (fetching
+  # inbound invoice emails), not general-purpose AP screens. They are
+  # currently unauthenticated by design at the route level (no _get_user_id
+  # call), but still sit behind the same global JWTMiddleware as every
+  # other /apm/* route, so a valid bearer token is still required.
+  - feature: Intake — Graph Token
+    endpoint: /apm/intake/graph-token
+    method: GET
+    description: Obtain a Microsoft Graph app-only access token (client credentials flow) for mailbox access. Internal/plumbing endpoint.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
+    response: { success: { status: 200, body: "raw Microsoft identity platform token response" }, error: [{ status: "proxied from Microsoft identity platform", condition: "token request failed" }], model: none }
+    frontend: { screen: "Not intended for direct frontend use — internal to the intake/mailbox pipeline", service_name: n/a, react_query_key: none, cache: none, loading: n/a, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/intake/mails"], business_rules: ["Requires CLIENT_ID/CLIENT_SECRET/TENANT_ID env vars."] }
+
+  - feature: Intake — List Mails
+    endpoint: /apm/intake/mails
+    method: GET
+    description: List the 10 most recent messages in the configured mailbox (id/subject/from/receivedDateTime/isRead/hasAttachments). Internal/plumbing endpoint.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: {}, query_params: {}, body: null }
+    response: { success: { status: 200, body: "raw Microsoft Graph messages response" }, error: [{ status: "proxied from Microsoft Graph", condition: "Graph API call failed" }], model: none }
+    frontend: { screen: "Not intended for direct frontend use", service_name: n/a, react_query_key: none, cache: none, loading: n/a, pagination: "hardcoded $top=10, not configurable via query param", search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["Requires MAIL_ADDRESS env var (the mailbox to read)."] }
+
+  - feature: Intake — Send Mail
+    endpoint: /apm/intake/send-mail
+    method: POST
+    description: "Send an HTML email via direct SMTP (NOT via Graph, despite living in the same intake module). Function signature (to_mail, subject, content) takes plain arguments, not a JSON body model — treat as internal/unfinished."
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body: { fields: [{ name: to_mail, type: string, required: true, default: null, validation: none, enum: null }, { name: subject, type: string, required: true, default: null, validation: none, enum: null }, { name: content, type: string, required: true, default: null, validation: "HTML string", enum: null }] }
+    response: { success: { status: 200, body: none }, error: [{ status: 500, condition: "SMTP failure re-raised as an unhandled exception" }], model: none }
+    frontend: { screen: "Not intended for direct frontend use — no response_model, and FastAPI will reject this as-is because the parameters aren't declared as a Pydantic body (see business_rules)", service_name: n/a, react_query_key: none, cache: none, loading: n/a, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["CAUTION: send_mail's parameters (to_mail, subject, content) are plain str args with no Pydantic model or explicit Body(...)/Query(...) markers — FastAPI will treat them as query parameters, not a JSON body, so a typical JSON POST from a frontend client will 422. This endpoint looks unfinished/untested; do not wire a frontend feature to it without backend follow-up.", "Requires EMAIL_USER/EMAIL_PASSWORD/EMAIL_HOST/EMAIL_PORT env vars."] }
+
+  # =========================================================
+  # PURCHASE ORDER (read-only) (added 2026-08-14)
+  # =========================================================
+  # PurchaseOrder/PurchaseOrderLine tables already existed in the live DB
+  # with real data before this backend had any code for them — this is the
+  # application layer catching up to the schema, not new schema.
+  - feature: Purchase Order
+    endpoint: /apm/po
+    method: GET
+    description: List purchase orders with optional vendor/status/po_number filtering. Each PO includes its lines eager-loaded.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params:
+        vendor_id: "integer, optional"
+        status_id: "integer, optional — see enums.po_status_code"
+        po_number: "string, optional — case-insensitive partial match (ILIKE %po_number%)"
+        skip: "integer, default 0"
+        limit: "integer, default 100"
+      body: null
+    response: { success: { status: 200, body: "PurchaseOrderDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "PurchaseOrderDTO[]" }
+    frontend: { screen: Purchase Order List, service_name: getAllPurchaseOrders, react_query_key: "['purchase-orders', { vendorId, statusId, poNumber, skip, limit }]", cache: "short TTL", loading: skeleton table, pagination: "offset-based via skip/limit, no total-count field — same caveat as GET /apm/vendor", search: "server-side, debounce po_number", sorting: "server pre-sorted by po_id desc (newest first)", filters: { vendor_id: integer, status_id: integer }, optimistic_update: n/a }
+    dependencies: { lookup_apis: ["GET /apm/system/status?module_name=PO", "GET /apm/vendor"], related_endpoints: ["GET /apm/po/{po_id}"], business_rules: [] }
+
+  - feature: Purchase Order
+    endpoint: /apm/po/{po_id}
+    method: GET
+    description: Get a single PO with its lines.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { po_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: PurchaseOrderDTO }, error: [{ status: 404, condition: "Purchase order not found" }, { status: 500, condition: "unexpected error" }], model: PurchaseOrderDTO }
+    frontend: { screen: Purchase Order Detail, service_name: getPurchaseOrderById, react_query_key: "['purchase-orders', poId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/po/{po_id}/lines", "GET /apm/invoice/{invoice_id}/matching"], business_rules: ["Response already embeds purchase_order_line — the dedicated /lines endpoint is only needed in isolation."] }
+
+  - feature: Purchase Order
+    endpoint: /apm/po/number/{po_number}
+    method: GET
+    description: Get a single PO by its po_number (unique) — useful for a 'look up PO by number' search box during OCR review.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { po_number: string }, query_params: {}, body: null }
+    response: { success: { status: 200, body: PurchaseOrderDTO }, error: [{ status: 404, condition: "Purchase order not found" }, { status: 500, condition: "unexpected error" }], model: PurchaseOrderDTO }
+    frontend: { screen: "OCR Review — PO lookup assist", service_name: getPurchaseOrderByNumber, react_query_key: "['purchase-orders', 'number', poNumber]", cache: standard, loading: inline spinner, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Purchase Order
+    endpoint: /apm/po/{po_id}/lines
+    method: GET
+    description: List a PO's line items in isolation.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { po_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "PurchaseOrderLineDTO[]" }, error: [{ status: 404, condition: "Purchase order not found" }, { status: 500, condition: "unexpected error" }], model: "PurchaseOrderLineDTO[]" }
+    frontend: { screen: "Purchase Order Detail (rarely used directly — GET /apm/po/{po_id} already embeds lines)", service_name: getPurchaseOrderLines, react_query_key: "['purchase-orders', poId, 'lines']", cache: standard, loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by po_line_id asc", filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  # =========================================================
+  # GOODS RECEIPT (read-only) (added 2026-08-14)
+  # =========================================================
+  - feature: Goods Receipt
+    endpoint: /apm/grn
+    method: GET
+    description: List goods receipts with optional vendor/PO filtering. Each GRN includes its lines eager-loaded.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: { vendor_id: "integer, optional", po_id: "integer, optional", skip: "integer, default 0", limit: "integer, default 100" }
+      body: null
+    response: { success: { status: 200, body: "GoodsReceiptDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "GoodsReceiptDTO[]" }
+    frontend: { screen: Goods Receipt List, service_name: getAllGoodsReceipts, react_query_key: "['goods-receipts', { vendorId, poId, skip, limit }]", cache: "short TTL", loading: skeleton table, pagination: "offset-based via skip/limit, no total-count field", search: none, sorting: "server pre-sorted by grn_id desc", filters: { vendor_id: integer, po_id: integer }, optimistic_update: n/a }
+    dependencies: { lookup_apis: ["GET /apm/po"], related_endpoints: ["GET /apm/grn/{grn_id}"], business_rules: ["po_id is nullable on goods_receipt — a GRN is not required to reference a PO in this schema, though in practice 3-way matching needs one."] }
+
+  - feature: Goods Receipt
+    endpoint: /apm/grn/{grn_id}
+    method: GET
+    description: Get a single GRN with its lines.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { grn_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: GoodsReceiptDTO }, error: [{ status: 404, condition: "Goods receipt not found" }, { status: 500, condition: "unexpected error" }], model: GoodsReceiptDTO }
+    frontend: { screen: Goods Receipt Detail, service_name: getGoodsReceiptById, react_query_key: "['goods-receipts', grnId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/grn/{grn_id}/lines"], business_rules: [] }
+
+  - feature: Goods Receipt
+    endpoint: /apm/grn/{grn_id}/lines
+    method: GET
+    description: "List a GRN's line items in isolation. Each line's po_line_id (nullable) shows which PO line it was received against — see GoodsReceiptLine.po_line_id in the data model."
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { grn_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "GoodsReceiptLineDTO[]" }, error: [{ status: 404, condition: "Goods receipt not found" }, { status: 500, condition: "unexpected error" }], model: "GoodsReceiptLineDTO[]" }
+    frontend: { screen: "Goods Receipt Detail (rarely used directly)", service_name: getGoodsReceiptLines, react_query_key: "['goods-receipts', grnId, 'lines']", cache: standard, loading: skeleton list, pagination: none, search: none, sorting: "server pre-sorted by grn_line_id asc", filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  # =========================================================
+  # PO / GRN / INVOICE MATCHING (2-way / 3-way, read-only, computed) (added 2026-08-14)
+  # =========================================================
+  - feature: Invoice Matching
+    endpoint: /apm/invoice/{invoice_id}/matching
+    method: GET
+    description: "Computes (does not persist) a 2-way (PO<->Invoice) or 3-way (PO<->GRN<->Invoice) match for one invoice, line by line. Uses invoice_line.po_line_id and goods_receipt_line.po_line_id to align lines; falls back to PO ordered quantity when no GRN exists. Never changes invoice status or approves anything — it only reports."
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { invoice_id: int }, query_params: {}, body: null }
+    response:
+      success: { status: 200, body: MatchResult }
+      error: [{ status: 404, condition: "Invoice not found" }, { status: 500, condition: "unexpected error" }]
+      model: MatchResult
+    frontend:
+      screen: Invoice Detail — Matching tab/panel
+      service_name: getInvoiceMatching
+      react_query_key: "['invoice-matching', invoiceId]"
+      cache: "short TTL — recompute after any PO/GRN/invoice-line change"
+      loading: skeleton
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: n/a
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["GET /apm/po/{po_id}", "GET /apm/grn/{grn_id}"]
+      business_rules:
+        - "overall_status values: NO_PO (invoice has no po_id — nothing to match), MATCHED (every line within tolerance: quantity ±0.01, price ±0.01), VARIANCE_DETECTED (at least one line outside tolerance), GRN_REQUIRED_BUT_MISSING (GRN_MANDATORY=true but no goods receipt is linked to the PO), INCOMPLETE (PO exists but no invoice line has po_line_id set)."
+        - "match_type is NONE/TWO_WAY/THREE_WAY — THREE_WAY only when at least one goods_receipt_line exists for the PO, regardless of GRN_MANDATORY."
+        - "po_mandatory/grn_mandatory in the response reflect the current system_configuration values (PO_MANDATORY, GRN_MANDATORY) at request time — purely informational here, not enforced by this endpoint."
+        - "Line-level quantity_variance/price_variance are signed (invoiced minus baseline) — negative means the invoice billed LESS than ordered/received."
+        - "Does NOT block or auto-approve anything — a human (or the approval endpoints) decides what to do with a VARIANCE_DETECTED result."
+
+  # =========================================================
+  # OCR REVIEW QUEUE (derived — no dedicated table) (added 2026-08-14)
+  # =========================================================
+  - feature: OCR Review Queue
+    endpoint: /apm/invoice/review-queue
+    method: GET
+    description: "Combined, paginated queue of everything awaiting manual OCR action: Path A (Invoice.status_code=OCR_REVIEW_PENDING — already created, needs confirmation) and Path B (InboundDocument.extraction_status=EXTRACTED and invoice_id IS NULL — vendor never matched, needs vendor assignment). Both sets are merged and sorted by recency (created_at/received_at) before pagination is applied as one combined window — there is no separate per-path pagination."
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: { skip: "integer, default 0", limit: "integer, default 50" }
+      body: null
+    response: { success: { status: 200, body: ReviewQueueResponse }, error: [{ status: 500, condition: "unexpected error" }], model: ReviewQueueResponse }
+    frontend:
+      screen: OCR Review Queue
+      service_name: getReviewQueue
+      react_query_key: "['review-queue', { skip, limit }]"
+      cache: "short TTL; invalidate on /process-invoice and /ocr-review success"
+      loading: skeleton table
+      pagination: "offset-based via skip/limit over the COMBINED (Path A + Path B) list; total_path_a/total_path_b give per-path counts for a tab/badge count, but there is no single combined total field — infer 'has more' from items.length == limit"
+      search: none
+      sorting: "server pre-sorted by recency (created_at for Path A, received_at for Path B) descending"
+      filters: "none server-side — each item.path is PATH_A or PATH_B for client-side tab filtering"
+      optimistic_update: n/a
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["PATCH /apm/invoice/inbound-documents/{inbound_document_id}/ocr-review"]
+      business_rules: ["Every item has inbound_document_id populated (both paths originate from an InboundDocument); PATH_A items additionally have invoice_id/invoice_number/net_amount populated, PATH_B items have file_name/extraction_confidence populated instead — branch the row rendering on item.path.", "Clicking a PATH_B row should open the OCR Review screen in 'assign vendor' mode (vendor_id required in the PATCH body); a PATH_A row opens it in 'confirm/correct' mode."]
+
+  # =========================================================
+  # INVOICE APPROVAL (single-level) (added 2026-08-14)
+  # =========================================================
+  # Uses the existing InvoiceApproval table as-is — no approval_level column,
+  # no new table. Multiple rows per invoice_id are allowed by design, so the
+  # decision history in GET .../approvals is a natural append-only log.
+  - feature: Invoice Approval
+    endpoint: /apm/invoice/{invoice_id}/approve
+    method: POST
+    description: Approve an invoice currently at PENDING_APPROVAL. Creates an InvoiceApproval row (decision=APPROVED) and moves the invoice to APPROVED.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { invoice_id: int }
+      query_params: {}
+      body: { fields: [{ name: comments, type: string, required: false, default: null, validation: none, enum: null }] }
+    response:
+      success: { status: 200, body: "{ invoice_id: int, invoice_approval_id: int, status_code: 'APPROVED', message: string }" }
+      error:
+        - { status: 404, condition: "Invoice not found" }
+        - { status: 422, condition: "Invoice is not currently PENDING_APPROVAL; missing user identifier; APPROVED status not configured in status_master" }
+        - { status: 500, condition: "unexpected error" }
+      model: InvoiceApprovalActionResponse
+    frontend:
+      screen: Invoice Approval
+      service_name: approveInvoice
+      react_query_key: "none (mutation) — invalidate ['invoice-details', invoiceId], ['invoice-details'] list, ['invoice-matching', invoiceId], and ['invoice-approvals', invoiceId] on success"
+      cache: "invalidate on success"
+      loading: button spinner + confirm dialog
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/invoice/{invoice_id}/matching (show the approver the match result before they decide)"]
+      related_endpoints: ["GET /apm/invoice/{invoice_id}/approvals"]
+      business_rules: ["Approver identity comes from the JWT (user_id/sub claim) — there is no approver-role check today (see backend auth note at the top of this file).", "No AUTO_APPROVAL_LIMIT check happens here — that only fires automatically inside PATCH .../ocr-review when the invoice first reaches PENDING_APPROVAL. Calling this endpoint on an invoice already auto-approved will 422 (not PENDING_APPROVAL)."]
+
+  - feature: Invoice Approval
+    endpoint: /apm/invoice/{invoice_id}/reject
+    method: POST
+    description: Reject an invoice currently at PENDING_APPROVAL. comments is REQUIRED here (the rejection reason) — unlike approve, where it's optional.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { invoice_id: int }
+      query_params: {}
+      body: { fields: [{ name: comments, type: string, required: true, default: null, validation: "rejection reason", enum: null }] }
+    response:
+      success: { status: 200, body: "{ invoice_id: int, invoice_approval_id: int, status_code: 'REJECTED', message: string }" }
+      error:
+        - { status: 404, condition: "Invoice not found" }
+        - { status: 422, condition: "Invoice is not currently PENDING_APPROVAL; missing comments (422 from FastAPI body validation, before the route even runs); missing user identifier; REJECTED status not configured in status_master" }
+        - { status: 500, condition: "unexpected error" }
+      model: InvoiceApprovalActionResponse
+    frontend: { screen: Invoice Approval, service_name: rejectInvoice, react_query_key: "none (mutation) — same invalidation set as approve", cache: "invalidate on success", loading: "button spinner + confirm dialog with a required reason textarea", pagination: none, search: none, sorting: none, filters: none, optimistic_update: false }
+    dependencies: { lookup_apis: [], related_endpoints: ["GET /apm/invoice/{invoice_id}/approvals"], business_rules: ["There is no 'un-reject' or re-approval path from REJECTED in this backend — it's a terminal status."] }
+
+  - feature: Invoice Approval
+    endpoint: /apm/invoice/{invoice_id}/approvals
+    method: GET
+    description: Full approval decision history for an invoice (every InvoiceApproval row, oldest first) — normally 0 or 1 rows today (single-level approval), but the table supports more.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { invoice_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: "InvoiceApprovalDTO[]" }, error: [{ status: 404, condition: "Invoice not found" }, { status: 500, condition: "unexpected error" }], model: "InvoiceApprovalDTO[]" }
+    frontend: { screen: Invoice Detail — Approval History panel, service_name: getInvoiceApprovalHistory, react_query_key: "['invoice-approvals', invoiceId]", cache: "invalidate on approve/reject", loading: skeleton list, pagination: none, search: none, sorting: "oldest first (created_at asc)", filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: ["An invoice auto-approved via AUTO_APPROVAL_LIMIT will have ZERO rows here (per Database/Database_README.md Module 6, the fully-automated path never touches invoice_approval) even though its status is APPROVED — do not assume APPROVED implies a history row exists."] }
+
+  # =========================================================
+  # PAYMENT (added 2026-08-14)
+  # =========================================================
+  # Uses the existing Payment/PaymentInvoice schema as-is — no schema
+  # changes. invoice.amount_paid is only updated when a payment reaches
+  # CLEARED; SCHEDULED/SENT allocations "reserve" the balance (see
+  # business_rules) without moving money yet.
+  - feature: Payment
+    endpoint: /apm/payment
+    method: POST
+    description: Create a payment (status SCHEDULED) allocated against one or more invoices in one transaction.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: {}
+      body:
+        fields:
+          - { name: vendor_id, type: integer, required: true, default: null, validation: "must exist; every allocated invoice must belong to this vendor", enum: null }
+          - { name: scheduled_date, type: date, required: true, default: null, validation: none, enum: null }
+          - { name: currency_id, type: integer, required: true, default: null, validation: "must reference an existing currency (no FK existence check performed by this endpoint today)", enum: null }
+          - { name: payment_method, type: string, required: true, default: null, validation: "free text — no enum enforced (e.g. NEFT, RTGS, WIRE, CHEQUE by convention)", enum: null }
+          - { name: vendor_bank_id, type: integer, required: false, default: null, validation: "no FK existence check performed by this endpoint today", enum: null }
+          - { name: reference_number, type: string, required: false, default: null, validation: none, enum: null }
+          - { name: allocations, type: "array of {invoice_id, allocated_amount}", required: true, default: null, validation: "at least 1 entry; each allocated_amount > 0 and <= that invoice's remaining payable amount (net_amount - amount_paid - amount already reserved by other non-FAILED SCHEDULED/SENT payments); each invoice must be APPROVED or PARTIALLY_PAID and belong to vendor_id", enum: null }
+      note: "This is the one endpoint outside master-data create/update routes that validates multiple related rows (every allocation's invoice) inside a single all-or-nothing transaction — any failure rolls back the whole payment, not just the offending allocation."
+    response:
+      success: { status: 200, body: "{ payment_id: int, message: string }" }
+      error:
+        - { status: 404, condition: "vendor_id or an allocation's invoice_id not found" }
+        - { status: 422, condition: "invoice not payable (not APPROVED/PARTIALLY_PAID); invoice belongs to a different vendor; allocated_amount <= 0; allocated_amount exceeds remaining payable amount; SCHEDULED status not configured in status_master" }
+        - { status: 500, condition: "unexpected error" }
+      model: PaymentResponse
+    frontend:
+      screen: Payment Creation — Vendor Payment Run
+      service_name: createPayment
+      react_query_key: "none (mutation) — invalidate ['payments'], and ['invoice-details', invoiceId] + ['invoice-details'] list for every allocated invoice"
+      cache: "invalidate on success"
+      loading: button spinner
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: ["GET /apm/invoice-details/invoice (filter client-side to this vendor's APPROVED/PARTIALLY_PAID invoices)", "GET /apm/vendor/{vendor_id}/banks", "GET /apm/system/currency"]
+      related_endpoints: ["GET /apm/payment", "PATCH /apm/payment/{payment_id}/status"]
+      business_rules:
+        - "'Remaining payable amount' accounts for OTHER in-flight (SCHEDULED/SENT, not yet CLEARED) payments already allocated to the same invoice — the frontend cannot rely on invoice.net_amount - invoice.amount_paid alone to compute what's still allocatable; always attempt the allocation and surface the 422 message, or (better) call GET /apm/payment?vendor_id=... first to see what's already reserved."
+        - "total_amount is computed server-side as the sum of all allocations — do not send it."
+
+  - feature: Payment
+    endpoint: /apm/payment
+    method: GET
+    description: List payments with optional vendor/status filtering. Each payment includes its invoice allocations eager-loaded.
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: {}
+      query_params: { vendor_id: "integer, optional", status_id: "integer, optional — see enums.payment_status_code", skip: "integer, default 0", limit: "integer, default 100" }
+      body: null
+    response: { success: { status: 200, body: "PaymentDTO[]" }, error: [{ status: 500, condition: "unexpected error" }], model: "PaymentDTO[]" }
+    frontend: { screen: Payment List, service_name: getAllPayments, react_query_key: "['payments', { vendorId, statusId, skip, limit }]", cache: "short TTL", loading: skeleton table, pagination: "offset-based via skip/limit, no total-count field", search: none, sorting: "server pre-sorted by payment_id desc", filters: { vendor_id: integer, status_id: integer }, optimistic_update: n/a }
+    dependencies: { lookup_apis: ["GET /apm/system/status?module_name=PAYMENT"], related_endpoints: ["GET /apm/payment/{payment_id}"], business_rules: [] }
+
+  - feature: Payment
+    endpoint: /apm/payment/{payment_id}
+    method: GET
+    description: Get a single payment with its invoice allocations.
+    request: { headers: { Authorization: "Bearer <token> (required)" }, path_params: { payment_id: int }, query_params: {}, body: null }
+    response: { success: { status: 200, body: PaymentDTO }, error: [{ status: 404, condition: "Payment not found" }, { status: 500, condition: "unexpected error" }], model: PaymentDTO }
+    frontend: { screen: Payment Detail, service_name: getPaymentById, react_query_key: "['payments', paymentId]", cache: standard, loading: skeleton, pagination: none, search: none, sorting: none, filters: none, optimistic_update: n/a }
+    dependencies: { lookup_apis: [], related_endpoints: [], business_rules: [] }
+
+  - feature: Payment
+    endpoint: /apm/payment/{payment_id}/status
+    method: PATCH
+    description: "Transition a payment's status. Allowed transitions: SCHEDULED -> SENT, SCHEDULED -> FAILED, SENT -> CLEARED, SENT -> FAILED. CLEARED and FAILED are terminal. Reaching CLEARED increments amount_paid on every allocated invoice and moves each to PARTIALLY_PAID or PAID."
+    request:
+      headers: { Authorization: "Bearer <token> (required)" }
+      path_params: { payment_id: int }
+      query_params: {}
+      body:
+        fields:
+          - { name: status_code, type: string, required: true, default: null, validation: "must be a valid next state from the current one (see description)", enum: [SENT, CLEARED, FAILED] }
+          - { name: payment_date, type: date, required: false, default: "today, only when status_code=CLEARED", validation: none, enum: null }
+          - { name: reference_number, type: string, required: false, default: null, validation: "overwrites the existing reference_number if provided", enum: null }
+    response:
+      success: { status: 200, body: PaymentDTO }
+      error:
+        - { status: 404, condition: "Payment not found" }
+        - { status: 422, condition: "invalid transition from the current status; status_code not configured in status_master" }
+        - { status: 500, condition: "unexpected error" }
+      model: PaymentDTO
+    frontend:
+      screen: Payment Detail — status actions (Mark Sent / Mark Cleared / Mark Failed)
+      service_name: updatePaymentStatus
+      react_query_key: "none (mutation) — invalidate ['payments', paymentId], ['payments'] list, and ['invoice-details', invoiceId] + ['invoice-details'] list for every allocated invoice (amount_paid/status may have changed)"
+      cache: "invalidate on success"
+      loading: button spinner + confirm dialog (especially for CLEARED/FAILED — irreversible)
+      pagination: none
+      search: none
+      sorting: none
+      filters: none
+      optimistic_update: false
+    dependencies:
+      lookup_apis: []
+      related_endpoints: ["GET /apm/invoice-details/invoice/{invoice_id} (to see the updated amount_paid/status after CLEARED)"]
+      business_rules:
+        - "Disable the 'Mark Cleared'/'Mark Failed' actions in the UI once a payment is already CLEARED or FAILED — the backend will 422 but the button shouldn't be clickable."
+        - "A FAILED payment does NOT roll back or unwind anything — since amount_paid is only touched on CLEARED, a failed payment simply stops reserving its allocated_amount (see the create-payment 'remaining payable amount' business rule) and a new payment can be created for the same invoice."
+
 models:
   request_models:
     - VendorCreateRequest
@@ -1026,7 +1637,22 @@ models:
     - CountryRequest
     - CurrencyRequest
     - StatusMasterUpdateRequest
+    - InvoiceOCRReviewRequest
+    - InvoiceLineReviewRequest
+    - InvoiceApprovalDecisionRequest
+    - InvoiceRejectionRequest
+    - PaymentCreateRequest
+    - PaymentAllocationRequest
+    - PaymentStatusUpdateRequest
   response_models:
+    - DocumentResult
+    - ExtractedInvoice
+    - ExtractedInvoiceLine
+    - ValidationResult
+    - VendorMatch
+    - ConfidenceResult
+    - FinalResponse
+    - InvoiceDetailsResponse
     - VendorResponse
     - VendorDTO
     - VendorAddressResponse
@@ -1055,6 +1681,19 @@ models:
     - CurrencyListResponse (defined but unused by any route)
     - DeleteCurrencyResponse
     - StatusMasterDTO
+    - PurchaseOrderDTO
+    - PurchaseOrderLineDTO
+    - GoodsReceiptDTO
+    - GoodsReceiptLineDTO
+    - MatchResult
+    - LineMatchResult
+    - ReviewQueueResponse
+    - ReviewQueueItem
+    - InvoiceApprovalDTO
+    - InvoiceApprovalActionResponse
+    - PaymentDTO
+    - PaymentInvoiceDTO
+    - PaymentResponse
   orm_models:
     - { name: Vendor, table: ap.vendor, exposed_via_api: true }
     - { name: VendorAddress, table: ap.vendor_address, exposed_via_api: true }
@@ -1067,17 +1706,25 @@ models:
     - { name: SystemConfiguration, table: ap.system_configuration, exposed_via_api: true }
     - { name: TaxType, table: ap.tax_type, exposed_via_api: true }
     - { name: AuditLog, table: ap.audit_log, exposed_via_api: false, note: "internal audit trail, written by services on every mutation; no read endpoint exists" }
-    - { name: Invoice, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: InvoiceLine, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: InvoiceIssue, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: InvoiceAttachment, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: InvoiceApproval, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: Payment, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: PaymentInvoice, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: PurchaseOrder, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: GoodsReceipt, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-    - { name: InboundDocument, exposed_via_api: false, note: "model exists, no route/service/DAO layer implemented" }
-  exclusion_note: "Invoice, Payment, PurchaseOrder, GoodsReceipt, InboundDocument, and InvoiceApproval ORM models are registered with SQLAlchemy (Backend/Data_Access_Layer/models/__init__.py) but have no corresponding route, service, or DAO code anywhere in the scanned tree — excluded from the `apis` section per 'implemented APIs only' scope. Do not build frontend screens against these until backend endpoints exist."
+    - { name: Invoice, table: ap.invoice, exposed_via_api: true, note: "UPDATED 2026-08-13 — now exposed via /apm/invoice/process-invoice, /apm/invoice/inbound-documents/{id}/ocr-review (create/update), and /apm/invoice-details/invoice[/{id}] (read). See new Invoice Processing / Invoice Details sections below." }
+    - { name: InvoiceLine, table: ap.invoice_line, exposed_via_api: true, note: "UPDATED 2026-08-13 — persisted as part of /apm/invoice/process-invoice and corrected via /apm/invoice/inbound-documents/{id}/ocr-review; no standalone read/list endpoint." }
+    - { name: InvoiceIssue, table: ap.invoice_issue, exposed_via_api: true, note: "UPDATED 2026-08-13 — created automatically during /apm/invoice/process-invoice (low confidence, validation failures, line-total mismatch, unmapped currency, incomplete lines) and resolved implicitly by /apm/invoice/inbound-documents/{id}/ocr-review; no dedicated read/list/resolve endpoint exists." }
+    - { name: InvoiceAttachment, table: ap.invoice_attachment, exposed_via_api: true, note: "UPDATED 2026-08-13 — created during /apm/invoice/process-invoice (points at the S3 key of the uploaded file); readable indirectly via /apm/invoice-details/invoice/view/{inbound_document_id}, not as its own resource." }
+    - { name: InvoiceApproval, table: ap.invoice_approval, exposed_via_api: true, note: "UPDATED 2026-08-14 — now exposed via POST /apm/invoice/{id}/approve, POST /apm/invoice/{id}/reject, GET /apm/invoice/{id}/approvals. Single-level only (no approval_level column, by product decision — see the Invoice Approval section)." }
+    - { name: Payment, table: ap.payment, exposed_via_api: true, note: "UPDATED 2026-08-14 — now exposed via POST/GET /apm/payment, GET /apm/payment/{id}, PATCH /apm/payment/{id}/status. No schema changes — used exactly as designed." }
+    - { name: PaymentInvoice, table: ap.payment_invoice, exposed_via_api: true, note: "UPDATED 2026-08-14 — created as part of POST /apm/payment; readable nested under PaymentDTO.payment_invoice. No standalone endpoint (not needed — always accessed via its parent payment)." }
+    - { name: PurchaseOrder, table: ap.purchase_order, exposed_via_api: true, note: "UPDATED 2026-08-14 — read-only via GET /apm/po[/{po_id}|/number/{po_number}|/{po_id}/lines]. SQLAlchemy model was also missing 6 real DB columns (po_date, expected_delivery_date, currency_id, subtotal, tax_amount, total_amount) before this update — those are now mapped; no DB change was needed, the columns already existed." }
+    - { name: PurchaseOrderLine, table: ap.purchase_order_line, exposed_via_api: true, note: "NEW 2026-08-14 — this table and its data already existed live in the DB with no SQLAlchemy model at all before this update. Now exposed via GET /apm/po/{po_id} (embedded) and GET /apm/po/{po_id}/lines, and used by the matching engine via invoice_line.po_line_id / goods_receipt_line.po_line_id." }
+    - { name: GoodsReceipt, table: ap.goods_receipt, exposed_via_api: true, note: "UPDATED 2026-08-14 — read-only via GET /apm/grn[/{grn_id}|/{grn_id}/lines]. SQLAlchemy model was also missing grn_number/receipt_date (real DB columns) before this update." }
+    - { name: GoodsReceiptLine, table: ap.goods_receipt_line, exposed_via_api: true, note: "NEW 2026-08-14 — same situation as PurchaseOrderLine: table/data pre-existed with no model. po_line_id (nullable FK to purchase_order_line) is what makes 3-way matching possible." }
+    - { name: InboundDocument, table: ap.inbound_document, exposed_via_api: true, note: "UPDATED 2026-08-13 — created by /apm/invoice/process-invoice, updated by /apm/invoice/inbound-documents/{id}/ocr-review; readable indirectly (file view via /apm/invoice-details/invoice/view/{inbound_document_id}) and via GET /apm/invoice/review-queue (Path B items). Still no direct GET-by-id for an InboundDocument row on its own." }
+  exclusion_note: "As of 2026-08-14, every ORM model in Backend/Data_Access_Layer/models/__init__.py is exposed via at least one API endpoint. The only remaining backend-side gap is authorization (see the auth note at the top of this file) — not schema or missing endpoints."
+  known_gaps_for_frontend:
+    - "No endpoint fetches InvoiceLine/InvoiceAttachment/InvoiceIssue for an invoice directly — the closest is GET /apm/invoice-details/invoice/{invoice_id}, which returns only header fields (see InvoiceDetailsResponse), not nested lines/issues/attachments. A detail screen showing line items or open issues (or resolving/annotating an issue) needs a new/expanded backend response — not built in this phase."
+    - "GET /apm/invoice-details/invoice (list-all) has no pagination, filtering, or search — will not scale to a real invoice volume as-is."
+    - "PO/GRN are read-only — there is no create/update endpoint for purchase orders or goods receipts. If the product needs AP to raise POs (rather than just matching against ones raised elsewhere), that's new scope."
+    - "No role/permission enforcement exists anywhere (see the auth note at the top of this file) — every authenticated user can approve/reject invoices, create/clear payments, and mutate master data. Treat this as a hard blocker for a production launch, not just a nice-to-have."
+    - "Payment.payment_method and vendor_bank_id/currency_id on PaymentCreateRequest have no FK-existence validation in the service layer — a typo'd vendor_bank_id or currency_id will not 422, it will just silently store a bad reference. Validate client-side against the lookup endpoints until the backend adds server-side checks."
 
 lookups:
   - endpoint: /apm/system/country
@@ -1097,7 +1744,10 @@ lookups:
     used_by: ["InvoiceLine.tax_type_id (model exists but no invoice API is implemented yet — reference only)"]
   - endpoint: /apm/master/system-configuration
     values: "Dynamic, seeded key set; only config_value/description editable, keys/data_type fixed."
-    used_by: ["Application-level settings — consumers not present in this scanned tree"]
+    used_by:
+      - "AUTO_APPROVAL_LIMIT (NUMBER) — NOW WIRED 2026-08-14: PATCH /apm/invoice/inbound-documents/{id}/ocr-review auto-approves (skips PENDING_APPROVAL entirely, no InvoiceApproval row created) when invoice.net_amount <= this value AND no open invoice_issue remains."
+      - "PO_MANDATORY (BOOLEAN) — NOW WIRED 2026-08-14: same endpoint raises a PO_REQUIRED (ERROR severity) invoice_issue, non-blocking, when true and the invoice has no po_id."
+      - "GRN_MANDATORY (BOOLEAN) — NOW WIRED 2026-08-14: GET /apm/invoice/{id}/matching reports overall_status=GRN_REQUIRED_BUT_MISSING when true and the linked PO has no goods receipt."
 
 enums:
   - name: calculation_type
@@ -1112,6 +1762,40 @@ enums:
     values: "Not enforced/enumerated in code. Default 'REGISTERED'. Treat as free text unless product defines a fixed list (e.g. REGISTERED, BILLING, SHIPPING)."
   - name: vendor_tax.registration_type
     values: "Not enforced/enumerated in code. Free text, normalized to uppercase by the backend (e.g. GSTIN, PAN by convention — not validated)."
+  - name: invoice_type
+    values: [PO, NON_PO]
+    note: "Backend enum (Backend/API_Layer/interface/invoice_process_interface.py InvoiceType). Auto-set to PO if a po_number was extracted, else NON_PO; also settable on manual OCR review."
+  - name: invoice_status_code (module=INVOICE, status_master)
+    values: [DRAFT, OCR_REVIEW_PENDING, OCR_FAILED, PENDING_APPROVAL, APPROVED, REJECTED, PARTIALLY_PAID, PAID, DISPUTED]
+    note: "UPDATED 2026-08-14 — all 9 codes are real, seeded status_master rows and ALL are now reachable: OCR_FAILED/OCR_REVIEW_PENDING/PENDING_APPROVAL via /process-invoice + /ocr-review (unchanged); APPROVED/REJECTED via POST /apm/invoice/{id}/approve|reject (also APPROVED automatically via AUTO_APPROVAL_LIMIT, see system_configuration note below); PARTIALLY_PAID/PAID via PATCH /apm/payment/{id}/status when status_code=CLEARED. DISPUTED and DRAFT are seeded but no code path sets them yet. Plus one response-only value that is NEVER a status_master row: PENDING_VENDOR_ONBOARDING (surfaced only in FinalResponse.invoice_status when Path B occurs at /process-invoice — no Invoice row exists yet in that case). Fetch the authoritative full set/labels via GET /apm/system/status?module_name=INVOICE."
+  - name: invoice_issue.severity
+    values: [INFO, WARNING, ERROR]
+    note: "DB CHECK constraint (invoice_issue_severity_check). The auto-generated issues from /process-invoice mostly use WARNING or INFO; PO_REQUIRED (see below) is the first code path to use ERROR."
+  - name: invoice_issue.issue_type
+    values: "Not a DB enum (no CHECK constraint). Values actually produced by current code: LOW_OCR_CONFIDENCE, VALIDATION_FAILED, LINE_TOTAL_MISMATCH, CURRENCY_UNMAPPED, LINE_ITEMS_INCOMPLETE (see Business_Layer/utils/invoice_status.py), and PO_REQUIRED (NEW 2026-08-14 — raised by PATCH /apm/invoice/inbound-documents/{id}/ocr-review when system_configuration PO_MANDATORY=true and the invoice has no po_id; non-blocking, but also blocks AUTO_APPROVAL_LIMIT auto-approval until resolved). TAX_MISMATCH and VENDOR_NOT_FOUND constants also exist but are not currently raised anywhere."
+  - name: invoice_issue.issue_source
+    values: "Not a DB enum. Values in use: VALIDATION, EXTRACTION. VENDOR_MATCH constant exists but is not currently used."
+  - name: technical_document_type
+    values: [TEXT_PDF, SCANNED_PDF, PNG, JPEG, TIFF, UNKNOWN]
+    note: "Result of technical (non-business) classification in DocumentResult.technical_document_type — distinct from invoice_type."
+  - name: po_status_code (module=PO, status_master)
+    values: [OPEN, CLOSED, CANCELLED]
+    note: "Seeded status_master rows, fetch via GET /apm/system/status?module_name=PO. Not currently set/transitioned by any backend code path (PO is read-only in this phase) — reflects whatever value the PO was created with (e.g. via direct DB insert / a future PO-creation feature)."
+  - name: payment_status_code (module=PAYMENT, status_master)
+    values: [SCHEDULED, SENT, CLEARED, FAILED]
+    note: "NEW 2026-08-14. SCHEDULED is set on POST /apm/payment; SENT/CLEARED/FAILED via PATCH /apm/payment/{id}/status per the allowed-transition rules in that endpoint's business_rules. Fetch via GET /apm/system/status?module_name=PAYMENT."
+  - name: invoice_approval.decision
+    values: [PENDING, APPROVED, REJECTED]
+    note: "NEW 2026-08-14. Free-text column (not FK-enforced against status_master), but a matching APPROVAL module exists in status_master with these exact codes by convention. POST /apm/invoice/{id}/approve|reject only ever write APPROVED/REJECTED — PENDING is the column's DB default and never actually written by these endpoints (a row is only created once a decision is made)."
+  - name: match_type
+    values: [NONE, TWO_WAY, THREE_WAY]
+    note: "NEW 2026-08-14. MatchResult.match_type from GET /apm/invoice/{id}/matching. THREE_WAY whenever at least one goods_receipt_line exists for the linked PO, regardless of GRN_MANDATORY."
+  - name: overall_match_status
+    values: [NO_PO, MATCHED, VARIANCE_DETECTED, GRN_REQUIRED_BUT_MISSING, INCOMPLETE]
+    note: "NEW 2026-08-14. MatchResult.overall_status — see the Invoice Matching endpoint's business_rules for exactly what triggers each value."
+  - name: line_match_status
+    values: [MATCHED, QUANTITY_VARIANCE, PRICE_VARIANCE, QUANTITY_AND_PRICE_VARIANCE, NO_PO_LINE_LINKED, NO_GRN_RECEIPT_FOUND]
+    note: "NEW 2026-08-14. Per-line status inside MatchResult.lines[]. Tolerance is ±0.01 for both quantity and price."
 
 relationships:
   - { parent: Vendor, child: VendorAddress, relation: "one-to-many, ON DELETE CASCADE" }
@@ -1123,6 +1807,16 @@ relationships:
   - { parent: Currency, child: Vendor, relation: "one-to-many (FK, no cascade)" }
   - { parent: PaymentTerm, child: Vendor, relation: "one-to-many (FK, no cascade)" }
   - { parent: StatusMaster, child: Vendor, relation: "one-to-many, module-scoped via status_id (FK, no cascade)" }
+  - { parent: PurchaseOrder, child: PurchaseOrderLine, relation: "one-to-many, ON DELETE CASCADE" }
+  - { parent: GoodsReceipt, child: GoodsReceiptLine, relation: "one-to-many, ON DELETE CASCADE" }
+  - { parent: PurchaseOrderLine, child: GoodsReceiptLine, relation: "one-to-many via po_line_id (FK, ON DELETE SET NULL) — which PO line a GRN line was received against" }
+  - { parent: PurchaseOrderLine, child: InvoiceLine, relation: "one-to-many via po_line_id (FK, ON DELETE SET NULL, added 2026-08-14) — which PO line an invoice line is billing against; drives GET /apm/invoice/{id}/matching" }
+  - { parent: PurchaseOrder, child: Invoice, relation: "one-to-many (FK, no cascade) — header-level PO link, independent of line-level po_line_id links" }
+  - { parent: GoodsReceipt, child: Invoice, relation: "one-to-many (FK, no cascade) — header-level GRN link" }
+  - { parent: Invoice, child: InvoiceApproval, relation: "one-to-many, ON DELETE CASCADE — multiple rows per invoice allowed by design (append-only decision history)" }
+  - { parent: Payment, child: PaymentInvoice, relation: "one-to-many, ON DELETE CASCADE — a payment can settle multiple invoices" }
+  - { parent: Invoice, child: PaymentInvoice, relation: "one-to-many (FK, no cascade) — an invoice can be paid across multiple payments/installments" }
+  - { parent: VendorBank, child: Payment, relation: "one-to-many (FK, no cascade)" }
 
 validations:
   - { endpoint: "POST /apm/vendor", field: vendor_name, rule: "required, non-empty after trim, globally unique (case-insensitive)", error_message: "vendor_name is required | A vendor with this name already exists" }
@@ -1165,3 +1859,19 @@ integration_order:
   - "Step 7: Build the Vendor Detail page's Bank Accounts tab (POST/GET/PUT/DELETE /apm/vendor/{id}/banks[/{bank_id}]), surfacing the primary/versioning (effective_from/effective_to) behavior in the UI."
   - "Step 8: Build the Tax Registrations sub-section nested under each address row (POST/GET/PUT/DELETE /apm/addresses/{vendor_address_id}/taxes[/{tax_id}]) — depends on Step 6 having created at least one address."
   - "Step 9: Wire cache invalidation so that any address/bank/tax mutation also invalidates the parent vendor detail query key (['vendors', vendorId]), since VendorDTO embeds all three nested collections."
+  - "Step 10: Build the Invoice Upload screen calling POST /apm/invoice/process-invoice (NOT /upload-document, which is developer-only) — branch the post-upload UI on response.invoice_status: OCR_REVIEW_PENDING routes to the OCR Review screen for invoice_id; PENDING_VENDOR_ONBOARDING means no invoice exists yet and the OCR Review screen must be opened in 'assign vendor' mode against inbound_document_id instead."
+  - "Step 11: Build the OCR Review screen (PATCH /apm/invoice/inbound-documents/{inbound_document_id}/ocr-review), pre-filled from the /process-invoice response's extracted_invoice/validation/vendor_match, with a vendor picker (GET /apm/vendor) shown only when invoice_id was null in Step 10."
+  - "Step 12: Build the Invoice List (GET /apm/invoice-details/invoice) and Invoice Detail (GET /apm/invoice-details/invoice/{invoice_id}) screens; wire the 'view original document' action to GET /apm/invoice-details/invoice/view/{inbound_document_id}."
+  - "Step 13: Build the OCR Review Queue screen (GET /apm/invoice/review-queue) as the entry point into review work — replaces manually hunting through the invoice list for OCR_REVIEW_PENDING rows. Route PATH_A rows to the existing OCR Review screen in 'confirm' mode, PATH_B rows to the same screen in 'assign vendor' mode."
+  - "Step 14: Add the Matching panel (GET /apm/invoice/{id}/matching) to the Invoice Detail screen, shown whenever the invoice has a po_id — surface overall_status prominently (especially VARIANCE_DETECTED and GRN_REQUIRED_BUT_MISSING) since approvers should see this before deciding."
+  - "Step 15: Build the Invoice Approval screen (POST /apm/invoice/{id}/approve, POST /apm/invoice/{id}/reject, GET /apm/invoice/{id}/approvals) — only actionable when the invoice is at PENDING_APPROVAL. Note some invoices skip this screen entirely (auto-approved via AUTO_APPROVAL_LIMIT) and will show zero approval-history rows despite being APPROVED."
+  - "Step 16: Build the Purchase Order and Goods Receipt list/detail screens (GET /apm/po[...], GET /apm/grn[...]) — read-only reference screens, mainly linked to from the Matching panel (Step 14) rather than a standalone nav item."
+  - "Step 17: Build the Payment screens: a Payment Creation flow (POST /apm/payment) filtered to one vendor's APPROVED/PARTIALLY_PAID invoices, a Payment List (GET /apm/payment), and per-payment status actions (PATCH /apm/payment/{id}/status) for marking Sent/Cleared/Failed."
+  - "Note: no role/permission checks exist on the backend today (see the auth note at the top of this file) — every screen above is reachable by any authenticated user, including approve/reject and payment actions. Confirm with the backend team before launch whether/how UMS roles will gate these screens."
+
+changelog:
+  - date: "2026-08-13"
+    change: "Added Invoice Processing/OCR, Invoice Details, and Intake sections (previously excluded as unimplemented). Corrected the orm_models exclusion list: Invoice, InvoiceLine, InvoiceIssue, InvoiceAttachment, and InboundDocument are now exposed via API; Payment, PaymentInvoice, PurchaseOrder, GoodsReceipt, and InvoiceApproval are still not implemented. Added GET /apm/health (previously whitelisted in JWT middleware with no matching route). Fixed a backend bug where GST-verified vendor auto-onboarding (Business_Layer/utils/vendor_auto_onboarding.py) always failed to parse a valid GST API response because it passed the wrong object into the parser — auto-onboarding was completely non-functional before this fix. Documented that no role/permission system exists in the backend."
+  - date: "2026-08-14"
+    change: >
+      Every previously-excluded ORM model is now exposed via at least one endpoint — the exclusion_note/known_gaps list from 2026-08-13 is now obsolete except for authorization. Specifically: (1) DB migration added invoice_line.po_line_id (nullable FK -> purchase_order_line.po_line_id, additive, approved) to support line-level matching. (2) SQLAlchemy models added for PurchaseOrderLine and GoodsReceiptLine (tables/data already existed live in the DB with no model at all), and PurchaseOrder/GoodsReceipt models were corrected to include 8 real DB columns they were previously missing (po_date, expected_delivery_date, currency_id, subtotal, tax_amount, total_amount, grn_number, receipt_date) — no DB change needed for these, only the ORM catching up. (3) New read-only Purchase Order and Goods Receipt APIs (GET /apm/po[...], GET /apm/grn[...]). (4) New PO/GRN/Invoice matching endpoint (GET /apm/invoice/{id}/matching) computing 2-way/3-way match results with quantity/price variance detection — read-only, never auto-approves. (5) New OCR Review Queue endpoint (GET /apm/invoice/review-queue) deriving Path A/Path B queues from existing invoice/inbound_document rows — no new table. (6) New single-level Invoice Approval endpoints (POST /apm/invoice/{id}/approve|reject, GET /apm/invoice/{id}/approvals) using the existing InvoiceApproval table as-is. (7) New Payment endpoints (POST/GET /apm/payment, GET /apm/payment/{id}, PATCH /apm/payment/{id}/status) implementing the SCHEDULED->SENT->CLEARED/FAILED lifecycle against the existing Payment/PaymentInvoice schema, with remaining-payable-amount validation and invoice.amount_paid/status sync on CLEARED. (8) Wired previously-dead system_configuration flags AUTO_APPROVAL_LIMIT, PO_MANDATORY, and GRN_MANDATORY into the OCR-review and matching flows (see their lookup entries above). (9) Seeded CGST/SGST/IGST as distinct tax_type rows for India (migration), since the extraction pipeline matches line-level tax labels against tax_type.tax_code exactly and only a combined 'GST18' code existed before. (10) Authorization: role/permission enforcement is still NOT implemented — request.state.user is the raw JWT payload and no code reads a role/permission claim from it; this needs either a sample decoded UMS token or UMS claim-schema documentation before it can be built. Treat this as the primary remaining blocker before production launch.

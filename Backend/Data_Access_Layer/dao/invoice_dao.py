@@ -87,3 +87,46 @@ class InvoiceDAO:
             )
             .first()
         )
+
+    def get_invoices_by_status_code(self, status_code: str) -> List[Invoice]:
+        """Path A of the OCR review queue: invoices already created but still
+        awaiting the AP Executive's OCR confirmation."""
+        return (
+            self.db.query(Invoice)
+            .join(StatusMaster, Invoice.status_id == StatusMaster.status_id)
+            .filter(
+                StatusMaster.module_name == INVOICE_STATUS_MODULE,
+                StatusMaster.status_code == status_code,
+            )
+            .order_by(Invoice.created_at.desc())
+            .all()
+        )
+
+    def get_invoice_by_id_locked(self, invoice_id: int) -> Optional[Invoice]:
+        """Row-locks the invoice for the duration of the current transaction —
+        used wherever amount_paid/status_id are read-then-written (approval,
+        payment allocation) so two concurrent requests can't both act on a
+        stale remaining-balance/status."""
+        return (
+            self.db.query(Invoice)
+            .filter(Invoice.invoice_id == invoice_id)
+            .with_for_update()
+            .first()
+        )
+    def get_status_details(self, status_id:int):
+        return (
+            self.db.query(StatusMaster)
+            .filter(StatusMaster.status_id == status_id)
+            .first()
+        )
+
+    def update_invoice(self, invoice: Invoice) -> Invoice:
+        self.db.merge(invoice)
+        return invoice
+    def get_all_statuses(self) -> List[StatusMaster]:
+        return (
+            self.db.query(StatusMaster)
+            .filter(StatusMaster.module_name == INVOICE_STATUS_MODULE)
+            .order_by(StatusMaster.display_order)
+            .all()
+        )
