@@ -53,6 +53,7 @@ class Currency(Base):
     vendor: Mapped[list['Vendor']] = relationship('Vendor', back_populates='currency')
     invoice: Mapped[list['Invoice']] = relationship('Invoice', back_populates='currency')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='currency')
+    purchase_order: Mapped[list['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='currency')
 
 
 class PaymentTerm(Base):

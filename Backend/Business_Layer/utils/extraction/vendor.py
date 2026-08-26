@@ -110,7 +110,6 @@ def _looks_like_new_entity(text: str) -> bool:
     titleish = sum(1 for word in words[:4] if word[:1].isupper() or word.isupper())
     return titleish >= 2 and _digit_ratio(text) <= _MAX_DIGIT_RATIO
 
-
 def _is_rejected_line(line: geometry.Line, text: str) -> bool:
     """Lines that can never be a vendor name, regardless of how company-like they look."""
     if _is_party_label(text):

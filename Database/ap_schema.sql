@@ -222,33 +222,71 @@ CREATE TABLE vendor_tax (
 CREATE INDEX idx_vendor_tax_address ON vendor_tax(vendor_address_id);
 
 -- ============================================================================
--- MODULE 3: PURCHASE ORDER & GOODS RECEIPT (optional, minimal — Phase 1)
+-- MODULE 3: PURCHASE ORDER & GOODS RECEIPT (optional — Phase 1 + line items)
 -- ============================================================================
--- Existence + status check only, no amount matching in Phase 1.
+-- Existence + status check only, no amount matching in Phase 1. Header
+-- amount fields (subtotal/tax_amount/total_amount) and line items are
+-- storage for structured PO/GRN data — populated manually today, by a
+-- future OCR pipeline later, using these same fields either way.
 
 CREATE TABLE purchase_order (
-    po_id        SERIAL PRIMARY KEY,
-    po_number    VARCHAR(50) NOT NULL UNIQUE,
-    vendor_id    INT NOT NULL REFERENCES vendor(vendor_id),
-    file_path    VARCHAR(500),
-    status_id    INT REFERENCES status_master(status_id), -- OPEN/CLOSED/CANCELLED
-    created_by   VARCHAR(100),
-    created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+    po_id                   SERIAL PRIMARY KEY,
+    po_number               VARCHAR(50) NOT NULL UNIQUE,
+    vendor_id               INT NOT NULL REFERENCES vendor(vendor_id),
+    file_path               VARCHAR(500),
+    status_id               INT REFERENCES status_master(status_id), -- OPEN/CLOSED/CANCELLED
+    created_by              VARCHAR(100),
+    created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+    po_date                 DATE,
+    expected_delivery_date  DATE,
+    currency_id             INT REFERENCES currency(currency_id),
+    subtotal                NUMERIC(18,2),
+    tax_amount              NUMERIC(18,2),
+    total_amount            NUMERIC(18,2)
 );
 
 CREATE INDEX idx_po_vendor ON purchase_order(vendor_id);
 
+CREATE TABLE purchase_order_line (
+    po_line_id   SERIAL PRIMARY KEY,
+    po_id        INT NOT NULL REFERENCES purchase_order(po_id) ON DELETE CASCADE,
+    item_code    VARCHAR(50),
+    description  VARCHAR(255) NOT NULL,
+    quantity     NUMERIC(18,4) NOT NULL DEFAULT 1,
+    unit_price   NUMERIC(18,4) NOT NULL,
+    tax_amount   NUMERIC(18,2) NOT NULL DEFAULT 0,
+    line_amount  NUMERIC(18,2) NOT NULL
+);
+
+CREATE INDEX idx_po_line_po ON purchase_order_line(po_id);
+
 CREATE TABLE goods_receipt (
-    grn_id      SERIAL PRIMARY KEY,
-    po_id       INT REFERENCES purchase_order(po_id),
-    vendor_id   INT NOT NULL REFERENCES vendor(vendor_id),
-    file_path   VARCHAR(500),
-    created_by  VARCHAR(100),
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    grn_id       SERIAL PRIMARY KEY,
+    po_id        INT REFERENCES purchase_order(po_id),
+    vendor_id    INT NOT NULL REFERENCES vendor(vendor_id),
+    file_path    VARCHAR(500),
+    created_by   VARCHAR(100),
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    grn_number   VARCHAR(50),
+    receipt_date DATE
 );
 
 CREATE INDEX idx_grn_vendor ON goods_receipt(vendor_id);
 CREATE INDEX idx_grn_po ON goods_receipt(po_id);
+
+-- po_line_id is SET NULL (not CASCADE) on delete: a PO line being removed
+-- should not destroy the goods-receipt record of what physically arrived.
+CREATE TABLE goods_receipt_line (
+    grn_line_id       SERIAL PRIMARY KEY,
+    grn_id            INT NOT NULL REFERENCES goods_receipt(grn_id) ON DELETE CASCADE,
+    po_line_id        INT REFERENCES purchase_order_line(po_line_id) ON DELETE SET NULL,
+    item_code         VARCHAR(50),
+    description       VARCHAR(255) NOT NULL,
+    received_quantity NUMERIC(18,4) NOT NULL
+);
+
+CREATE INDEX idx_grn_line_grn ON goods_receipt_line(grn_id);
+CREATE INDEX idx_grn_line_po_line ON goods_receipt_line(po_line_id);
 
 -- ============================================================================
 -- MODULE 4: INBOUND DOCUMENT — the email-intake front door

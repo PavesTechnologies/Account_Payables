@@ -8,9 +8,11 @@ from fastapi.openapi.utils import get_openapi
 from Backend.API_Layer.middleware.db_middleware import DBSessionMiddleware
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
 from Backend.API_Layer.routes import (
+    goods_receipt_route,
     intake_route,
     invoice_process_route,
     master_route,
+    purchase_order_route,
     system_route,
     vendor_route,
     invoice_details_route,
@@ -106,6 +108,12 @@ api_router = APIRouter(prefix="/apm")
 api_router.include_router(system_route.router, tags=["System Defaults"], prefix="/system")
 api_router.include_router(master_route.router, tags=["Master Configuration"], prefix="/master")
 api_router.include_router(vendor_route.router, tags=["Vendor Management"], prefix="/vendor")
+api_router.include_router(
+    purchase_order_route.router, tags=["Purchase Orders"], prefix="/purchase-order"
+)
+api_router.include_router(
+    goods_receipt_route.router, tags=["Goods Receipts"], prefix="/goods-receipt"
+)
 api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake")
 api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"

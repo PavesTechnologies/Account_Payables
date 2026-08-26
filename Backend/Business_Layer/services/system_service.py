@@ -39,8 +39,8 @@ class SystemService:
             country_name=country_data.country_name,
             country_code=validated_code,
             is_active=country_data.is_active,
-            created_by=user_id,
-            updated_by=user_id,
+            # created_by=user_id,
+            # updated_by=user_id,
         )
 
         self.master_dao.create_country(country)
