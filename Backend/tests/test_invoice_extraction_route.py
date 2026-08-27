@@ -240,6 +240,57 @@ def test_correct_buyer_unknown_extraction_id_returns_404(client, fake_redis):
     assert response.status_code == 404
 
 
+def test_correct_tax_persists_and_reflects_on_get(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    patch_response = client.patch(
+        f"/extract-fields/{extraction_id}/tax",
+        json={"igst_rate": 18.0, "place_of_supply": "Karnataka"},
+    )
+
+    assert patch_response.status_code == 200
+    patch_body = patch_response.json()
+    assert patch_body["updated"]["igst_rate"] == 18.0
+    assert patch_body["updated"]["place_of_supply"] == "Karnataka"
+    assert {c["field"] for c in patch_body["corrections"]} == {
+        "tax.igst_rate",
+        "tax.place_of_supply",
+    }
+
+    get_response = client.get(f"/extract-fields/{extraction_id}")
+    assert (
+        get_response.json()["extracted_invoice"]["tax"]["igst_rate"] == 18.0
+    )
+
+
+def test_correct_amounts_persists_and_reflects_on_get(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    patch_response = client.patch(
+        f"/extract-fields/{extraction_id}/amounts",
+        json={"igst_amount": 1800.0, "total_tax": 1800.0},
+    )
+
+    assert patch_response.status_code == 200
+    patch_body = patch_response.json()
+    assert patch_body["updated"]["igst_amount"] == 1800.0
+    assert patch_body["updated"]["total_tax"] == 1800.0
+
+    get_response = client.get(f"/extract-fields/{extraction_id}")
+    assert (
+        get_response.json()["extracted_invoice"]["amounts"]["total_tax"]
+        == 1800.0
+    )
+
+
+def test_correct_amounts_unknown_extraction_id_returns_404(client, fake_redis):
+    response = client.patch(
+        "/extract-fields/ext_doesnotexist/amounts",
+        json={"total_tax": 1800.0},
+    )
+    assert response.status_code == 404
+
+
 def test_confirm_section_marks_confirmed(client, fake_redis):
     extraction_id = _seed_extraction(fake_redis)
 
@@ -252,6 +303,27 @@ def test_confirm_section_marks_confirmed(client, fake_redis):
     body = response.json()
     assert body["vendor_confirmed"] is True
     assert body["buyer_confirmed"] is False
+    assert body["tax_confirmed"] is False
+    assert body["amounts_confirmed"] is False
+
+
+def test_confirm_tax_and_amounts_sections(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    tax_response = client.post(
+        f"/extract-fields/{extraction_id}/confirm",
+        json={"section": "tax"},
+    )
+    assert tax_response.status_code == 200
+    assert tax_response.json()["tax_confirmed"] is True
+    assert tax_response.json()["amounts_confirmed"] is False
+
+    amounts_response = client.post(
+        f"/extract-fields/{extraction_id}/confirm",
+        json={"section": "amounts"},
+    )
+    assert amounts_response.status_code == 200
+    assert amounts_response.json()["amounts_confirmed"] is True
 
 
 def test_confirm_section_invalid_section_returns_400(client, fake_redis):

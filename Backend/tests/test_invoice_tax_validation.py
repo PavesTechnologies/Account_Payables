@@ -831,3 +831,137 @@ def test_buyer_failure_stops_pipeline_before_tax_runs(monkeypatch):
     # Tax validation must never have been reached - no DB calls at all.
     assert fake_dao.gst_rate_calls == 0
     assert fake_dao.component_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Document verification: validate_tax exposes a FieldComparison per GST
+# field (extracted vs. DB-calculated expected value) for a future frontend
+# to render MATCH/MISMATCH, independently of whether the stage as a whole
+# passes or fails.
+# ---------------------------------------------------------------------------
+
+
+def _comparisons_by_field(result):
+    return {c.field: c for c in result["field_comparisons"]}
+
+
+def test_field_comparisons_present_on_passing_invoice():
+    service = make_service()
+
+    line = make_line(
+        hsn_sac="997331",
+        taxable_amount=10000.0,
+        cgst_rate=9.0,
+        cgst_amount=900.0,
+        sgst_rate=9.0,
+        sgst_amount=900.0,
+    )
+
+    extracted = make_extracted(
+        lines=[line],
+        vendor_state_code="27",
+        buyer_state_code="27",
+        tax_type="INTRA_STATE_CGST_SGST",
+        amounts={
+            "taxable_amount": 10000.0,
+            "cgst_amount": 900.0,
+            "sgst_amount": 900.0,
+            "total_tax": 1800.0,
+            "grand_total": 11800.0,
+        },
+    )
+
+    result = service.validate_tax(extracted, vendor_details=None)
+
+    assert result["is_valid"] is True
+
+    by_field = _comparisons_by_field(result)
+
+    assert by_field["tax_type"].status == "MATCH"
+    assert by_field["line_1.cgst_rate"].status == "MATCH"
+    assert by_field["line_1.sgst_rate"].status == "MATCH"
+    assert by_field["line_1.cgst_amount"].status == "MATCH"
+    assert by_field["line_1.sgst_amount"].status == "MATCH"
+    assert by_field["total_tax"].status == "MATCH"
+    assert by_field["line_1.hsn_sac"].status == "MATCH"
+    assert by_field["line_1.hsn_sac"].master_value == "GST_SAC_997331"
+
+    # No master rule exists for these - informational only, never MATCH.
+    assert by_field["reverse_charge"].status == "NOT_COMPARED"
+
+
+def test_field_comparisons_flag_rate_mismatch():
+    service = make_service()
+
+    line = make_line(
+        hsn_sac="997331",
+        taxable_amount=10000.0,
+        cgst_rate=6.0,
+        cgst_amount=600.0,
+        sgst_rate=9.0,
+        sgst_amount=900.0,
+    )
+
+    extracted = make_extracted(
+        lines=[line],
+        vendor_state_code="27",
+        buyer_state_code="27",
+        tax_type="INTRA_STATE_CGST_SGST",
+        amounts={
+            "taxable_amount": 10000.0,
+            "cgst_amount": 600.0,
+            "sgst_amount": 900.0,
+            "total_tax": 1500.0,
+        },
+    )
+
+    result = service.validate_tax(extracted, vendor_details=None)
+
+    assert result["is_valid"] is False
+
+    by_field = _comparisons_by_field(result)
+
+    assert by_field["line_1.cgst_rate"].status == "MISMATCH"
+    assert by_field["line_1.cgst_rate"].extracted_value == "6.0"
+    assert by_field["line_1.cgst_rate"].master_value == "9.0000"
+
+    # SGST on the same line is unaffected.
+    assert by_field["line_1.sgst_rate"].status == "MATCH"
+
+
+def test_place_of_supply_mismatch_is_informational_not_blocking():
+    service = make_service()
+
+    line = make_line(
+        hsn_sac="997331",
+        taxable_amount=10000.0,
+        cgst_rate=9.0,
+        cgst_amount=900.0,
+        sgst_rate=9.0,
+        sgst_amount=900.0,
+    )
+
+    extracted = make_extracted(
+        lines=[line],
+        vendor_state_code="27",
+        buyer_state_code="27",
+        tax_type="INTRA_STATE_CGST_SGST",
+        amounts={
+            "taxable_amount": 10000.0,
+            "cgst_amount": 900.0,
+            "sgst_amount": 900.0,
+            "total_tax": 1800.0,
+        },
+    )
+    extracted.tax.place_of_supply = "Delhi"
+
+    result = service.validate_tax(extracted, vendor_details=None)
+
+    # Buyer state code "27" is Maharashtra, not Delhi - a real mismatch -
+    # but place_of_supply has no authoritative master value, so it must
+    # never block the stage on its own.
+    assert result["is_valid"] is True
+
+    by_field = _comparisons_by_field(result)
+    assert by_field["place_of_supply"].status == "MISMATCH"
+    assert by_field["place_of_supply"].master_value == "Maharashtra"

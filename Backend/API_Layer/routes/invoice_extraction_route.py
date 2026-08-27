@@ -12,6 +12,7 @@ from fastapi import (
 )
 
 from Backend.API_Layer.interface.invoice_extraction_interface import (
+    AmountsCorrectionRequest,
     BuyerCorrectionRequest,
     ConfirmSectionRequest,
     CorrectionResponse,
@@ -19,6 +20,7 @@ from Backend.API_Layer.interface.invoice_extraction_interface import (
     ExtractedInvoiceResult,
     ExtractionCacheResponse,
     InvoiceCreationResult,
+    TaxCorrectionRequest,
     ValidationJobQueued,
     ValidationJobStatus,
     VendorCorrectionRequest,
@@ -343,15 +345,20 @@ async def get_validate_fields_status(job_id: str):
 
 
 # ============================================================
-# Stage 1 - Vendor & Buyer correction endpoints
+# Stage 1 - Vendor/Buyer/GST correction endpoints
 #
 # The cached extraction (see extraction_cache.py) is the only place
 # a user's field corrections live before all validations are done -
 # nothing here ever touches the Invoice DB. GET returns the current
-# state; the two PATCH endpoints apply a sparse field-level
-# correction (only fields present in the body are changed) recorded
-# as BEFORE -> AFTER events; POST .../confirm records an explicit
-# "reviewed and accepted as-is" checkpoint for a section.
+# state; the PATCH endpoints apply a sparse field-level correction
+# (only fields present in the body are changed) recorded as
+# BEFORE -> AFTER events; POST .../confirm records an explicit
+# "reviewed and accepted as-is" checkpoint for a section. GST tax
+# fields are split across two sections (tax, amounts) mirroring
+# InvoiceTax/InvoiceAmounts - a correction to either is picked up by
+# the next /validate-fields run against the same extraction_id,
+# which re-runs GST calculation/rule checks against the corrected
+# cache (no separate recalculation step needed).
 # ============================================================
 
 def _extraction_cache_response(cached: dict) -> ExtractionCacheResponse:
@@ -366,6 +373,8 @@ def _extraction_cache_response(cached: dict) -> ExtractionCacheResponse:
         corrections=corrections,
         vendor_confirmed=is_section_confirmed(corrections, "vendor"),
         buyer_confirmed=is_section_confirmed(corrections, "buyer"),
+        tax_confirmed=is_section_confirmed(corrections, "tax"),
+        amounts_confirmed=is_section_confirmed(corrections, "amounts"),
     )
 
 
@@ -455,6 +464,40 @@ async def correct_buyer(
     )
 
 
+@router.patch(
+    "/extract-fields/{extraction_id}/tax",
+    response_model=CorrectionResponse,
+)
+async def correct_tax(
+    extraction_id: str,
+    patch: TaxCorrectionRequest,
+    http_request: Request,
+):
+    return _correct_section(
+        extraction_id,
+        "tax",
+        patch.model_dump(exclude_unset=True),
+        http_request,
+    )
+
+
+@router.patch(
+    "/extract-fields/{extraction_id}/amounts",
+    response_model=CorrectionResponse,
+)
+async def correct_amounts(
+    extraction_id: str,
+    patch: AmountsCorrectionRequest,
+    http_request: Request,
+):
+    return _correct_section(
+        extraction_id,
+        "amounts",
+        patch.model_dump(exclude_unset=True),
+        http_request,
+    )
+
+
 @router.post(
     "/extract-fields/{extraction_id}/confirm",
     response_model=ExtractionCacheResponse,
@@ -465,10 +508,10 @@ async def confirm_section(
     http_request: Request,
 ):
 
-    if body.section not in ("vendor", "buyer"):
+    if body.section not in ("vendor", "buyer", "tax", "amounts"):
         raise HTTPException(
             status_code=400,
-            detail="section must be 'vendor' or 'buyer'.",
+            detail="section must be one of 'vendor', 'buyer', 'tax', 'amounts'.",
         )
 
     user_id = _get_user_id(http_request)

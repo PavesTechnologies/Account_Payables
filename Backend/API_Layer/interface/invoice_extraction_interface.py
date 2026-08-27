@@ -437,8 +437,37 @@ class BuyerCorrectionRequest(BaseModel):
     state_code: Optional[str] = None
 
 
+class TaxCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    place_of_supply: Optional[str] = None
+    reverse_charge: Optional[bool] = None
+    tax_type: Optional[str] = None
+    hsn_sac: Optional[str] = None
+    cgst_rate: Optional[float] = None
+    sgst_rate: Optional[float] = None
+    igst_rate: Optional[float] = None
+    ugst_rate: Optional[float] = None
+    cess_rate: Optional[float] = None
+
+
+class AmountsCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    subtotal: Optional[float] = None
+    taxable_amount: Optional[float] = None
+    discount: Optional[float] = None
+    cgst_amount: Optional[float] = None
+    sgst_amount: Optional[float] = None
+    igst_amount: Optional[float] = None
+    ugst_amount: Optional[float] = None
+    cess_amount: Optional[float] = None
+    total_tax: Optional[float] = None
+    grand_total: Optional[float] = None
+
+
 class ConfirmSectionRequest(BaseModel):
-    section: str  # "vendor" | "buyer"
+    section: str  # "vendor" | "buyer" | "tax" | "amounts"
 
 
 class CorrectionResponse(BaseModel):
@@ -455,6 +484,8 @@ class ExtractionCacheResponse(BaseModel):
     corrections: List[CorrectionEvent] = Field(default_factory=list)
     vendor_confirmed: bool = False
     buyer_confirmed: bool = False
+    tax_confirmed: bool = False
+    amounts_confirmed: bool = False
 
 
 # Validation Model

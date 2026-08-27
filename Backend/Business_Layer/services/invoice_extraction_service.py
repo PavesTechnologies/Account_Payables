@@ -34,6 +34,9 @@ from Backend.API_Layer.interface.invoice_extraction_interface import (
     ValidationResult,
     ValidationSummary,
 )
+from Backend.API_Layer.utils.invoice_extraction_fields import (
+    INDIAN_STATE_CODES,
+)
 from Backend.API_Layer.utils.validation_progress import (
     complete_validation_job,
     fail_validation_job,
@@ -255,6 +258,123 @@ def _compare_field(
         master_value=master_value,
         status=status,
     )
+
+
+def _compare_numeric_field(
+    field_name: str,
+    extracted_value: Optional[Decimal],
+    expected_value: Optional[Decimal],
+    tolerance: Decimal,
+) -> FieldComparison:
+    """Same MATCH/MISMATCH/MISSING_* semantics as _compare_field, but
+    for a numeric GST rate/amount compared against its DB-calculated
+    expected value within `tolerance` (TAX_RATE_TOLERANCE/
+    TAX_AMOUNT_TOLERANCE) instead of exact text equality."""
+
+    has_extracted = extracted_value is not None
+    has_expected = expected_value is not None
+
+    if not has_extracted and not has_expected:
+        status = FieldComparisonStatus.NOT_COMPARED
+    elif not has_extracted:
+        status = FieldComparisonStatus.MISSING_EXTRACTED
+    elif not has_expected:
+        status = FieldComparisonStatus.MISSING_MASTER
+    elif abs(extracted_value - expected_value) <= tolerance:
+        status = FieldComparisonStatus.MATCH
+    else:
+        status = FieldComparisonStatus.MISMATCH
+
+    return FieldComparison(
+        field=field_name,
+        extracted_value=str(extracted_value) if has_extracted else None,
+        master_value=str(expected_value) if has_expected else None,
+        status=status,
+    )
+
+
+def _line_field_label(line_number: Any, field: str) -> str:
+    """"cgst_rate" at header level (or the header-only fallback
+    line), "line_2.cgst_rate" for a real per-line invoice - matches
+    the "Line {n}: ..." wording already used in tax issue messages."""
+
+    return (
+        field
+        if line_number == "HEADER"
+        else f"line_{line_number}.{field}"
+    )
+
+
+def _build_supplementary_tax_comparisons(
+    extracted,
+    tax_context: Dict[str, Any],
+) -> List[FieldComparison]:
+    """Document-verification-only comparisons for GST fields that
+    have no authoritative master value to check tax type/rate/amount
+    against - place of supply (cross-checked against the buyer's own
+    GST state, the only reference already available), reverse charge
+    (no rule in the codebase classifies which invoices require it),
+    and HSN/SAC (MATCH when a configured GST rate rule was resolved
+    for it, otherwise the same "unknown SAC" soft signal that
+    validate_tax_rates/validate_tax_amounts already tolerate).
+    Never contributes to validate_tax's blocking `issues`."""
+
+    comparisons: List[FieldComparison] = []
+
+    buyer_state_code = (
+        extracted.buyer.state_code or BUYER_STATE_CODE or None
+    )
+    expected_place_of_supply = (
+        INDIAN_STATE_CODES.get(buyer_state_code)
+        if buyer_state_code
+        else None
+    )
+
+    comparisons.append(
+        _compare_field(
+            "place_of_supply",
+            extracted.tax.place_of_supply,
+            expected_place_of_supply,
+            fuzzy=True,
+        )
+    )
+
+    comparisons.append(
+        FieldComparison(
+            field="reverse_charge",
+            extracted_value=(
+                str(extracted.tax.reverse_charge)
+                if extracted.tax.reverse_charge is not None
+                else None
+            ),
+            master_value=None,
+            status=FieldComparisonStatus.NOT_COMPARED,
+        )
+    )
+
+    for line_context in tax_context["lines"]:
+
+        hsn_sac = line_context["hsn_sac"]
+
+        if not hsn_sac:
+            continue
+
+        comparisons.append(
+            FieldComparison(
+                field=_line_field_label(
+                    line_context["line_number"], "hsn_sac"
+                ),
+                extracted_value=hsn_sac,
+                master_value=line_context.get("gst_rule_code"),
+                status=(
+                    FieldComparisonStatus.MATCH
+                    if line_context.get("gst_rule_code")
+                    else FieldComparisonStatus.MISSING_MASTER
+                ),
+            )
+        )
+
+    return comparisons
 
 
 class InvoiceExtractionService:
@@ -729,6 +849,7 @@ class InvoiceExtractionService:
     ) -> Dict[str, Any]:
 
         issues: List[str] = []
+        field_comparisons: List[FieldComparison] = []
 
         logger.info("Starting tax validation")
 
@@ -738,17 +859,26 @@ class InvoiceExtractionService:
             extracted=extracted,
             tax_context=tax_context,
         )
+        field_comparisons.extend(
+            tax_type_result.get("field_comparisons", [])
+        )
         if not tax_type_result["is_valid"]:
             issues.extend(tax_type_result["issues"])
 
         tax_rate_result = self.validate_tax_rates(
             tax_context=tax_context,
         )
+        field_comparisons.extend(
+            tax_rate_result.get("field_comparisons", [])
+        )
         if not tax_rate_result["is_valid"]:
             issues.extend(tax_rate_result["issues"])
 
         tax_amount_result = self.validate_tax_amounts(
             tax_context=tax_context,
+        )
+        field_comparisons.extend(
+            tax_amount_result.get("field_comparisons", [])
         )
         if not tax_amount_result["is_valid"]:
             issues.extend(tax_amount_result["issues"])
@@ -757,19 +887,33 @@ class InvoiceExtractionService:
             extracted=extracted,
             tax_context=tax_context,
         )
+        field_comparisons.extend(
+            tax_total_result.get("field_comparisons", [])
+        )
         if not tax_total_result["is_valid"]:
             issues.extend(tax_total_result["issues"])
+
+        # Document-verification fields with no blocking business rule
+        # today (place of supply, reverse charge, HSN/SAC master
+        # lookup) - exposed for frontend MATCH/MISMATCH display, but
+        # never added to `issues` since none of them are backed by an
+        # authoritative master value the way tax type/rate/amount are.
+        field_comparisons.extend(
+            _build_supplementary_tax_comparisons(extracted, tax_context)
+        )
 
         if issues:
             return {
                 "is_valid": False,
                 "issues": issues,
+                "field_comparisons": field_comparisons,
             }
 
         return {
             "is_valid": True,
             "issues": [],
             "summary": self._build_tax_summary(extracted, tax_context),
+            "field_comparisons": field_comparisons,
         }
 
     def _build_tax_summary(
@@ -1076,15 +1220,23 @@ class InvoiceExtractionService:
                 f"{expected_tax_type}, extracted {actual_tax_type}."
             )
 
+        field_comparisons = [
+            _compare_field(
+                "tax_type", actual_tax_type, expected_tax_type
+            ),
+        ]
+
         if issues:
             return {
                 "is_valid": False,
                 "issues": issues,
+                "field_comparisons": field_comparisons,
             }
 
         return {
             "is_valid": True,
             "issues": [],
+            "field_comparisons": field_comparisons,
         }
 
     # ============================================================
@@ -1097,6 +1249,7 @@ class InvoiceExtractionService:
     ) -> Dict[str, Any]:
 
         issues: List[str] = []
+        field_comparisons: List[FieldComparison] = []
 
         for line_context in tax_context["lines"]:
 
@@ -1128,6 +1281,17 @@ class InvoiceExtractionService:
                 if actual_rate is None:
                     continue
 
+                field_comparisons.append(
+                    _compare_numeric_field(
+                        _line_field_label(
+                            line_context["line_number"], rate_field
+                        ),
+                        actual_rate,
+                        expected_rate,
+                        TAX_RATE_TOLERANCE,
+                    )
+                )
+
                 if abs(actual_rate - expected_rate) > TAX_RATE_TOLERANCE:
                     issues.append(
                         f"Line {line_context['line_number']}: "
@@ -1139,11 +1303,13 @@ class InvoiceExtractionService:
             return {
                 "is_valid": False,
                 "issues": issues,
+                "field_comparisons": field_comparisons,
             }
 
         return {
             "is_valid": True,
             "issues": [],
+            "field_comparisons": field_comparisons,
         }
 
     # ============================================================
@@ -1156,6 +1322,7 @@ class InvoiceExtractionService:
     ) -> Dict[str, Any]:
 
         issues: List[str] = []
+        field_comparisons: List[FieldComparison] = []
 
         expected_components = tax_context["expected_components"]
 
@@ -1163,6 +1330,7 @@ class InvoiceExtractionService:
             return {
                 "is_valid": True,
                 "issues": [],
+                "field_comparisons": field_comparisons,
             }
 
         for line_context in tax_context["lines"]:
@@ -1194,6 +1362,17 @@ class InvoiceExtractionService:
                     taxable_amount * expected_rate / Decimal("100")
                 )
 
+                field_comparisons.append(
+                    _compare_numeric_field(
+                        _line_field_label(
+                            line_context["line_number"], amount_field
+                        ),
+                        actual_amount,
+                        expected_amount,
+                        TAX_AMOUNT_TOLERANCE,
+                    )
+                )
+
                 if (
                     abs(actual_amount - expected_amount)
                     > TAX_AMOUNT_TOLERANCE
@@ -1208,11 +1387,13 @@ class InvoiceExtractionService:
             return {
                 "is_valid": False,
                 "issues": issues,
+                "field_comparisons": field_comparisons,
             }
 
         return {
             "is_valid": True,
             "issues": [],
+            "field_comparisons": field_comparisons,
         }
 
     # ============================================================
@@ -1249,6 +1430,15 @@ class InvoiceExtractionService:
             _to_decimal(amounts.total_tax) or Decimal("0")
         )
 
+        field_comparisons = [
+            _compare_numeric_field(
+                "total_tax",
+                extracted_total_tax,
+                header_component_sum,
+                TAX_AMOUNT_TOLERANCE,
+            ),
+        ]
+
         if (
             abs(header_component_sum - extracted_total_tax)
             > TAX_AMOUNT_TOLERANCE
@@ -1279,6 +1469,15 @@ class InvoiceExtractionService:
                     if value is not None:
                         line_component_sum += value
 
+            field_comparisons.append(
+                _compare_numeric_field(
+                    "total_tax_line_reconciliation",
+                    line_component_sum,
+                    extracted_total_tax,
+                    TAX_AMOUNT_TOLERANCE,
+                )
+            )
+
             if (
                 abs(line_component_sum - extracted_total_tax)
                 > TAX_AMOUNT_TOLERANCE
@@ -1294,11 +1493,13 @@ class InvoiceExtractionService:
             return {
                 "is_valid": False,
                 "issues": issues,
+                "field_comparisons": field_comparisons,
             }
 
         return {
             "is_valid": True,
             "issues": [],
+            "field_comparisons": field_comparisons,
         }
 
     # ============================================================
