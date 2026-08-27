@@ -24,6 +24,8 @@ from Backend.Data_Access_Layer.models.invoice import (
 from Backend.Data_Access_Layer.utils.database import SessionLocal
 from Backend.API_Layer.interface.invoice_extraction_interface import (
     CustomInvoiceRequest,
+    FieldComparison,
+    FieldComparisonStatus,
     InboundDocumentRequest,
     InvoiceAttachmentRequest,
     InvoiceLineRequest,
@@ -78,6 +80,39 @@ TAX_COUNTRY_CODE = get_env_var("TAX_COUNTRY_CODE", "IN")
 # the same-state/different-state comparison.
 BUYER_STATE_NAME = get_env_var("BUYER_STATE", "")
 BUYER_STATE_CODE = get_env_var("BUYER_CODE", "")
+
+# Buyer GSTIN/PAN/address are optional - unlike BUYER_NAME, there is
+# no fallback lookup for them (no buyer master table exists; the
+# buyer is always "our own company", configured once). Left unset,
+# the corresponding field simply isn't compared (NOT_COMPARED rather
+# than a false MISMATCH).
+BUYER_GSTIN = get_env_var("BUYER_GSTIN", "")
+BUYER_PAN = get_env_var("BUYER_PAN", "")
+BUYER_ADDRESS = get_env_var("BUYER_ADDRESS", "")
+
+# ============================================================
+# Vendor/Buyer field-comparison configuration
+# ============================================================
+
+# Vendor statuses that block an invoice outright, regardless of how
+# well the extracted fields otherwise match the vendor master record.
+VENDOR_BLOCKING_STATUSES = {"BLOCKED", "INACTIVE"}
+
+# Extracted addresses are a single free-text OCR string; master data
+# is several discrete columns (address_line1/2, city, postal_code) or
+# a single configured BUYER_ADDRESS string - byte-equality is never
+# realistic, so address comparison uses normalized token-overlap
+# containment instead. This is the minimum fraction of the shorter
+# string's significant tokens that must also appear in the longer
+# string for the pair to count as a MATCH.
+ADDRESS_FUZZY_MIN_OVERLAP_RATIO = float(
+    get_env_var("ADDRESS_FUZZY_MIN_OVERLAP_RATIO", "0.6")
+)
+
+_ADDRESS_STOPWORDS = {
+    "the", "and", "of", "at", "no", "near", "opp", "opposite", "road",
+    "street", "st", "india",
+}
 
 # Any of these present on a line means the invoice carries real
 # line-level tax data, so line-level validation should run. When
@@ -150,6 +185,76 @@ def _format_rate(rate: Decimal) -> str:
         text = text.rstrip("0").rstrip(".")
 
     return text
+
+
+def _normalize_text(value: Optional[str]) -> str:
+    return " ".join(str(value).strip().casefold().split())
+
+
+def _address_tokens(value: str) -> set:
+    return {
+        token
+        for token in _normalize_text(value).replace(",", " ").split()
+        if len(token) > 2 and token not in _ADDRESS_STOPWORDS
+    }
+
+
+def _addresses_match(extracted_value: str, master_value: str) -> bool:
+
+    extracted_tokens = _address_tokens(extracted_value)
+    master_tokens = _address_tokens(master_value)
+
+    if not extracted_tokens or not master_tokens:
+        return False
+
+    shorter, longer = sorted(
+        [extracted_tokens, master_tokens], key=len
+    )
+
+    overlap = len(shorter & longer) / len(shorter)
+
+    return overlap >= ADDRESS_FUZZY_MIN_OVERLAP_RATIO
+
+
+def _compare_field(
+    field_name: str,
+    extracted_value: Optional[str],
+    master_value: Optional[str],
+    *,
+    fuzzy: bool = False,
+) -> FieldComparison:
+    """Compares one extracted vendor/buyer field against its master/
+    expected counterpart. GSTIN/PAN/state_code compare as exact
+    (case/whitespace-insensitive); names compare as exact after
+    normalization; address compares via fuzzy token-overlap
+    (fuzzy=True)."""
+
+    has_extracted = extracted_value not in (None, "")
+    has_master = master_value not in (None, "")
+
+    if not has_extracted and not has_master:
+        status = FieldComparisonStatus.NOT_COMPARED
+    elif not has_extracted:
+        status = FieldComparisonStatus.MISSING_EXTRACTED
+    elif not has_master:
+        status = FieldComparisonStatus.MISSING_MASTER
+    elif fuzzy:
+        status = (
+            FieldComparisonStatus.MATCH
+            if _addresses_match(extracted_value, master_value)
+            else FieldComparisonStatus.MISMATCH
+        )
+    elif _normalize_text(extracted_value) == _normalize_text(master_value):
+        status = FieldComparisonStatus.MATCH
+    else:
+        status = FieldComparisonStatus.MISMATCH
+
+    return FieldComparison(
+        field=field_name,
+        extracted_value=extracted_value,
+        master_value=master_value,
+        status=status,
+    )
 
 
 class InvoiceExtractionService:
@@ -344,6 +449,11 @@ class InvoiceExtractionService:
 
         duration_ms = round((time.perf_counter() - start_time) * 1000)
 
+        field_comparisons = [
+            comparison.model_dump(mode="json")
+            for comparison in result.get("field_comparisons", [])
+        ]
+
         if job_id:
             if result["is_valid"]:
                 update_validation_stage(
@@ -351,8 +461,9 @@ class InvoiceExtractionService:
                     stage,
                     "SUCCESS",
                     message=result.get("summary"),
-                    issues=[],
+                    issues=result.get("issues") or [],
                     duration_ms=duration_ms,
+                    field_comparisons=field_comparisons,
                 )
             else:
                 update_validation_stage(
@@ -362,6 +473,7 @@ class InvoiceExtractionService:
                     message=None,
                     issues=result["issues"],
                     duration_ms=duration_ms,
+                    field_comparisons=field_comparisons,
                 )
 
         return result
@@ -439,11 +551,9 @@ class InvoiceExtractionService:
 
     def validate_vendor(self, extracted) -> Dict[str, Any]:
 
-        vendor_gstin = extracted.vendor.gstin
-        vendor_name = extracted.vendor.name
-
-        print(f"Vendor GSTIN: {vendor_gstin}")
-        print(f"Vendor name: {vendor_name}")
+        vendor = extracted.vendor
+        vendor_gstin = vendor.gstin
+        vendor_name = vendor.name
 
         if not vendor_gstin and not vendor_name:
             return {
@@ -452,6 +562,7 @@ class InvoiceExtractionService:
                     "Vendor GSTIN and vendor name are missing"
                 ],
                 "vendor_details": None,
+                "field_comparisons": [],
             }
 
         vendor_details = (
@@ -469,21 +580,77 @@ class InvoiceExtractionService:
                     "Vendor details not found"
                 ],
                 "vendor_details": None,
+                "field_comparisons": [],
             }
 
-        print(
-            f"Vendor details: {vendor_details}"
-        )
+        master_address = " ".join(
+            part
+            for part in (
+                vendor_details.get("address_line1"),
+                vendor_details.get("address_line2"),
+                vendor_details.get("city"),
+                vendor_details.get("postal_code"),
+            )
+            if part
+        ) or None
+
+        # Legal Name/Trade Name have no dedicated columns on the
+        # vendor master (only a single vendor_name) - both extracted
+        # variants are compared against that one master field so a
+        # mismatch on either is still surfaced, not silently dropped.
+        field_comparisons = [
+            _compare_field("name", vendor.name, vendor_details.get("vendor_name")),
+            _compare_field("legal_name", vendor.legal_name, vendor_details.get("vendor_name")),
+            _compare_field("trade_name", vendor.trade_name, vendor_details.get("vendor_name")),
+            _compare_field("gstin", vendor.gstin, vendor_details.get("registration_number")),
+            _compare_field("pan", vendor.pan, vendor_details.get("pan_number")),
+            _compare_field("address", vendor.address, master_address, fuzzy=True),
+            _compare_field("state", vendor.state, vendor_details.get("state")),
+        ]
+
+        # GSTIN/PAN mismatches and a blocked/inactive vendor status
+        # are hard-blocking. Name/legal_name/trade_name/address/state
+        # mismatches are surfaced (field_comparisons + issues) but do
+        # not by themselves fail the stage - the master record only
+        # has one name field to compare three extracted variants
+        # against, and OCR'd addresses are approximate by nature.
+        blocking_fields = {"gstin", "pan"}
+        blocking_mismatches = [
+            comparison
+            for comparison in field_comparisons
+            if comparison.status == FieldComparisonStatus.MISMATCH
+            and comparison.field in blocking_fields
+        ]
+
+        status_name = (vendor_details.get("status_name") or "").upper()
+        status_blocked = status_name in VENDOR_BLOCKING_STATUSES
+
+        issues = [
+            f"Vendor {comparison.field} mismatch: extracted "
+            f"'{comparison.extracted_value}' vs vendor master "
+            f"'{comparison.master_value}'"
+            for comparison in field_comparisons
+            if comparison.status == FieldComparisonStatus.MISMATCH
+        ]
+
+        if status_blocked:
+            issues.append(
+                f"Vendor status is '{status_name}' - invoice cannot proceed."
+            )
+
+        is_valid = not blocking_mismatches and not status_blocked
 
         return {
-            "is_valid": True,
-            "issues": [],
+            "is_valid": is_valid,
+            "issues": issues,
             "vendor_details": vendor_details,
+            "field_comparisons": field_comparisons,
             "summary": (
                 "Vendor found in vendor master: "
                 f"'{vendor_details.get('vendor_name')}' "
-                f"(vendor_id={vendor_details.get('vendor_id')})."
-            ),
+                f"(vendor_id={vendor_details.get('vendor_id')}, "
+                f"status={status_name or 'UNKNOWN'})."
+            ) if is_valid else None,
         }
 
     # ============================================================
@@ -492,39 +659,56 @@ class InvoiceExtractionService:
 
     def validate_buyer(self, extracted) -> Dict[str, Any]:
 
+        buyer = extracted.buyer
         expected_buyer = get_env_var("BUYER_NAME")
-        buyer_name = extracted.buyer.name
 
-        print(
-            f"Expected buyer: {expected_buyer}"
-        )
-
-        print(
-            f"Extracted buyer: {buyer_name}"
-        )
-
-        if not buyer_name:
+        if not buyer.name:
             return {
                 "is_valid": False,
                 "issues": [
                     "Buyer name not found in invoice"
                 ],
+                "field_comparisons": [],
             }
 
-        if buyer_name.strip().lower() != expected_buyer.strip().lower():
+        # Buyer has no master DB table (it's always "our own company")
+        # - the expected profile is env-configured. Only name is
+        # required/hard-blocking, matching prior behavior exactly;
+        # GSTIN/PAN/address/state are compared when configured but
+        # never block the stage, since an unconfigured expected value
+        # isn't a real mismatch.
+        field_comparisons = [
+            _compare_field("name", buyer.name, expected_buyer),
+            _compare_field("gstin", buyer.gstin, BUYER_GSTIN or None),
+            _compare_field("pan", buyer.pan, BUYER_PAN or None),
+            _compare_field("address", buyer.address, BUYER_ADDRESS or None, fuzzy=True),
+            _compare_field("state", buyer.state, BUYER_STATE_NAME or None),
+        ]
+
+        name_comparison = field_comparisons[0]
+        name_mismatch = name_comparison.status == FieldComparisonStatus.MISMATCH
+
+        issues = [
+            f"Buyer {comparison.field} mismatch: extracted "
+            f"'{comparison.extracted_value}' vs expected "
+            f"'{comparison.master_value}'"
+            for comparison in field_comparisons
+            if comparison.status == FieldComparisonStatus.MISMATCH
+        ]
+
+        if name_mismatch:
             return {
                 "is_valid": False,
-                "issues": [
-                    "Buyer name does not match expected buyer"
-                ],
+                "issues": issues,
+                "field_comparisons": field_comparisons,
             }
 
         return {
             "is_valid": True,
-            "issues": [],
+            "issues": issues,
+            "field_comparisons": field_comparisons,
             "summary": (
-                f"Buyer '{buyer_name}' matched the configured "
-                "BUYER_NAME."
+                f"Buyer '{buyer.name}' matched the configured BUYER_NAME."
             ),
         }
 

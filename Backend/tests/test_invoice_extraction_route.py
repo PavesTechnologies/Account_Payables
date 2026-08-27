@@ -11,13 +11,17 @@ redis_cache.py bound the name directly, so that's the patch target.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import Backend.API_Layer.utils.redis_cache as redis_cache_module
 import Backend.API_Layer.routes.invoice_extraction_route as route_module
 import Backend.API_Layer.utils.validation_progress as vp
+import Backend.API_Layer.utils.extraction_cache as extraction_cache_module
 from Backend.API_Layer.routes import invoice_extraction_route
 
 
@@ -47,6 +51,12 @@ def fake_redis(monkeypatch):
     return client
 
 
+class _FakeAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        request.state.user = {"user_id": "test-user"}
+        return await call_next(request)
+
+
 @pytest.fixture
 def client(monkeypatch):
     # Never actually run the pipeline in these route tests - just
@@ -56,6 +66,7 @@ def client(monkeypatch):
     )
 
     app = FastAPI()
+    app.add_middleware(_FakeAuthMiddleware)
     app.include_router(invoice_extraction_route.router)
     return TestClient(app)
 
@@ -136,3 +147,129 @@ def test_two_posts_create_independent_jobs(client, fake_redis):
 
     assert first_status["stages"]["extraction"]["status"] == "SUCCESS"
     assert second_status["stages"]["extraction"]["status"] == "WAITING"
+
+
+# ---------------------------------------------------------------------------
+# extraction_id: /validate-fields loading from the cache, and the new
+# GET/PATCH/POST correction endpoints (see extraction_cache.py).
+# ---------------------------------------------------------------------------
+
+
+def _seed_extraction(fake_redis):
+    extraction_id = extraction_cache_module.new_extraction_id()
+    extraction_cache_module.init_extraction_cache(
+        extraction_id,
+        MINIMAL_EXTRACTED_PAYLOAD["extracted_invoice"],
+        MINIMAL_EXTRACTED_PAYLOAD["file_path"],
+    )
+    return extraction_id
+
+
+def test_validate_fields_accepts_extraction_id(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    response = client.post(
+        "/validate-fields", json={"extraction_id": extraction_id}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "QUEUED"
+
+    job = vp.get_validation_status(body["job_id"])
+    assert job is not None
+
+
+def test_validate_fields_unknown_extraction_id_returns_404(client, fake_redis):
+    response = client.post(
+        "/validate-fields", json={"extraction_id": "ext_doesnotexist"}
+    )
+    assert response.status_code == 404
+
+
+def test_validate_fields_empty_body_returns_400(client, fake_redis):
+    response = client.post("/validate-fields", json={})
+    assert response.status_code == 400
+
+
+def test_get_extraction_returns_cached_state(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    response = client.get(f"/extract-fields/{extraction_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["extraction_id"] == extraction_id
+    assert body["corrections"] == []
+    assert body["vendor_confirmed"] is False
+    assert body["buyer_confirmed"] is False
+
+
+def test_get_extraction_unknown_id_returns_404(client, fake_redis):
+    response = client.get("/extract-fields/ext_doesnotexist")
+    assert response.status_code == 404
+
+
+def test_correct_vendor_persists_and_reflects_on_get(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    patch_response = client.patch(
+        f"/extract-fields/{extraction_id}/vendor",
+        json={"gstin": "27AABCU9603R1ZQ"},
+    )
+
+    assert patch_response.status_code == 200
+    patch_body = patch_response.json()
+    assert patch_body["updated"]["gstin"] == "27AABCU9603R1ZQ"
+    assert len(patch_body["corrections"]) == 1
+    assert patch_body["corrections"][0]["field"] == "vendor.gstin"
+    assert patch_body["corrections"][0]["corrected_by"] == "test-user"
+
+    get_response = client.get(f"/extract-fields/{extraction_id}")
+    assert (
+        get_response.json()["extracted_invoice"]["vendor"]["gstin"]
+        == "27AABCU9603R1ZQ"
+    )
+
+
+def test_correct_buyer_unknown_extraction_id_returns_404(client, fake_redis):
+    response = client.patch(
+        "/extract-fields/ext_doesnotexist/buyer",
+        json={"name": "New Buyer Name"},
+    )
+    assert response.status_code == 404
+
+
+def test_confirm_section_marks_confirmed(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    response = client.post(
+        f"/extract-fields/{extraction_id}/confirm",
+        json={"section": "vendor"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["vendor_confirmed"] is True
+    assert body["buyer_confirmed"] is False
+
+
+def test_confirm_section_invalid_section_returns_400(client, fake_redis):
+    extraction_id = _seed_extraction(fake_redis)
+
+    response = client.post(
+        f"/extract-fields/{extraction_id}/confirm",
+        json={"section": "not-a-section"},
+    )
+    assert response.status_code == 400
+
+
+def test_validate_fields_bare_body_still_works(client, fake_redis):
+    """Regression guard: the original bare
+    {"extracted_invoice":..., "file_path":...} body (no extraction_id,
+    no "extracted_data" wrapper) must keep working unchanged."""
+
+    response = client.post("/validate-fields", json=MINIMAL_EXTRACTED_PAYLOAD)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "QUEUED"

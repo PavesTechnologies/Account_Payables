@@ -916,6 +916,10 @@ def parse_summary_fields(
             "TEXTRACT_SUMMARY",
             ExtractionMethod.TEXTRACT_SUMMARY,
             field.get("PageNumber"),
+            bounding_box=_extract_bounding_box(
+                field.get("ValueDetection", {}),
+                field.get("PageNumber"),
+            ),
         )
 
     # --------------------------------------------------------
@@ -976,6 +980,10 @@ def parse_summary_fields(
                     "TEXTRACT_SUMMARY",
                     ExtractionMethod.TEXTRACT_SUMMARY,
                     field.get("PageNumber"),
+                    bounding_box=_extract_bounding_box(
+                        field.get("ValueDetection", {}),
+                        field.get("PageNumber"),
+                    ),
                 )
 
     return (
@@ -1456,6 +1464,10 @@ def run_queries(
                         "Page",
                         1,
                     ),
+                    "bounding_box": _extract_bounding_box(
+                        answer,
+                        query.get("Page", 1),
+                    ),
                 }
 
                 existing = results.get(alias)
@@ -1501,6 +1513,34 @@ def run_queries(
 # Apply query fallback
 # ============================================================
 
+def _extract_bounding_box(
+    value_detection: Optional[Dict[str, Any]],
+    page: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    """Pulls the Geometry.BoundingBox AWS Textract already returns on
+    a ValueDetection/QUERY_RESULT block (Left/Top/Width/Height,
+    normalized 0-1 per page) into the shape stored on field_details,
+    for a future frontend to draw a highlight on the source document.
+    Returns None when no detection block/geometry is available (e.g.
+    text-derived/regex-fallback fields) - never fabricated."""
+
+    if not value_detection:
+        return None
+
+    box = value_detection.get("Geometry", {}).get("BoundingBox")
+
+    if not box:
+        return None
+
+    return {
+        "page": page or 1,
+        "left": box.get("Left"),
+        "top": box.get("Top"),
+        "width": box.get("Width"),
+        "height": box.get("Height"),
+    }
+
+
 def _set_field(
     extracted: Dict[str, Any],
     confidence: Dict[str, float],
@@ -1513,6 +1553,7 @@ def _set_field(
     method: str,
     page: Optional[int] = None,
     overwrite: bool = False,
+    bounding_box: Optional[Dict[str, Any]] = None,
 ):
 
     if value is None or value == "":
@@ -1533,6 +1574,7 @@ def _set_field(
         "source": source,
         "extraction_method": method,
         "page": page,
+        "bounding_box": bounding_box,
     }
 
 
@@ -1631,6 +1673,7 @@ def apply_query_fallback(
             "TEXTRACT_QUERY",
             ExtractionMethod.TEXTRACT_QUERY,
             query.get("page"),
+            bounding_box=query.get("bounding_box"),
         )
 
     # --------------------------------------------------------
@@ -2325,6 +2368,7 @@ def derive_tax_type(
         "source": "DERIVED",
         "extraction_method": ExtractionMethod.DERIVED,
         "page": None,
+        "bounding_box": None,
     }
 
 

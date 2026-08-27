@@ -394,7 +394,10 @@ def test_service_skips_gst_in_redis_when_buyer_fails(fake_redis, monkeypatch):
     result = service.validate_invoice(extracted, file_path="s3/key.pdf", job_id=job_id)
 
     assert result.is_valid is False
-    assert result.issues == ["Buyer name does not match expected buyer"]
+    assert result.issues == [
+        "Buyer name mismatch: extracted 'Beta Buyers' vs expected "
+        "'Someone Else'"
+    ]
 
     job = vp.get_validation_status(job_id)
     assert job["status"] == "FAILED"
@@ -402,7 +405,8 @@ def test_service_skips_gst_in_redis_when_buyer_fails(fake_redis, monkeypatch):
     assert job["stages"]["vendor"]["status"] == "SUCCESS"
     assert job["stages"]["buyer"]["status"] == "FAILED"
     assert job["stages"]["buyer"]["issues"] == [
-        "Buyer name does not match expected buyer"
+        "Buyer name mismatch: extracted 'Beta Buyers' vs expected "
+        "'Someone Else'"
     ]
     assert job["stages"]["gst"]["status"] == "SKIPPED"
 

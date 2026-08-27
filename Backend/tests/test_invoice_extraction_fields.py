@@ -453,3 +453,65 @@ def test_total_reconciliation_accounts_for_charges_and_discount(monkeypatch):
         for issue in result.validation.field_issues
     )
     assert result.validation.is_valid is True
+
+
+# ---------------------------------------------------------------------------
+# Bounding boxes (Stage 1 - Vendor & Buyer document highlighting support)
+# ---------------------------------------------------------------------------
+
+
+def test_summary_field_with_geometry_gets_bounding_box():
+    field_details: Dict[str, Any] = {}
+    summary_fields = [
+        {
+            "Type": {"Text": "VENDOR_NAME"},
+            "ValueDetection": {
+                "Text": "Acme Traders",
+                "Confidence": 95.0,
+                "Geometry": {
+                    "BoundingBox": {
+                        "Left": 0.1,
+                        "Top": 0.2,
+                        "Width": 0.3,
+                        "Height": 0.05,
+                    }
+                },
+            },
+            "PageNumber": 1,
+        }
+    ]
+
+    fields.parse_summary_fields(summary_fields, field_details)
+
+    box = field_details["vendor_name"]["bounding_box"]
+    assert box == {
+        "page": 1,
+        "left": 0.1,
+        "top": 0.2,
+        "width": 0.3,
+        "height": 0.05,
+    }
+
+
+def test_summary_field_without_geometry_has_null_bounding_box():
+    field_details: Dict[str, Any] = {}
+    summary_fields = [summary_field("VENDOR_NAME", "Acme Traders")]
+
+    fields.parse_summary_fields(summary_fields, field_details)
+
+    assert field_details["vendor_name"]["bounding_box"] is None
+
+
+def test_regex_derived_field_has_null_bounding_box(monkeypatch):
+    # PAN is derived from GSTIN (text-derived, no Textract detection
+    # block of its own) - it must never fabricate geometry.
+    summary = base_summary_fields()
+    query_blocks = query_answer_blocks(
+        "SELLER_GSTIN", VENDOR_GSTIN
+    )
+
+    client = make_fake_client([expense_document(summary)], query_blocks)
+    result = run_extraction(client, monkeypatch)
+
+    assert result.vendor.pan == "AABCU9603R"
+    assert result.extraction.field_details["vendor_pan"]["bounding_box"] is None

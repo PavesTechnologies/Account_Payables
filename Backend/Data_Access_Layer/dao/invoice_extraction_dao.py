@@ -27,8 +27,13 @@ class InvoiceExtractionDAO:
             select(
                 Vendor.vendor_id,
                 Vendor.vendor_name,
+                Vendor.pan_number,
                 StatusMaster.status_name,
                 VendorAddress.state,
+                VendorAddress.address_line1,
+                VendorAddress.address_line2,
+                VendorAddress.city,
+                VendorAddress.postal_code,
                 VendorAddress.vendor_address_id,
                 VendorTax.vendor_tax_id,
                 VendorTax.registration_number,
@@ -55,11 +60,14 @@ class InvoiceExtractionDAO:
         if result:
             return dict(result)
 
-        # Fallback: search vendor by name
+        # Fallback: search vendor by name. No vendor_tax/GSTIN join key
+        # available on this path, so address/state can't be resolved -
+        # pan_number still can, since it lives on Vendor directly.
         result2 = (
             select(
                 Vendor.vendor_id,
                 Vendor.vendor_name,
+                Vendor.pan_number,
                 StatusMaster.status_name,
             )
             .join(

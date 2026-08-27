@@ -64,6 +64,7 @@ def _empty_stage() -> Dict[str, Any]:
         "duration_ms": None,
         "message": None,
         "issues": [],
+        "field_comparisons": [],
     }
 
 
@@ -149,6 +150,7 @@ def update_validation_stage(
     message: Optional[str] = None,
     issues: Optional[List[str]] = None,
     duration_ms: Optional[int] = None,
+    field_comparisons: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """status: one of WAITING / RUNNING / SUCCESS / FAILED / SKIPPED."""
 
@@ -172,6 +174,9 @@ def update_validation_stage(
 
         if issues is not None:
             stage_data["issues"] = issues
+
+        if field_comparisons is not None:
+            stage_data["field_comparisons"] = field_comparisons
 
         if status == "RUNNING":
             stage_data["started_at"] = now

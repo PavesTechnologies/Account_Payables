@@ -820,7 +820,10 @@ def test_buyer_failure_stops_pipeline_before_tax_runs(monkeypatch):
 
     assert result.is_valid is False
     assert result.requires_manual_review is True
-    assert result.issues == ["Buyer name does not match expected buyer"]
+    assert result.issues == [
+        "Buyer name mismatch: extracted 'Beta Buyers' vs expected "
+        "'Some Other Company'"
+    ]
 
     validation_types = {entry.validation_type for entry in result.success}
     assert validation_types == {"EXTRACTION", "VENDOR"}

@@ -367,6 +367,95 @@ class ExtractedInvoiceResult(BaseModel):
     extracted_invoice: ExtractedInvoiceResponse
     file_path: str
 
+    # Populated once /extract-fields has cached this extraction (see
+    # extraction_cache.py). Optional so callers that build this model
+    # directly (existing tests, back-compat callers) are unaffected.
+    extraction_id: Optional[str] = None
+
+
+# ============================================================
+# Stage 1 - Vendor & Buyer validation: bounding boxes, field-level
+# comparisons, and the correction/confirmation trail kept in the
+# extraction cache (see Backend/API_Layer/utils/extraction_cache.py).
+# ============================================================
+
+class BoundingBox(BaseModel):
+    page: int
+    left: float
+    top: float
+    width: float
+    height: float
+
+
+class CorrectionEvent(BaseModel):
+    field: str
+    before: Optional[Any] = None
+    after: Optional[Any] = None
+    corrected_by: str
+    corrected_at: str
+
+
+class FieldComparisonStatus(str, Enum):
+    MATCH = "MATCH"
+    MISMATCH = "MISMATCH"
+    MISSING_EXTRACTED = "MISSING_EXTRACTED"
+    MISSING_MASTER = "MISSING_MASTER"
+    NOT_COMPARED = "NOT_COMPARED"
+
+
+class FieldComparison(BaseModel):
+    field: str
+    extracted_value: Optional[str] = None
+    master_value: Optional[str] = None
+    status: FieldComparisonStatus
+    corrected_value: Optional[str] = None
+
+
+class VendorCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: Optional[str] = None
+    legal_name: Optional[str] = None
+    trade_name: Optional[str] = None
+    gstin: Optional[str] = None
+    pan: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    state_code: Optional[str] = None
+
+
+class BuyerCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: Optional[str] = None
+    legal_name: Optional[str] = None
+    trade_name: Optional[str] = None
+    gstin: Optional[str] = None
+    pan: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    state_code: Optional[str] = None
+
+
+class ConfirmSectionRequest(BaseModel):
+    section: str  # "vendor" | "buyer"
+
+
+class CorrectionResponse(BaseModel):
+    extraction_id: str
+    section: str
+    updated: Dict[str, Any]
+    corrections: List[CorrectionEvent] = Field(default_factory=list)
+
+
+class ExtractionCacheResponse(BaseModel):
+    extraction_id: str
+    extracted_invoice: ExtractedInvoiceResponse
+    file_path: str
+    corrections: List[CorrectionEvent] = Field(default_factory=list)
+    vendor_confirmed: bool = False
+    buyer_confirmed: bool = False
+
 
 # Validation Model
 # class FieldIssue(BaseModel):
@@ -401,6 +490,7 @@ class ValidationStageStatus(BaseModel):
     duration_ms: Optional[int] = None
     message: Optional[str] = None
     issues: List[str] = Field(default_factory=list)
+    field_comparisons: List[FieldComparison] = Field(default_factory=list)
 
 
 class ValidationJobStatus(BaseModel):
