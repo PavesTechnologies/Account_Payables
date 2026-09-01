@@ -17,6 +17,9 @@ from Backend.API_Layer.interface.master_interface import (
     TaxTypeResponse,
     TaxTypeUpdateRequest,
     UpdateSystemConfigResponse,
+    DepartmentDetails,
+    DepartmentRequest,
+    DepartmentResponse,
 )
 from Backend.Business_Layer.services.master_service import MasterService
 
@@ -326,6 +329,114 @@ def update_system_config(
         db.rollback()
         status_code = 404 if str(e) == "Configuration key not found" else 422
         raise HTTPException(status_code=status_code, detail=str(e))
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# department details apis
+@router.get("/departments", response_model=list[DepartmentDetails])
+def get_all_departments(http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        return service.get_all_departments()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/departments", response_model=DepartmentResponse)
+def create_department(payload: DepartmentRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+
+        service = MasterService(db)
+        department = service.create_department(payload)
+
+        return DepartmentResponse(
+            id=department.id,
+            message="Department created successfully",
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Department with this code or name already exists",
+        )
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/departments/{id}", response_model=DepartmentDetails)
+def get_department_by_id(id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        return service.get_department_by_id(id)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/departments/{id}", response_model=DepartmentResponse)
+def update_department(id: int, payload: DepartmentRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        department = service.update_department(id, payload)
+
+        return DepartmentResponse(
+            id=department.id,
+            message="Department updated successfully",
+        )
+
+    except ValueError as e:
+        db.rollback()
+        status_code = 404 if str(e) == "Department not found" else 422
+        raise HTTPException(status_code=status_code, detail=str(e))
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Department with this code or name already exists",
+        )
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/departments/{id}", response_model=DepartmentResponse)
+def delete_department(id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        service.delete_department(id)
+
+        return DepartmentResponse(
+            id=id,
+            message="Department deleted successfully",
+        )
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
 
     except Exception as e:
         db.rollback()

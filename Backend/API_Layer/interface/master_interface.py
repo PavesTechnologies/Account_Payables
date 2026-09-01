@@ -44,13 +44,13 @@ class TaxTypeDTO(BaseModel):
     country_id: int
     tax_name: str
     tax_code: str
-    calculation_type: str
-    rate_percent: Optional[decimal.Decimal]
-    fixed_amount: Optional[decimal.Decimal]
-    is_withholding: bool
-    effective_from: datetime.date
-    effective_to: Optional[datetime.date]
-    is_system_default: bool
+    # calculation_type: str
+    # rate_percent: Optional[decimal.Decimal]
+    # fixed_amount: Optional[decimal.Decimal]
+    # is_withholding: bool
+    # effective_from: datetime.date
+    # effective_to: Optional[datetime.date]
+    # is_system_default: bool
     is_active: bool
 
 
@@ -118,4 +118,19 @@ class SystemConfigDTO(BaseModel):
 
 
 class UpdateSystemConfigResponse(BaseModel):
+    message: str
+
+class DepartmentDetails(BaseModel):
+    id: int
+    code: str
+    name: str
+    is_active: bool 
+
+class DepartmentRequest(BaseModel):
+    code: str
+    name: str
+    is_active: bool = True
+
+class DepartmentResponse(BaseModel):
+    id: int
     message: str

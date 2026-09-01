@@ -11,7 +11,7 @@ from Backend.Data_Access_Layer.models.master import (
     SystemConfiguration,
     TaxType,
 )
-
+from Backend.Data_Access_Layer.models.purchase import Department
 
 class MasterService:
     def __init__(self, db):
@@ -283,3 +283,70 @@ class MasterService:
         self.db.refresh(config)
 
         return config
+    def get_all_departments(self):
+        return self.master_dao.get_all_departments()
+
+    def get_department_by_id(self, department_id: int) -> Department:
+        
+        department = self.master_dao.get_department_by_id(department_id)
+
+        if department is None:
+            raise ValueError("Department not found")
+
+        return department
+    def create_department(self, payload):
+        code=payload.code
+        name=payload.name
+        # code should be in uppercase without spaces
+        code = code.upper().replace(" ", "")
+        # code and name should be unique
+        existing_department = self.master_dao.get_department_by_code_or_name(code, name)
+        if existing_department:
+            raise ValueError("Department with the same code or name already exists.")
+        department = Department(
+            code=code,
+            name=name,
+            is_active=payload.is_active
+        )
+        department = self.master_dao.create_department(department)
+        self.db.commit()
+        self.db.refresh(department)
+        return department
+
+    def update_department(self, department_id: int, payload):
+        department = self.master_dao.get_department_by_id(department_id)
+
+        if department is None:
+            raise ValueError("Department not found")
+
+        code=payload.code
+        name=payload.name
+        # code should be in uppercase without spaces
+        code = code.upper().replace(" ", "")
+        # code and name should be unique
+        existing_department = self.master_dao.get_department_by_code_or_name(code, name)
+        if existing_department and existing_department.department_id != department_id:
+            raise ValueError("Department with the same code or name already exists.")
+
+        department.code = code
+        department.name = name
+        department.is_active = payload.is_active
+
+        self.db.commit()
+        self.db.refresh(department)
+
+        return department
+
+    def delete_department(self, department_id: int):
+
+        department = self.master_dao.get_department_by_id(department_id)
+
+        if department is None:
+            raise ValueError("Department not found.")
+
+        self.master_dao.delete_department(department)
+
+        self.db.commit()
+
+        return True
+

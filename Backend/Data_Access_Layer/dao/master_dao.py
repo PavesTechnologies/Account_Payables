@@ -9,7 +9,7 @@ from Backend.Data_Access_Layer.models.master import (
     SystemConfiguration,
     TaxType,
 )
-
+from Backend.Data_Access_Layer.models.purchase import Department, PurchaseCategory
 
 class MasterDAO:
     def __init__(self, db):
@@ -139,3 +139,32 @@ class MasterDAO:
             .filter(SystemConfiguration.config_key == config_key)
             .first()
         )
+    def get_all_departments(self):
+        return (
+            self.db.query(Department)
+            .order_by(Department.name.asc())
+            .all()
+        )
+    def get_department_by_id(self, department_id: int) -> Optional[Department]:
+        return (
+            self.db.query(Department)
+            .filter(Department.id == department_id)
+            .first()
+        )
+    def get_department_by_code_or_name(self, code: str, name: str):
+        return (
+            self.db.query(Department)
+            .filter((Department.code == code) | (Department.name == name))
+            .first()
+        )
+    def create_department(self, department):
+        department_obj = Department(
+            code=department.code,
+            name=department.name,
+            is_active=department.is_active
+        )
+        self.db.add(department_obj)
+        self.db.flush()
+        return department_obj
+    def delete_department(self, department: Department) -> None:
+        self.db.delete(department)
