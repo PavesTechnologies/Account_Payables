@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, GoodsReceipt
     from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
     from Backend.Data_Access_Layer.models.invoice import Invoice
+    from Backend.Data_Access_Layer.models.purchase import PurchaseRequisition, Quotation
     from Backend.Data_Access_Layer.models.master import (
         Country,
         Currency,
@@ -58,6 +59,8 @@ class Vendor(Base):
     vendor_bank: Mapped[list['VendorBank']] = relationship('VendorBank', back_populates='vendor')
     invoice: Mapped[list['Invoice']] = relationship('Invoice', back_populates='vendor')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='vendor')
+    purchase_requisition: Mapped[list['PurchaseRequisition']] = relationship('PurchaseRequisition', back_populates='selected_vendor')
+    quotation: Mapped[list['Quotation']] = relationship('Quotation', back_populates='vendor')
  
  
 class VendorAddress(Base):

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceLine, InvoiceIssue
     from Backend.Data_Access_Layer.models.payment import Payment
     from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder
+    from Backend.Data_Access_Layer.models.purchase import PurchaseRequisition, Quotation
     from Backend.Data_Access_Layer.models.vendor import Vendor, VendorAddress, VendorTax
 
 
@@ -53,7 +54,6 @@ class Currency(Base):
     vendor: Mapped[list['Vendor']] = relationship('Vendor', back_populates='currency')
     invoice: Mapped[list['Invoice']] = relationship('Invoice', back_populates='currency')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='currency')
-    purchase_order: Mapped[list['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='currency')
 
 
 class PaymentTerm(Base):
@@ -99,6 +99,8 @@ class StatusMaster(Base):
     invoice: Mapped[list['Invoice']] = relationship('Invoice', back_populates='status')
     invoice_issue: Mapped[list['InvoiceIssue']] = relationship('InvoiceIssue', back_populates='status')
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='status')
+    purchase_requisition: Mapped[list['PurchaseRequisition']] = relationship('PurchaseRequisition', back_populates='status')
+    quotation: Mapped[list['Quotation']] = relationship('Quotation', back_populates='status')
 
 
 class SystemConfiguration(Base):

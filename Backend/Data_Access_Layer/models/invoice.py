@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
     from Backend.Data_Access_Layer.models.approval import InvoiceApproval
     from Backend.Data_Access_Layer.models.payment import PaymentInvoice
-    from Backend.Data_Access_Layer.models.master import Currency, PaymentTerm, StatusMaster
+    from Backend.Data_Access_Layer.models.master import Currency, PaymentTerm, StatusMaster, TaxType
 
 class Invoice(Base):
     __tablename__ = 'invoice'
@@ -23,7 +23,6 @@ class Invoice(Base):
         ForeignKeyConstraint(['grn_id'], ['ap.goods_receipt.grn_id'], name='invoice_grn_id_fkey'),
         ForeignKeyConstraint(['inbound_document_id'], ['ap.inbound_document.inbound_document_id'], name='invoice_inbound_document_id_fkey'),
         ForeignKeyConstraint(['payment_term_id'], ['ap.payment_term.payment_term_id'], name='invoice_payment_term_id_fkey'),
-        ForeignKeyConstraint(['po_id'], ['ap.purchase_order.po_id'], name='invoice_po_id_fkey'),
         ForeignKeyConstraint(['status_id'], ['ap.status_master.status_id'], name='invoice_status_id_fkey'),
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='invoice_vendor_id_fkey'),
         PrimaryKeyConstraint('invoice_id', name='invoice_pkey'),
@@ -61,7 +60,11 @@ class Invoice(Base):
     grn: Mapped[Optional['GoodsReceipt']] = relationship('GoodsReceipt', back_populates='invoice')
     inbound_document: Mapped[Optional['InboundDocument']] = relationship('InboundDocument', foreign_keys=[inbound_document_id])
     payment_term: Mapped[Optional['PaymentTerm']] = relationship('PaymentTerm', back_populates='invoice')
-    po: Mapped[Optional['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='invoice')
+    # invoice.po_id has no DB FK in this schema — ORM-only join.
+    po: Mapped[Optional['PurchaseOrder']] = relationship(
+        'PurchaseOrder', back_populates='invoice', viewonly=True,
+        primaryjoin='foreign(Invoice.po_id) == PurchaseOrder.po_id',
+    )
     status: Mapped[Optional['StatusMaster']] = relationship('StatusMaster', back_populates='invoice')
     vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='invoice')
     invoice_approval: Mapped[list['InvoiceApproval']] = relationship('InvoiceApproval', back_populates='invoice')
@@ -122,9 +125,9 @@ class InvoiceLine(Base):
     __table_args__ = (
         ForeignKeyConstraint(['invoice_id'], ['ap.invoice.invoice_id'], ondelete='CASCADE', name='invoice_line_invoice_id_fkey'),
         ForeignKeyConstraint(['tax_type_id'], ['ap.tax_type.tax_type_id'], name='invoice_line_tax_type_id_fkey'),
-        ForeignKeyConstraint(['po_line_id'], ['ap.purchase_order_line.po_line_id'], ondelete='SET NULL', name='invoice_line_po_line_id_fkey'),
         PrimaryKeyConstraint('invoice_line_id', name='invoice_line_pkey'),
         UniqueConstraint('invoice_id', 'line_number', name='invoice_line_invoice_id_line_number_key'),
+        Index('idx_invoice_line_po_line', 'po_line_id'),
         {'schema': 'ap'}
     )
 
@@ -141,4 +144,8 @@ class InvoiceLine(Base):
 
     invoice: Mapped['Invoice'] = relationship('Invoice', back_populates='invoice_line')
     tax_type: Mapped[Optional['TaxType']] = relationship('TaxType', back_populates='invoice_line')
-    po_line: Mapped[Optional['PurchaseOrderLine']] = relationship('PurchaseOrderLine', back_populates='invoice_line')
+    # invoice_line.po_line_id has no DB FK in this schema — ORM-only join.
+    po_line: Mapped[Optional['PurchaseOrderLine']] = relationship(
+        'PurchaseOrderLine', back_populates='invoice_line', viewonly=True,
+        primaryjoin='foreign(InvoiceLine.po_line_id) == PurchaseOrderLine.po_line_id',
+    )

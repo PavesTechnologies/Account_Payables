@@ -1,561 +1,2657 @@
--- ============================================================================
--- ACCOUNTS PAYABLE (AP) — PHASE 1 SCHEMA
--- PostgreSQL 16+
--- Version: Final — email-intake invoice automation for a  Accounts Payable Module
--- ============================================================================
--- This is an Invoice Automation System, not an ERP. Scope is intentionally
--- limited to: Vendor -> Invoice arrives -> OCR/Extraction -> Validation ->
--- Exception Handling -> Approval (if needed) -> Payment Scheduling -> Paid.
 --
--- Out of scope by design (add only if the business genuinely needs it):
---   Purchase requisitions, contracts, budget control, cost centers,
---   GL posting, asset accounting, inventory, accounting journals,
---   workflow/rules engines, payment batches/bank files.
+-- Database/ap_schema.sql
+-- PostgreSQL database dump
 --
--- Three-tier data ownership model used throughout:
---   SYSTEM REFERENCE   - developer-seeded, not user-editable (country,
---                         currency, status_master)
---   BUSINESS CONFIG     - seeded as suggestions, AP Executive maintains
---                         (tax_type, vendor_category, payment_term,
---                         system_configuration)
---   TRANSACTIONAL       - created by the automation pipeline (vendor,
---                         invoice, payment, approval, issue, etc.)
+
+\restrict 24blkwLEGiYZghsaGi1qs0OVVumsInAu5k8PK5TYRG3LAhGUItbP56ikK57BfvX
+
+-- Dumped from database version 17.11
+-- Dumped by pg_dump version 18.4
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
 --
--- Changes in this version (per architecture review):
---   1. payment / payment_invoice split — one payment can now settle
---      multiple invoices, and partial payments are representable.
---   2. system_configuration table added — business rules (auto-approval
---      limit, OCR confidence threshold, PO/GRN mandatory flags, reminder
---      days) live in data, not code.
---   3. invoice_issue.severity added — INFO/WARNING/ERROR to prioritize
---      exceptions instead of treating all issues as equally urgent.
---   4. vendor_bank versioned with effective_from/effective_to — bank
---      account changes are never destructive updates, always a new row.
--- ============================================================================
+-- Name: ap; Type: SCHEMA; Schema: -; Owner: -
+--
 
-CREATE SCHEMA IF NOT EXISTS ap;
-SET search_path TO ap;
+CREATE SCHEMA ap;
 
--- ============================================================================
--- MODULE 1: FOUNDATION MASTERS
--- ============================================================================
 
--- SYSTEM REFERENCE — seeded once, not exposed for editing.
-CREATE TABLE country (
-    country_id      SERIAL PRIMARY KEY,
-    country_name    VARCHAR(100) NOT NULL,
-    country_code    CHAR(2) NOT NULL UNIQUE,       -- ISO 3166-1 alpha-2
-    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: audit_log; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.audit_log (
+    audit_log_id bigint NOT NULL,
+    table_name character varying(50) NOT NULL,
+    record_id integer NOT NULL,
+    action character varying(20) NOT NULL,
+    changed_by character varying(100),
+    changed_at timestamp without time zone DEFAULT now() NOT NULL,
+    old_values jsonb,
+    new_values jsonb
 );
 
--- SYSTEM REFERENCE — seeded once, not exposed for editing.
-CREATE TABLE currency (
-    currency_id     SERIAL PRIMARY KEY,
-    currency_name   VARCHAR(50) NOT NULL,
-    currency_code   CHAR(3) NOT NULL UNIQUE,       -- ISO 4217
-    symbol          VARCHAR(10) NOT NULL,
-    decimal_places  SMALLINT NOT NULL DEFAULT 2,
-    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+
+--
+-- Name: audit_log_audit_log_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.audit_log_audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: audit_log_audit_log_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.audit_log_audit_log_id_seq OWNED BY ap.audit_log.audit_log_id;
+
+
+--
+-- Name: country; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.country (
+    country_id integer NOT NULL,
+    country_name character varying(100) NOT NULL,
+    country_code character(2) NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
--- BUSINESS CONFIG — AP Executive maintains; rates change yearly.
-CREATE TABLE tax_type (
-    tax_type_id       SERIAL PRIMARY KEY,
-    country_id        INT NOT NULL REFERENCES country(country_id),
-    tax_name          VARCHAR(100) NOT NULL,        -- 'GST 18%', 'TDS Section 194C'
-    tax_code          VARCHAR(30) NOT NULL,
-    calculation_type  VARCHAR(20) NOT NULL DEFAULT 'PERCENTAGE', -- 'PERCENTAGE' or 'FIXED'
-    rate_percent      NUMERIC(6,3),                  -- used when calculation_type = PERCENTAGE
-    fixed_amount      NUMERIC(18,2),                 -- used when calculation_type = FIXED
-    is_withholding    BOOLEAN NOT NULL DEFAULT FALSE, -- TRUE = deducted from vendor (TDS-style)
-                                                        -- FALSE = added to invoice (GST/VAT-style)
-    effective_from    DATE NOT NULL,
-    effective_to      DATE,
-    is_system_default BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active         BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by        VARCHAR(100),
-    created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_by        VARCHAR(100),
-    updated_at        TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE (country_id, tax_code, effective_from),
-    CHECK (
-        (calculation_type = 'PERCENTAGE' AND rate_percent IS NOT NULL) OR
-        (calculation_type = 'FIXED' AND fixed_amount IS NOT NULL)
-    )
+
+--
+-- Name: country_country_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.country_country_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: country_country_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.country_country_id_seq OWNED BY ap.country.country_id;
+
+
+--
+-- Name: currency; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.currency (
+    currency_id integer NOT NULL,
+    currency_name character varying(50) NOT NULL,
+    currency_code character(3) NOT NULL,
+    symbol character varying(10) NOT NULL,
+    decimal_places smallint DEFAULT 2 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
--- -- BUSINESS CONFIG — reporting/UX convenience only. Never drives validation
--- -- or payment calculation logic. Optional on vendor.
--- CREATE TABLE vendor_category (
---     vendor_category_id SERIAL PRIMARY KEY,
---     category_name      VARCHAR(100) NOT NULL UNIQUE,
---     description         VARCHAR(255),
---     is_system_default    BOOLEAN NOT NULL DEFAULT FALSE,
---     is_active             BOOLEAN NOT NULL DEFAULT TRUE,
---     created_by             VARCHAR(100),
---     created_at               TIMESTAMP NOT NULL DEFAULT NOW(),
---     updated_by                 VARCHAR(100),
---     updated_at                   TIMESTAMP NOT NULL DEFAULT NOW()
--- );
 
--- BUSINESS CONFIG — AP Executive maintains (business policy, not a constant).
-CREATE TABLE payment_term (
-    payment_term_id   SERIAL PRIMARY KEY,
-    term_name          VARCHAR(50) NOT NULL UNIQUE,  -- 'Net 30', 'Immediate'
-    due_days            SMALLINT NOT NULL DEFAULT 0,
-    discount_percent      NUMERIC(5,2) NOT NULL DEFAULT 0,
-    discount_days           SMALLINT NOT NULL DEFAULT 0,
-    is_system_default         BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active                   BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by                    VARCHAR(100),
-    created_at                       TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_by                         VARCHAR(100),
-    updated_at                           TIMESTAMP NOT NULL DEFAULT NOW()
+--
+-- Name: currency_currency_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.currency_currency_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: currency_currency_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.currency_currency_id_seq OWNED BY ap.currency.currency_id;
+
+
+--
+-- Name: department; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.department (
+    id bigint NOT NULL,
+    code character varying(50) NOT NULL,
+    name character varying(150) NOT NULL,
+    description text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- SYSTEM REFERENCE — codes are wired into application logic. Label text may
--- be editable via admin UI; status_code/module_name/row lifecycle stay
--- dev-controlled.
-CREATE TABLE status_master (
-    status_id       SERIAL PRIMARY KEY,
-    module_name     VARCHAR(50) NOT NULL,           -- 'VENDOR','INVOICE','APPROVAL','PAYMENT','PO'
-    status_code     VARCHAR(30) NOT NULL,
-    status_name     VARCHAR(100) NOT NULL,
-    display_order   SMALLINT NOT NULL DEFAULT 0,
-    UNIQUE (module_name, status_code)
+
+--
+-- Name: department_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.department_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: department_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.department_id_seq OWNED BY ap.department.id;
+
+
+--
+-- Name: department_purchase_category; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.department_purchase_category (
+    department_id bigint NOT NULL,
+    purchase_category_id bigint NOT NULL
 );
 
--- BUSINESS CONFIG — business rules as data, not hardcoded in application
--- code. E.g. AUTO_APPROVAL_LIMIT, OCR_CONFIDENCE_THRESHOLD, PO_MANDATORY,
--- GRN_MANDATORY, PAYMENT_REMINDER_DAYS, DUPLICATE_INVOICE_WINDOW_DAYS.
-CREATE TABLE system_configuration (
-    config_key    VARCHAR(100) PRIMARY KEY,
-    config_value  VARCHAR(255) NOT NULL,
-    data_type     VARCHAR(20) NOT NULL DEFAULT 'STRING', -- 'STRING','NUMBER','BOOLEAN'
-    description   VARCHAR(255),
-    updated_by    VARCHAR(100),
-    updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+
+--
+-- Name: goods_receipt; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.goods_receipt (
+    grn_id integer NOT NULL,
+    po_id bigint,
+    vendor_id integer NOT NULL,
+    file_path character varying(500),
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    grn_number character varying(50),
+    receipt_date date
 );
 
--- ============================================================================
--- MODULE 2: VENDOR MANAGEMENT
--- ============================================================================
 
--- Required at creation: vendor_name, country_id. At least one vendor_address
--- and one active vendor_bank row must exist before a vendor can be paid.
-CREATE TABLE vendor (
-    vendor_id           SERIAL PRIMARY KEY,
-    vendor_name         VARCHAR(200) NOT NULL,
-    vendor_code         VARCHAR(30) UNIQUE,
-    country_id          INT NOT NULL REFERENCES country(country_id),
-    -- vendor_category_id  INT REFERENCES vendor_category(vendor_category_id), -- OPTIONAL
-    payment_term_id     INT REFERENCES payment_term(payment_term_id),        -- OPTIONAL
-    currency_id         INT REFERENCES currency(currency_id),
-    pan_number         VARCHAR(10),
-    phone_number        VARCHAR(30),
-    email               VARCHAR(150),                -- expected sender for inbound invoice emails
-    status_id           INT REFERENCES status_master(status_id),
-    created_by          VARCHAR(100),
-    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_by          VARCHAR(100),
-    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+--
+-- Name: goods_receipt_grn_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.goods_receipt_grn_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: goods_receipt_grn_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.goods_receipt_grn_id_seq OWNED BY ap.goods_receipt.grn_id;
+
+
+--
+-- Name: goods_receipt_line; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.goods_receipt_line (
+    grn_line_id integer NOT NULL,
+    grn_id integer NOT NULL,
+    description character varying(255) NOT NULL,
+    received_quantity numeric(18,4) NOT NULL,
+    po_line_id integer,
+    item_code character varying(50)
 );
 
-CREATE INDEX idx_vendor_country ON vendor(country_id);
-CREATE INDEX idx_vendor_status ON vendor(status_id);
-CREATE INDEX idx_vendor_email ON vendor(email);
 
-CREATE TABLE vendor_address (
-    vendor_address_id SERIAL PRIMARY KEY,
-    vendor_id          INT NOT NULL REFERENCES vendor(vendor_id) ON DELETE CASCADE,
-    address_type       VARCHAR(30) NOT NULL DEFAULT 'REGISTERED', -- REGISTERED, REMIT_TO, SHIPPING
-    address_line1      VARCHAR(200) NOT NULL,
-    address_line2      VARCHAR(200),
-    city               VARCHAR(100) NOT NULL,
-    state              VARCHAR(100),
-    postal_code        VARCHAR(20),
-    country_id         INT NOT NULL REFERENCES country(country_id),
-    is_primary         BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+--
+-- Name: goods_receipt_line_grn_line_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.goods_receipt_line_grn_line_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: goods_receipt_line_grn_line_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.goods_receipt_line_grn_line_id_seq OWNED BY ap.goods_receipt_line.grn_line_id;
+
+
+--
+-- Name: inbound_document; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.inbound_document (
+    inbound_document_id integer NOT NULL,
+    source_type character varying(20) DEFAULT 'EMAIL'::character varying NOT NULL,
+    email_from character varying(200),
+    email_subject character varying(255),
+    email_message_id character varying(255),
+    received_at timestamp without time zone DEFAULT now() NOT NULL,
+    file_name character varying(255) NOT NULL,
+    file_path character varying(500) NOT NULL,
+    extraction_status character varying(20) DEFAULT 'PENDING'::character varying NOT NULL,
+    extraction_confidence numeric(5,2),
+    raw_extracted_data jsonb,
+    vendor_id integer,
+    invoice_id integer,
+    created_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_vendor_address_vendor ON vendor_address(vendor_id);
 
--- Versioned: bank account changes insert a new row rather than overwriting
--- history. effective_to = NULL means currently active.
-CREATE TABLE vendor_bank (
-    vendor_bank_id      SERIAL PRIMARY KEY,
-    vendor_id           INT NOT NULL REFERENCES vendor(vendor_id) ON DELETE CASCADE,
-    bank_name           VARCHAR(150) NOT NULL,
-    account_holder_name VARCHAR(150) NOT NULL,
-    account_number      VARCHAR(50),
-    iban                VARCHAR(50),                 -- EU/international
-    swift_code          VARCHAR(20),
-    routing_number      VARCHAR(20),                 -- US ABA routing
-    ifsc_code           VARCHAR(20),                 -- India
-    is_primary          BOOLEAN NOT NULL DEFAULT FALSE,
-    effective_from      DATE NOT NULL DEFAULT CURRENT_DATE,
-    effective_to        DATE,                        -- NULL = currently active
-    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+--
+-- Name: inbound_document_inbound_document_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.inbound_document_inbound_document_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: inbound_document_inbound_document_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.inbound_document_inbound_document_id_seq OWNED BY ap.inbound_document.inbound_document_id;
+
+
+--
+-- Name: invoice; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.invoice (
+    invoice_id integer NOT NULL,
+    invoice_number character varying(50) NOT NULL,
+    vendor_id integer NOT NULL,
+    inbound_document_id integer,
+    invoice_type character varying(20) DEFAULT 'NON_PO'::character varying NOT NULL,
+    po_id integer,
+    grn_id integer,
+    invoice_date date NOT NULL,
+    due_date date NOT NULL,
+    payment_term_id integer,
+    currency_id integer NOT NULL,
+    gross_amount numeric(18,2) NOT NULL,
+    discount_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    tax_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    net_amount numeric(18,2) NOT NULL,
+    amount_paid numeric(18,2) DEFAULT 0 NOT NULL,
+    status_id integer,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_vendor_bank_vendor ON vendor_bank(vendor_id);
-CREATE INDEX idx_vendor_bank_active ON vendor_bank(vendor_id, effective_to);
 
--- Tax registrations are scoped to a specific vendor address (e.g. a GST
--- registration tied to the address in that state), not to the vendor directly.
-CREATE TABLE vendor_tax (
-    vendor_tax_id       SERIAL PRIMARY KEY,
-    vendor_address_id   INT NOT NULL REFERENCES vendor_address(vendor_address_id) ON DELETE CASCADE,
-    registration_type   VARCHAR(30) NOT NULL,
-    registration_number VARCHAR(50) NOT NULL,
-    is_verified         BOOLEAN NOT NULL DEFAULT FALSE,
-    verified_at         TIMESTAMP,
-    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE (vendor_address_id, registration_type)
+--
+-- Name: invoice_approval; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.invoice_approval (
+    invoice_approval_id integer NOT NULL,
+    invoice_id integer NOT NULL,
+    invoice_issue_id integer,
+    approver_name character varying(150) NOT NULL,
+    decision character varying(20) DEFAULT 'PENDING'::character varying NOT NULL,
+    comments character varying(500),
+    decided_at timestamp without time zone,
+    created_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_vendor_tax_address ON vendor_tax(vendor_address_id);
 
--- ============================================================================
--- MODULE 3: PURCHASE ORDER & GOODS RECEIPT (optional — Phase 1 + line items)
--- ============================================================================
--- Existence + status check only, no amount matching in Phase 1. Header
--- amount fields (subtotal/tax_amount/total_amount) and line items are
--- storage for structured PO/GRN data — populated manually today, by a
--- future OCR pipeline later, using these same fields either way.
+--
+-- Name: invoice_approval_invoice_approval_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-CREATE TABLE purchase_order (
-    po_id                   SERIAL PRIMARY KEY,
-    po_number               VARCHAR(50) NOT NULL UNIQUE,
-    vendor_id               INT NOT NULL REFERENCES vendor(vendor_id),
-    file_path               VARCHAR(500),
-    status_id               INT REFERENCES status_master(status_id), -- OPEN/CLOSED/CANCELLED
-    created_by              VARCHAR(100),
-    created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
-    po_date                 DATE,
-    expected_delivery_date  DATE,
-    currency_id             INT REFERENCES currency(currency_id),
-    subtotal                NUMERIC(18,2),
-    tax_amount              NUMERIC(18,2),
-    total_amount            NUMERIC(18,2)
+CREATE SEQUENCE ap.invoice_approval_invoice_approval_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: invoice_approval_invoice_approval_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.invoice_approval_invoice_approval_id_seq OWNED BY ap.invoice_approval.invoice_approval_id;
+
+
+--
+-- Name: invoice_attachment; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.invoice_attachment (
+    invoice_attachment_id integer NOT NULL,
+    invoice_id integer NOT NULL,
+    file_name character varying(255) NOT NULL,
+    file_path character varying(500) NOT NULL,
+    uploaded_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_po_vendor ON purchase_order(vendor_id);
 
-CREATE TABLE purchase_order_line (
-    po_line_id   SERIAL PRIMARY KEY,
-    po_id        INT NOT NULL REFERENCES purchase_order(po_id) ON DELETE CASCADE,
-    item_code    VARCHAR(50),
-    description  VARCHAR(255) NOT NULL,
-    quantity     NUMERIC(18,4) NOT NULL DEFAULT 1,
-    unit_price   NUMERIC(18,4) NOT NULL,
-    tax_amount   NUMERIC(18,2) NOT NULL DEFAULT 0,
-    line_amount  NUMERIC(18,2) NOT NULL
+--
+-- Name: invoice_attachment_invoice_attachment_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.invoice_attachment_invoice_attachment_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: invoice_attachment_invoice_attachment_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.invoice_attachment_invoice_attachment_id_seq OWNED BY ap.invoice_attachment.invoice_attachment_id;
+
+
+--
+-- Name: invoice_invoice_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.invoice_invoice_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: invoice_invoice_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.invoice_invoice_id_seq OWNED BY ap.invoice.invoice_id;
+
+
+--
+-- Name: invoice_issue; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.invoice_issue (
+    invoice_issue_id integer NOT NULL,
+    invoice_id integer NOT NULL,
+    issue_source character varying(20) NOT NULL,
+    issue_type character varying(50) NOT NULL,
+    severity character varying(10) DEFAULT 'ERROR'::character varying NOT NULL,
+    result character varying(10),
+    description character varying(255),
+    status_id integer,
+    resolved_by character varying(100),
+    resolved_at timestamp without time zone,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invoice_issue_severity_check CHECK (((severity)::text = ANY (ARRAY[('INFO'::character varying)::text, ('WARNING'::character varying)::text, ('ERROR'::character varying)::text])))
 );
 
-CREATE INDEX idx_po_line_po ON purchase_order_line(po_id);
 
-CREATE TABLE goods_receipt (
-    grn_id       SERIAL PRIMARY KEY,
-    po_id        INT REFERENCES purchase_order(po_id),
-    vendor_id    INT NOT NULL REFERENCES vendor(vendor_id),
-    file_path    VARCHAR(500),
-    created_by   VARCHAR(100),
-    created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
-    grn_number   VARCHAR(50),
-    receipt_date DATE
+--
+-- Name: invoice_issue_invoice_issue_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.invoice_issue_invoice_issue_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: invoice_issue_invoice_issue_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.invoice_issue_invoice_issue_id_seq OWNED BY ap.invoice_issue.invoice_issue_id;
+
+
+--
+-- Name: invoice_line; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.invoice_line (
+    invoice_line_id integer NOT NULL,
+    invoice_id integer NOT NULL,
+    line_number smallint NOT NULL,
+    description character varying(255) NOT NULL,
+    quantity numeric(18,4) DEFAULT 1 NOT NULL,
+    unit_price numeric(18,4) NOT NULL,
+    line_amount numeric(18,2) NOT NULL,
+    tax_type_id integer,
+    tax_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    po_line_id integer
 );
 
-CREATE INDEX idx_grn_vendor ON goods_receipt(vendor_id);
-CREATE INDEX idx_grn_po ON goods_receipt(po_id);
 
--- po_line_id is SET NULL (not CASCADE) on delete: a PO line being removed
--- should not destroy the goods-receipt record of what physically arrived.
-CREATE TABLE goods_receipt_line (
-    grn_line_id       SERIAL PRIMARY KEY,
-    grn_id            INT NOT NULL REFERENCES goods_receipt(grn_id) ON DELETE CASCADE,
-    po_line_id        INT REFERENCES purchase_order_line(po_line_id) ON DELETE SET NULL,
-    item_code         VARCHAR(50),
-    description       VARCHAR(255) NOT NULL,
-    received_quantity NUMERIC(18,4) NOT NULL
+--
+-- Name: invoice_line_invoice_line_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.invoice_line_invoice_line_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: invoice_line_invoice_line_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.invoice_line_invoice_line_id_seq OWNED BY ap.invoice_line.invoice_line_id;
+
+
+--
+-- Name: payment; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.payment (
+    payment_id integer NOT NULL,
+    vendor_id integer NOT NULL,
+    vendor_bank_id integer,
+    scheduled_date date NOT NULL,
+    payment_date date,
+    total_amount numeric(18,2) NOT NULL,
+    currency_id integer NOT NULL,
+    payment_method character varying(30) NOT NULL,
+    reference_number character varying(100),
+    status_id integer,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_grn_line_grn ON goods_receipt_line(grn_id);
-CREATE INDEX idx_grn_line_po_line ON goods_receipt_line(po_line_id);
 
--- ============================================================================
--- MODULE 4: INBOUND DOCUMENT — the email-intake front door
--- ============================================================================
+--
+-- Name: payment_invoice; Type: TABLE; Schema: ap; Owner: -
+--
 
-CREATE TABLE inbound_document (
-    inbound_document_id SERIAL PRIMARY KEY,
-    source_type          VARCHAR(20) NOT NULL DEFAULT 'EMAIL', -- 'EMAIL','UPLOAD'
-    email_from           VARCHAR(200),
-    email_subject        VARCHAR(255),
-    email_message_id     VARCHAR(255),                -- de-dup re-sent emails
-    received_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    file_name            VARCHAR(255) NOT NULL,
-    file_path            VARCHAR(500) NOT NULL,
-    extraction_status    VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING/EXTRACTED/FAILED
-    extraction_confidence NUMERIC(5,2),
-    raw_extracted_data   JSONB,                        -- parser output pre-validation
-    vendor_id            INT REFERENCES vendor(vendor_id),
-    invoice_id           INT,                           -- FK added after invoice table exists
-    created_at           TIMESTAMP NOT NULL DEFAULT NOW()
+CREATE TABLE ap.payment_invoice (
+    payment_invoice_id integer NOT NULL,
+    payment_id integer NOT NULL,
+    invoice_id integer NOT NULL,
+    allocated_amount numeric(18,2) NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_inbound_document_status ON inbound_document(extraction_status);
-CREATE INDEX idx_inbound_document_message_id ON inbound_document(email_message_id);
-CREATE INDEX idx_inbound_document_raw_data ON inbound_document USING GIN (raw_extracted_data);
 
--- ============================================================================
--- MODULE 5: INVOICE MANAGEMENT
--- ============================================================================
+--
+-- Name: payment_invoice_payment_invoice_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-CREATE TABLE invoice (
-    invoice_id          SERIAL PRIMARY KEY,
-    invoice_number      VARCHAR(50) NOT NULL,          -- vendor's own invoice number
-    vendor_id           INT NOT NULL REFERENCES vendor(vendor_id),
-    inbound_document_id INT REFERENCES inbound_document(inbound_document_id),
-    invoice_type        VARCHAR(20) NOT NULL DEFAULT 'NON_PO', -- 'PO' or 'NON_PO'
-    po_id               INT REFERENCES purchase_order(po_id),
-    grn_id              INT REFERENCES goods_receipt(grn_id),
-    invoice_date        DATE NOT NULL,
-    due_date            DATE NOT NULL,
-    payment_term_id     INT REFERENCES payment_term(payment_term_id),
-    currency_id         INT NOT NULL REFERENCES currency(currency_id),
-    gross_amount        NUMERIC(18,2) NOT NULL,         -- subtotal before discount/tax
-    discount_amount     NUMERIC(18,2) NOT NULL DEFAULT 0,
-    tax_amount          NUMERIC(18,2) NOT NULL DEFAULT 0,
-    net_amount          NUMERIC(18,2) NOT NULL,          -- gross - discount + tax = payable amount
-    amount_paid         NUMERIC(18,2) NOT NULL DEFAULT 0, -- kept in sync via payment_invoice allocations
-    status_id           INT REFERENCES status_master(status_id),
-    created_by          VARCHAR(100),
-    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_by          VARCHAR(100),
-    updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE (vendor_id, invoice_number)
+CREATE SEQUENCE ap.payment_invoice_payment_invoice_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: payment_invoice_payment_invoice_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.payment_invoice_payment_invoice_id_seq OWNED BY ap.payment_invoice.payment_invoice_id;
+
+
+--
+-- Name: payment_payment_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.payment_payment_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: payment_payment_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.payment_payment_id_seq OWNED BY ap.payment.payment_id;
+
+
+--
+-- Name: payment_term; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.payment_term (
+    payment_term_id integer NOT NULL,
+    term_name character varying(50) NOT NULL,
+    due_days smallint DEFAULT 0 NOT NULL,
+    discount_percent numeric(5,2) DEFAULT 0 NOT NULL,
+    discount_days smallint DEFAULT 0 NOT NULL,
+    is_system_default boolean DEFAULT false NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_invoice_vendor ON invoice(vendor_id);
-CREATE INDEX idx_invoice_status ON invoice(status_id);
-CREATE INDEX idx_invoice_due_date ON invoice(due_date);
-CREATE INDEX idx_invoice_po ON invoice(po_id);
 
-ALTER TABLE inbound_document
-    ADD CONSTRAINT fk_inbound_document_invoice
-    FOREIGN KEY (invoice_id) REFERENCES invoice(invoice_id);
+--
+-- Name: payment_term_payment_term_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-CREATE TABLE invoice_line (
-    invoice_line_id SERIAL PRIMARY KEY,
-    invoice_id      INT NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
-    line_number     SMALLINT NOT NULL,
-    description     VARCHAR(255) NOT NULL,
-    quantity        NUMERIC(18,4) NOT NULL DEFAULT 1,
-    unit_price      NUMERIC(18,4) NOT NULL,
-    line_amount     NUMERIC(18,2) NOT NULL,
-    tax_type_id     INT REFERENCES tax_type(tax_type_id),
-    tax_amount      NUMERIC(18,2) NOT NULL DEFAULT 0,
-    UNIQUE (invoice_id, line_number)
+CREATE SEQUENCE ap.payment_term_payment_term_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: payment_term_payment_term_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.payment_term_payment_term_id_seq OWNED BY ap.payment_term.payment_term_id;
+
+
+--
+-- Name: purchase_category; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.purchase_category (
+    id bigint NOT NULL,
+    code character varying(50) NOT NULL,
+    name character varying(150) NOT NULL,
+    description text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE invoice_attachment (
-    invoice_attachment_id SERIAL PRIMARY KEY,
-    invoice_id       INT NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
-    file_name        VARCHAR(255) NOT NULL,
-    file_path        VARCHAR(500) NOT NULL,
-    uploaded_at      TIMESTAMP NOT NULL DEFAULT NOW()
+
+--
+-- Name: purchase_category_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.purchase_category_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: purchase_category_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.purchase_category_id_seq OWNED BY ap.purchase_category.id;
+
+
+--
+-- Name: purchase_order; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.purchase_order (
+    id bigint NOT NULL,
+    po_number character varying(50) NOT NULL,
+    pr_id bigint NOT NULL,
+    quotation_id bigint,
+    vendor_id bigint NOT NULL,
+    po_date date DEFAULT CURRENT_DATE NOT NULL,
+    expected_delivery_date date,
+    delivery_location character varying(255),
+    payment_terms text,
+    delivery_terms text,
+    subtotal numeric(18,2) DEFAULT 0 NOT NULL,
+    tax_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    total_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    status_id bigint NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_po_subtotal CHECK ((subtotal >= (0)::numeric)),
+    CONSTRAINT chk_po_tax CHECK ((tax_amount >= (0)::numeric)),
+    CONSTRAINT chk_po_total CHECK ((total_amount >= (0)::numeric))
 );
 
--- Single table for both automated validation failures and manual exceptions.
--- severity lets the exception queue be triaged instead of treating every
--- issue as equally urgent.
-CREATE TABLE invoice_issue (
-    invoice_issue_id SERIAL PRIMARY KEY,
-    invoice_id       INT NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
-    issue_source     VARCHAR(20) NOT NULL,   -- 'VALIDATION' or 'MANUAL'
-    issue_type       VARCHAR(50) NOT NULL,   -- 'DUPLICATE','TAX_MISMATCH','VENDOR_NOT_FOUND',
-                                              -- 'PO_MISMATCH','GSTIN_MISMATCH','FORMAT','LOW_OCR_CONFIDENCE'
-    severity         VARCHAR(10) NOT NULL DEFAULT 'ERROR', -- 'INFO','WARNING','ERROR'
-    result           VARCHAR(10),            -- 'PASS'/'FAIL', null for manual exceptions
-    description      VARCHAR(255),
-    status_id        INT REFERENCES status_master(status_id),
-    resolved_by      VARCHAR(100),
-    resolved_at      TIMESTAMP,
-    created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-    CHECK (severity IN ('INFO','WARNING','ERROR'))
+
+--
+-- Name: purchase_order_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.purchase_order_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: purchase_order_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.purchase_order_id_seq OWNED BY ap.purchase_order.id;
+
+
+--
+-- Name: purchase_order_line; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.purchase_order_line (
+    id bigint NOT NULL,
+    po_id bigint NOT NULL,
+    pr_line_id bigint,
+    item_name character varying(255) NOT NULL,
+    description text,
+    quantity numeric(18,4) NOT NULL,
+    uom character varying(50),
+    unit_price numeric(18,2) DEFAULT 0 NOT NULL,
+    tax_rate numeric(8,4) DEFAULT 0 NOT NULL,
+    tax_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    total_amount numeric(18,2) DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_po_line_quantity CHECK ((quantity > (0)::numeric)),
+    CONSTRAINT chk_po_line_tax_amount CHECK ((tax_amount >= (0)::numeric)),
+    CONSTRAINT chk_po_line_tax_rate CHECK ((tax_rate >= (0)::numeric)),
+    CONSTRAINT chk_po_line_total CHECK ((total_amount >= (0)::numeric)),
+    CONSTRAINT chk_po_line_unit_price CHECK ((unit_price >= (0)::numeric))
 );
 
-CREATE INDEX idx_invoice_issue_invoice ON invoice_issue(invoice_id);
-CREATE INDEX idx_invoice_issue_severity ON invoice_issue(severity);
 
--- ============================================================================
--- MODULE 6: APPROVAL (exceptions only — no workflow/rules-engine table)
--- ============================================================================
+--
+-- Name: purchase_order_line_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-CREATE TABLE invoice_approval (
-    invoice_approval_id SERIAL PRIMARY KEY,
-    invoice_id       INT NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
-    invoice_issue_id INT REFERENCES invoice_issue(invoice_issue_id),
-    approver_name    VARCHAR(150) NOT NULL,
-    decision         VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING/APPROVED/REJECTED
-    comments         VARCHAR(500),
-    decided_at       TIMESTAMP,
-    created_at       TIMESTAMP NOT NULL DEFAULT NOW()
+CREATE SEQUENCE ap.purchase_order_line_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: purchase_order_line_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.purchase_order_line_id_seq OWNED BY ap.purchase_order_line.id;
+
+
+--
+-- Name: purchase_requisition; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.purchase_requisition (
+    id bigint NOT NULL,
+    pr_number character varying(50) NOT NULL,
+    department_id bigint NOT NULL,
+    purchase_category_id bigint NOT NULL,
+    status_id bigint NOT NULL,
+    priority character varying(20) DEFAULT 'NORMAL'::character varying NOT NULL,
+    required_by date,
+    delivery_location character varying(255),
+    justification text,
+    estimated_total numeric(18,2) DEFAULT 0 NOT NULL,
+    selected_vendor_id bigint,
+    selected_quotation_id bigint,
+    approved_by uuid,
+    approved_at timestamp with time zone,
+    approval_comment text,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_pr_estimated_total CHECK ((estimated_total >= (0)::numeric)),
+    CONSTRAINT chk_pr_priority CHECK (((priority)::text = ANY ((ARRAY['LOW'::character varying, 'NORMAL'::character varying, 'HIGH'::character varying, 'URGENT'::character varying])::text[])))
 );
 
-CREATE INDEX idx_invoice_approval_invoice ON invoice_approval(invoice_id);
 
--- ============================================================================
--- MODULE 7: PAYMENT
--- ============================================================================
--- payment = one outgoing transaction (one NEFT/wire/cheque run).
--- payment_invoice = which invoice(s) that transaction settles, and how much
--- of each. This supports one payment covering multiple invoices, and a
--- single invoice being paid across multiple partial payments.
+--
+-- Name: purchase_requisition_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-CREATE TABLE payment (
-    payment_id       SERIAL PRIMARY KEY,
-    vendor_id        INT NOT NULL REFERENCES vendor(vendor_id),
-    vendor_bank_id   INT REFERENCES vendor_bank(vendor_bank_id),
-    scheduled_date   DATE NOT NULL,           -- when scheduled to run (may capture discount)
-    payment_date     DATE,                    -- when it actually executed
-    total_amount     NUMERIC(18,2) NOT NULL,  -- sum of payment_invoice.allocated_amount
-    currency_id      INT NOT NULL REFERENCES currency(currency_id),
-    payment_method   VARCHAR(30) NOT NULL,    -- 'ACH','WIRE','NEFT','RTGS','CHEQUE'
-    reference_number VARCHAR(100),
-    status_id        INT REFERENCES status_master(status_id),
-    created_by       VARCHAR(100),
-    created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_by       VARCHAR(100),
-    updated_at       TIMESTAMP NOT NULL DEFAULT NOW()
+CREATE SEQUENCE ap.purchase_requisition_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: purchase_requisition_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.purchase_requisition_id_seq OWNED BY ap.purchase_requisition.id;
+
+
+--
+-- Name: purchase_requisition_line; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.purchase_requisition_line (
+    id bigint NOT NULL,
+    pr_id bigint NOT NULL,
+    item_name character varying(255) NOT NULL,
+    description text,
+    quantity numeric(18,4) NOT NULL,
+    uom character varying(50),
+    estimated_unit_price numeric(18,2),
+    estimated_amount numeric(18,2),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_pr_line_estimated_amount CHECK (((estimated_amount IS NULL) OR (estimated_amount >= (0)::numeric))),
+    CONSTRAINT chk_pr_line_estimated_price CHECK (((estimated_unit_price IS NULL) OR (estimated_unit_price >= (0)::numeric))),
+    CONSTRAINT chk_pr_line_quantity CHECK ((quantity > (0)::numeric))
 );
 
-CREATE INDEX idx_payment_vendor ON payment(vendor_id);
-CREATE INDEX idx_payment_scheduled_date ON payment(scheduled_date);
 
-CREATE TABLE payment_invoice (
-    payment_invoice_id SERIAL PRIMARY KEY,
-    payment_id         INT NOT NULL REFERENCES payment(payment_id) ON DELETE CASCADE,
-    invoice_id         INT NOT NULL REFERENCES invoice(invoice_id),
-    allocated_amount   NUMERIC(18,2) NOT NULL,  -- how much of this payment applies to this invoice
-    created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
-    UNIQUE (payment_id, invoice_id)
+--
+-- Name: purchase_requisition_line_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.purchase_requisition_line_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: purchase_requisition_line_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.purchase_requisition_line_id_seq OWNED BY ap.purchase_requisition_line.id;
+
+
+--
+-- Name: quotation; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.quotation (
+    id bigint NOT NULL,
+    quotation_number character varying(100),
+    pr_id bigint NOT NULL,
+    vendor_id bigint NOT NULL,
+    quotation_date date,
+    valid_until date,
+    total_amount numeric(18,2),
+    file_url text NOT NULL,
+    status_id bigint NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_quotation_total CHECK (((total_amount IS NULL) OR (total_amount >= (0)::numeric)))
 );
 
-CREATE INDEX idx_payment_invoice_payment ON payment_invoice(payment_id);
-CREATE INDEX idx_payment_invoice_invoice ON payment_invoice(invoice_id);
 
--- ============================================================================
--- MODULE 8: AUDIT
--- ============================================================================
+--
+-- Name: quotation_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-CREATE TABLE audit_log (
-    audit_log_id BIGSERIAL PRIMARY KEY,
-    table_name   VARCHAR(50) NOT NULL,
-    record_id    INT NOT NULL,
-    action       VARCHAR(20) NOT NULL,        -- INSERT/UPDATE/DELETE
-    changed_by   VARCHAR(100),
-    changed_at   TIMESTAMP NOT NULL DEFAULT NOW(),
-    old_values   JSONB,
-    new_values   JSONB
+CREATE SEQUENCE ap.quotation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: quotation_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.quotation_id_seq OWNED BY ap.quotation.id;
+
+
+--
+-- Name: status_master; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.status_master (
+    status_id integer NOT NULL,
+    module_name character varying(50) NOT NULL,
+    status_code character varying(30) NOT NULL,
+    status_name character varying(100) NOT NULL,
+    display_order smallint DEFAULT 0 NOT NULL
 );
 
-CREATE INDEX idx_audit_table_record ON audit_log(table_name, record_id);
-CREATE INDEX idx_audit_new_values ON audit_log USING GIN (new_values);
 
--- ============================================================================
--- SEED DATA
--- ============================================================================
+--
+-- Name: status_master_status_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
 
-INSERT INTO currency (currency_name, currency_code, symbol) VALUES
-('Indian Rupee','INR','₹'), ('US Dollar','USD','$'), ('Euro','EUR','€');
+CREATE SEQUENCE ap.status_master_status_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
 
-INSERT INTO country (country_name, country_code) VALUES
-('India','IN'), ('United States','US'), ('Germany','DE'),
-('United Arab Emirates','AE'), ('Singapore','SG');
 
--- INSERT INTO vendor_category (category_name, description, is_system_default) VALUES
--- ('Software & SaaS','Software subscriptions and SaaS tools', TRUE),
--- ('Professional Services','Consulting, legal, audit', TRUE),
--- ('IT Hardware','Computers, servers, networking equipment', TRUE),
--- ('Marketing','Advertising and marketing services', TRUE),
--- ('Utilities','Electricity, water, internet', TRUE),
--- ('Others','Uncategorized vendors', TRUE);
+--
+-- Name: status_master_status_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
 
-INSERT INTO payment_term (term_name, due_days, discount_percent, discount_days, is_system_default) VALUES
-('Immediate', 0, 0, 0, TRUE),
-('Net 15', 15, 0, 0, TRUE),
-('Net 30', 30, 2, 10, TRUE),
-('Net 45', 45, 0, 0, TRUE),
-('Net 60', 60, 0, 0, TRUE);
+ALTER SEQUENCE ap.status_master_status_id_seq OWNED BY ap.status_master.status_id;
 
--- NOTE: this INSERT previously omitted INVOICE/OCR_REVIEW_PENDING and
--- INVOICE/OCR_FAILED (present only in the comments below, not the actual
--- VALUES list) and had a stray duplicated "status_master (...)" line that
--- made this statement invalid SQL. Both are fixed here; see also
--- Database/migrations/2026-08-10_invoice_status_master_ocr_codes.sql for
--- adding these two codes to already-provisioned databases.
-INSERT INTO status_master (module_name, status_code, status_name, display_order) VALUES
--- 1	"VENDOR"	"PENDING"	"Pending Approval"	1
--- 2	"VENDOR"	"ACTIVE"	"Active"	2
--- 3	"VENDOR"	"INACTIVE"	"Inactive"	3
--- 4	"VENDOR"	"BLOCKED"	"Blocked"	4
--- 5	"INVOICE"	"DRAFT"	"Draft"	1
--- 6	"INVOICE"	"OCR_REVIEW_PENDING"	"Under OCR Review"	2
--- 7	"INVOICE"	"OCR_FAILED"	"OCR Failed"	3
--- 8	"INVOICE"	"PENDING_APPROVAL"	"Pending Approval"	4
--- 9	"INVOICE"	"APPROVED"	"Approved"	5
--- 10	"INVOICE"	"REJECTED"	"Rejected"	6
--- 11	"INVOICE"	"PARTIALLY_PAID"	"Partially Paid"	7
--- 12	"INVOICE"	"PAID"	"Paid"	8
--- 13	"INVOICE"	"DISPUTED"	"Disputed"	9
--- 14	"PO"	"OPEN"	"Open"	1
--- 15	"PO"	"CLOSED"	"Closed"	2
--- 16	"PO"	"CANCELLED"	"Cancelled"	3
--- 17	"APPROVAL"	"PENDING"	"Pending"	1
--- 18	"APPROVAL"	"APPROVED"	"Approved"	2
--- 19	"APPROVAL"	"REJECTED"	"Rejected"	3
--- 20	"PAYMENT"	"SCHEDULED"	"Scheduled"	1
--- 21	"PAYMENT"	"SENT"	"Sent"	2
--- 22	"PAYMENT"	"CLEARED"	"Cleared"	3
--- 23	"PAYMENT"	"FAILED"	"Failed"	4
-('VENDOR','PENDING','Pending Approval',1), ('VENDOR','ACTIVE','Active',2),
-('VENDOR','INACTIVE','Inactive',3), ('VENDOR','BLOCKED','Blocked',4),
-('INVOICE','DRAFT','Draft',1), ('INVOICE','OCR_REVIEW_PENDING','Under OCR Review',2),
-('INVOICE','OCR_FAILED','OCR Failed',3), ('INVOICE','PENDING_APPROVAL','Pending Approval',4),
-('INVOICE','APPROVED','Approved',5), ('INVOICE','REJECTED','Rejected',6),
-('INVOICE','PARTIALLY_PAID','Partially Paid',7), ('INVOICE','PAID','Paid',8),
-('INVOICE','DISPUTED','Disputed',9),
-('PO','OPEN','Open',1), ('PO','CLOSED','Closed',2), ('PO','CANCELLED','Cancelled',3),
-('APPROVAL','PENDING','Pending',1), ('APPROVAL','APPROVED','Approved',2), ('APPROVAL','REJECTED','Rejected',3),
-('PAYMENT','SCHEDULED','Scheduled',1), ('PAYMENT','SENT','Sent',2),
-('PAYMENT','CLEARED','Cleared',3), ('PAYMENT','FAILED','Failed',4);
 
-INSERT INTO tax_type (country_id, tax_name, tax_code, calculation_type, rate_percent, is_withholding, effective_from, is_system_default)
-SELECT country_id, 'GST 18%', 'GST18', 'PERCENTAGE', 18.000, FALSE, '2024-01-01', TRUE FROM country WHERE country_code = 'IN';
+--
+-- Name: system_configuration; Type: TABLE; Schema: ap; Owner: -
+--
 
-INSERT INTO tax_type (country_id, tax_name, tax_code, calculation_type, rate_percent, is_withholding, effective_from, is_system_default)
-SELECT country_id, 'TDS Section 194J', 'TDS194J', 'PERCENTAGE', 10.000, TRUE, '2024-01-01', TRUE FROM country WHERE country_code = 'IN';
+CREATE TABLE ap.system_configuration (
+    config_key character varying(100) NOT NULL,
+    config_value character varying(255) NOT NULL,
+    data_type character varying(20) DEFAULT 'STRING'::character varying NOT NULL,
+    description character varying(255),
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
 
-INSERT INTO tax_type (country_id, tax_name, tax_code, calculation_type, rate_percent, is_withholding, effective_from, is_system_default)
-SELECT country_id, 'Standard VAT', 'VAT-STD', 'PERCENTAGE', 19.000, FALSE, '2024-01-01', TRUE FROM country WHERE country_code = 'DE';
 
-INSERT INTO tax_type (country_id, tax_name, tax_code, calculation_type, rate_percent, is_withholding, effective_from, is_system_default)
-SELECT country_id, 'Sales Tax', 'SALES-TX', 'PERCENTAGE', 8.250, FALSE, '2024-01-01', TRUE FROM country WHERE country_code = 'US';
+--
+-- Name: tax_rate_rule; Type: TABLE; Schema: ap; Owner: -
+--
 
-INSERT INTO system_configuration (config_key, config_value, data_type, description) VALUES
-('AUTO_APPROVAL_LIMIT', '5000', 'NUMBER', 'Invoices at or below this amount (in base currency) skip manual approval if no other issues are raised'),
-('OCR_CONFIDENCE_THRESHOLD', '85', 'NUMBER', 'Minimum extraction_confidence (%) before an invoice is auto-promoted; below this, flagged for manual review'),
-('DUPLICATE_INVOICE_WINDOW_DAYS', '90', 'NUMBER', 'Lookback window for duplicate invoice_number + vendor_id detection'),
-('PO_MANDATORY', 'FALSE', 'BOOLEAN', 'Whether every invoice must reference a PO'),
-('GRN_MANDATORY', 'FALSE', 'BOOLEAN', 'Whether goods-based invoices require a matching GRN'),
-('PAYMENT_REMINDER_DAYS_BEFORE_DUE', '3', 'NUMBER', 'Days before due_date to notify AP Executive of an unscheduled invoice'),
-('DEFAULT_BASE_CURRENCY', 'INR', 'STRING', 'Company base currency for reporting and threshold comparisons'),
-('VENDOR_BANK_DUPLICATE_ACROSS_VENDORS', 'false', 'BOOLEAN', 'Whether a vendor bank account_number/IBAN must be unique across all vendors, not just within one vendor'),
-('INVOICE_INTAKE_NOTIFICATION_EMAILS', 'Jagadish.Pannala@pavestechnologies.com', 'STRING', 'Email recipients for invoice vendor-not-found and vendor-auto-onboarding notifications');
+CREATE TABLE ap.tax_rate_rule (
+    tax_rate_rule_id integer NOT NULL,
+    tax_rule_id integer NOT NULL,
+    rate_percent numeric(7,4) NOT NULL,
+    calculation_type character varying(30) DEFAULT 'PERCENTAGE'::character varying NOT NULL,
+    fixed_amount numeric(18,2),
+    effective_from date NOT NULL,
+    effective_to date,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT tax_rate_effective_dates_chk CHECK (((effective_to IS NULL) OR (effective_to >= effective_from))),
+    CONSTRAINT tax_rate_non_negative_chk CHECK ((rate_percent >= (0)::numeric))
+);
+
+
+--
+-- Name: tax_rate_rule_tax_rate_rule_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.tax_rate_rule_tax_rate_rule_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: tax_rate_rule_tax_rate_rule_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.tax_rate_rule_tax_rate_rule_id_seq OWNED BY ap.tax_rate_rule.tax_rate_rule_id;
+
+
+--
+-- Name: tax_rule; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.tax_rule (
+    tax_rule_id integer NOT NULL,
+    rule_code character varying(100) NOT NULL,
+    rule_name character varying(255) NOT NULL,
+    tax_type_id integer NOT NULL,
+    rule_category character varying(50) NOT NULL,
+    description text,
+    priority integer DEFAULT 100 NOT NULL,
+    effective_from date NOT NULL,
+    effective_to date,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT tax_rule_effective_dates_chk CHECK (((effective_to IS NULL) OR (effective_to >= effective_from)))
+);
+
+
+--
+-- Name: tax_rule_condition; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.tax_rule_condition (
+    tax_rule_condition_id integer NOT NULL,
+    tax_rule_id integer NOT NULL,
+    condition_type character varying(50) NOT NULL,
+    operator character varying(20) NOT NULL,
+    condition_value character varying(500) NOT NULL,
+    logical_group integer DEFAULT 1 NOT NULL,
+    sequence_no integer DEFAULT 1 NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: tax_rule_condition_tax_rule_condition_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.tax_rule_condition_tax_rule_condition_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: tax_rule_condition_tax_rule_condition_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.tax_rule_condition_tax_rule_condition_id_seq OWNED BY ap.tax_rule_condition.tax_rule_condition_id;
+
+
+--
+-- Name: tax_rule_tax_rule_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.tax_rule_tax_rule_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: tax_rule_tax_rule_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.tax_rule_tax_rule_id_seq OWNED BY ap.tax_rule.tax_rule_id;
+
+
+--
+-- Name: tax_type; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.tax_type (
+    tax_type_id integer NOT NULL,
+    country_id integer NOT NULL,
+    tax_name character varying(100) NOT NULL,
+    tax_code character varying(30) NOT NULL,
+    is_withholding boolean DEFAULT false NOT NULL,
+    is_system_default boolean DEFAULT false NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: tax_type_tax_type_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.tax_type_tax_type_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: tax_type_tax_type_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.tax_type_tax_type_id_seq OWNED BY ap.tax_type.tax_type_id;
+
+
+--
+-- Name: vendor; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.vendor (
+    vendor_id integer NOT NULL,
+    vendor_name character varying(200) NOT NULL,
+    vendor_code character varying(30),
+    country_id integer NOT NULL,
+    payment_term_id integer,
+    currency_id integer,
+    phone_number character varying(30),
+    email character varying(150),
+    status_id integer,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    pan_number character varying(10)
+);
+
+
+--
+-- Name: vendor_address; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.vendor_address (
+    vendor_address_id integer NOT NULL,
+    vendor_id integer NOT NULL,
+    address_type character varying(30) DEFAULT 'REGISTERED'::character varying NOT NULL,
+    address_line1 character varying(200) NOT NULL,
+    address_line2 character varying(200),
+    city character varying(100) NOT NULL,
+    state character varying(100),
+    postal_code character varying(20),
+    country_id integer NOT NULL,
+    is_primary boolean DEFAULT false NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: vendor_address_vendor_address_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.vendor_address_vendor_address_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vendor_address_vendor_address_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.vendor_address_vendor_address_id_seq OWNED BY ap.vendor_address.vendor_address_id;
+
+
+--
+-- Name: vendor_bank; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.vendor_bank (
+    vendor_bank_id integer NOT NULL,
+    vendor_id integer NOT NULL,
+    bank_name character varying(150) NOT NULL,
+    account_holder_name character varying(150) NOT NULL,
+    account_number character varying(50),
+    iban character varying(50),
+    swift_code character varying(20),
+    routing_number character varying(20),
+    ifsc_code character varying(20),
+    is_primary boolean DEFAULT false NOT NULL,
+    effective_from date DEFAULT CURRENT_DATE NOT NULL,
+    effective_to date,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: vendor_bank_vendor_bank_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.vendor_bank_vendor_bank_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vendor_bank_vendor_bank_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.vendor_bank_vendor_bank_id_seq OWNED BY ap.vendor_bank.vendor_bank_id;
+
+
+--
+-- Name: vendor_category; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.vendor_category (
+    vendor_category_id integer NOT NULL,
+    category_code character varying(50) NOT NULL,
+    category_name character varying(150) NOT NULL,
+    parent_category_id integer,
+    description character varying(500),
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: vendor_category_mapping; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.vendor_category_mapping (
+    vendor_category_mapping_id integer NOT NULL,
+    vendor_id integer NOT NULL,
+    vendor_category_id integer NOT NULL,
+    is_primary boolean DEFAULT false NOT NULL,
+    created_by character varying(100),
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_by character varying(100),
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: vendor_category_mapping_vendor_category_mapping_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+ALTER TABLE ap.vendor_category_mapping ALTER COLUMN vendor_category_mapping_id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME ap.vendor_category_mapping_vendor_category_mapping_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: vendor_category_vendor_category_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+ALTER TABLE ap.vendor_category ALTER COLUMN vendor_category_id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME ap.vendor_category_vendor_category_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: vendor_tax; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.vendor_tax (
+    vendor_tax_id integer NOT NULL,
+    registration_type character varying(30) NOT NULL,
+    registration_number character varying(50) NOT NULL,
+    is_verified boolean DEFAULT false NOT NULL,
+    verified_at timestamp without time zone,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    vendor_address_id integer
+);
+
+
+--
+-- Name: vendor_tax_vendor_tax_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.vendor_tax_vendor_tax_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vendor_tax_vendor_tax_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.vendor_tax_vendor_tax_id_seq OWNED BY ap.vendor_tax.vendor_tax_id;
+
+
+--
+-- Name: vendor_vendor_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.vendor_vendor_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vendor_vendor_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.vendor_vendor_id_seq OWNED BY ap.vendor.vendor_id;
+
+
+--
+-- Name: audit_log audit_log_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.audit_log ALTER COLUMN audit_log_id SET DEFAULT nextval('ap.audit_log_audit_log_id_seq'::regclass);
+
+
+--
+-- Name: country country_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.country ALTER COLUMN country_id SET DEFAULT nextval('ap.country_country_id_seq'::regclass);
+
+
+--
+-- Name: currency currency_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.currency ALTER COLUMN currency_id SET DEFAULT nextval('ap.currency_currency_id_seq'::regclass);
+
+
+--
+-- Name: department id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department ALTER COLUMN id SET DEFAULT nextval('ap.department_id_seq'::regclass);
+
+
+--
+-- Name: goods_receipt grn_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt ALTER COLUMN grn_id SET DEFAULT nextval('ap.goods_receipt_grn_id_seq'::regclass);
+
+
+--
+-- Name: goods_receipt_line grn_line_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt_line ALTER COLUMN grn_line_id SET DEFAULT nextval('ap.goods_receipt_line_grn_line_id_seq'::regclass);
+
+
+--
+-- Name: inbound_document inbound_document_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.inbound_document ALTER COLUMN inbound_document_id SET DEFAULT nextval('ap.inbound_document_inbound_document_id_seq'::regclass);
+
+
+--
+-- Name: invoice invoice_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice ALTER COLUMN invoice_id SET DEFAULT nextval('ap.invoice_invoice_id_seq'::regclass);
+
+
+--
+-- Name: invoice_approval invoice_approval_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_approval ALTER COLUMN invoice_approval_id SET DEFAULT nextval('ap.invoice_approval_invoice_approval_id_seq'::regclass);
+
+
+--
+-- Name: invoice_attachment invoice_attachment_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_attachment ALTER COLUMN invoice_attachment_id SET DEFAULT nextval('ap.invoice_attachment_invoice_attachment_id_seq'::regclass);
+
+
+--
+-- Name: invoice_issue invoice_issue_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_issue ALTER COLUMN invoice_issue_id SET DEFAULT nextval('ap.invoice_issue_invoice_issue_id_seq'::regclass);
+
+
+--
+-- Name: invoice_line invoice_line_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_line ALTER COLUMN invoice_line_id SET DEFAULT nextval('ap.invoice_line_invoice_line_id_seq'::regclass);
+
+
+--
+-- Name: payment payment_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment ALTER COLUMN payment_id SET DEFAULT nextval('ap.payment_payment_id_seq'::regclass);
+
+
+--
+-- Name: payment_invoice payment_invoice_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_invoice ALTER COLUMN payment_invoice_id SET DEFAULT nextval('ap.payment_invoice_payment_invoice_id_seq'::regclass);
+
+
+--
+-- Name: payment_term payment_term_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_term ALTER COLUMN payment_term_id SET DEFAULT nextval('ap.payment_term_payment_term_id_seq'::regclass);
+
+
+--
+-- Name: purchase_category id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_category ALTER COLUMN id SET DEFAULT nextval('ap.purchase_category_id_seq'::regclass);
+
+
+--
+-- Name: purchase_order id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order ALTER COLUMN id SET DEFAULT nextval('ap.purchase_order_id_seq'::regclass);
+
+
+--
+-- Name: purchase_order_line id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order_line ALTER COLUMN id SET DEFAULT nextval('ap.purchase_order_line_id_seq'::regclass);
+
+
+--
+-- Name: purchase_requisition id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition ALTER COLUMN id SET DEFAULT nextval('ap.purchase_requisition_id_seq'::regclass);
+
+
+--
+-- Name: purchase_requisition_line id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition_line ALTER COLUMN id SET DEFAULT nextval('ap.purchase_requisition_line_id_seq'::regclass);
+
+
+--
+-- Name: quotation id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.quotation ALTER COLUMN id SET DEFAULT nextval('ap.quotation_id_seq'::regclass);
+
+
+--
+-- Name: status_master status_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.status_master ALTER COLUMN status_id SET DEFAULT nextval('ap.status_master_status_id_seq'::regclass);
+
+
+--
+-- Name: tax_rate_rule tax_rate_rule_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rate_rule ALTER COLUMN tax_rate_rule_id SET DEFAULT nextval('ap.tax_rate_rule_tax_rate_rule_id_seq'::regclass);
+
+
+--
+-- Name: tax_rule tax_rule_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule ALTER COLUMN tax_rule_id SET DEFAULT nextval('ap.tax_rule_tax_rule_id_seq'::regclass);
+
+
+--
+-- Name: tax_rule_condition tax_rule_condition_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule_condition ALTER COLUMN tax_rule_condition_id SET DEFAULT nextval('ap.tax_rule_condition_tax_rule_condition_id_seq'::regclass);
+
+
+--
+-- Name: tax_type tax_type_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_type ALTER COLUMN tax_type_id SET DEFAULT nextval('ap.tax_type_tax_type_id_seq'::regclass);
+
+
+--
+-- Name: vendor vendor_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor ALTER COLUMN vendor_id SET DEFAULT nextval('ap.vendor_vendor_id_seq'::regclass);
+
+
+--
+-- Name: vendor_address vendor_address_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_address ALTER COLUMN vendor_address_id SET DEFAULT nextval('ap.vendor_address_vendor_address_id_seq'::regclass);
+
+
+--
+-- Name: vendor_bank vendor_bank_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_bank ALTER COLUMN vendor_bank_id SET DEFAULT nextval('ap.vendor_bank_vendor_bank_id_seq'::regclass);
+
+
+--
+-- Name: vendor_tax vendor_tax_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_tax ALTER COLUMN vendor_tax_id SET DEFAULT nextval('ap.vendor_tax_vendor_tax_id_seq'::regclass);
+
+
+--
+-- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.audit_log
+    ADD CONSTRAINT audit_log_pkey PRIMARY KEY (audit_log_id);
+
+
+--
+-- Name: country country_country_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.country
+    ADD CONSTRAINT country_country_code_key UNIQUE (country_code);
+
+
+--
+-- Name: country country_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.country
+    ADD CONSTRAINT country_pkey PRIMARY KEY (country_id);
+
+
+--
+-- Name: currency currency_currency_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.currency
+    ADD CONSTRAINT currency_currency_code_key UNIQUE (currency_code);
+
+
+--
+-- Name: currency currency_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.currency
+    ADD CONSTRAINT currency_pkey PRIMARY KEY (currency_id);
+
+
+--
+-- Name: department department_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department
+    ADD CONSTRAINT department_code_key UNIQUE (code);
+
+
+--
+-- Name: department department_name_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department
+    ADD CONSTRAINT department_name_key UNIQUE (name);
+
+
+--
+-- Name: department department_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department
+    ADD CONSTRAINT department_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: department_purchase_category department_purchase_category_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department_purchase_category
+    ADD CONSTRAINT department_purchase_category_pkey PRIMARY KEY (department_id, purchase_category_id);
+
+
+--
+-- Name: goods_receipt_line goods_receipt_line_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt_line
+    ADD CONSTRAINT goods_receipt_line_pkey PRIMARY KEY (grn_line_id);
+
+
+--
+-- Name: goods_receipt goods_receipt_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt
+    ADD CONSTRAINT goods_receipt_pkey PRIMARY KEY (grn_id);
+
+
+--
+-- Name: inbound_document inbound_document_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.inbound_document
+    ADD CONSTRAINT inbound_document_pkey PRIMARY KEY (inbound_document_id);
+
+
+--
+-- Name: invoice_approval invoice_approval_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_approval
+    ADD CONSTRAINT invoice_approval_pkey PRIMARY KEY (invoice_approval_id);
+
+
+--
+-- Name: invoice_attachment invoice_attachment_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_attachment
+    ADD CONSTRAINT invoice_attachment_pkey PRIMARY KEY (invoice_attachment_id);
+
+
+--
+-- Name: invoice_issue invoice_issue_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_issue
+    ADD CONSTRAINT invoice_issue_pkey PRIMARY KEY (invoice_issue_id);
+
+
+--
+-- Name: invoice_line invoice_line_invoice_id_line_number_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_line
+    ADD CONSTRAINT invoice_line_invoice_id_line_number_key UNIQUE (invoice_id, line_number);
+
+
+--
+-- Name: invoice_line invoice_line_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_line
+    ADD CONSTRAINT invoice_line_pkey PRIMARY KEY (invoice_line_id);
+
+
+--
+-- Name: invoice invoice_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_pkey PRIMARY KEY (invoice_id);
+
+
+--
+-- Name: invoice invoice_vendor_id_invoice_number_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_vendor_id_invoice_number_key UNIQUE (vendor_id, invoice_number);
+
+
+--
+-- Name: payment_invoice payment_invoice_payment_id_invoice_id_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_invoice
+    ADD CONSTRAINT payment_invoice_payment_id_invoice_id_key UNIQUE (payment_id, invoice_id);
+
+
+--
+-- Name: payment_invoice payment_invoice_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_invoice
+    ADD CONSTRAINT payment_invoice_pkey PRIMARY KEY (payment_invoice_id);
+
+
+--
+-- Name: payment payment_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment
+    ADD CONSTRAINT payment_pkey PRIMARY KEY (payment_id);
+
+
+--
+-- Name: payment_term payment_term_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_term
+    ADD CONSTRAINT payment_term_pkey PRIMARY KEY (payment_term_id);
+
+
+--
+-- Name: payment_term payment_term_term_name_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_term
+    ADD CONSTRAINT payment_term_term_name_key UNIQUE (term_name);
+
+
+--
+-- Name: purchase_category purchase_category_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_category
+    ADD CONSTRAINT purchase_category_code_key UNIQUE (code);
+
+
+--
+-- Name: purchase_category purchase_category_name_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_category
+    ADD CONSTRAINT purchase_category_name_key UNIQUE (name);
+
+
+--
+-- Name: purchase_category purchase_category_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_category
+    ADD CONSTRAINT purchase_category_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_order_line purchase_order_line_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order_line
+    ADD CONSTRAINT purchase_order_line_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_order purchase_order_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order
+    ADD CONSTRAINT purchase_order_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_order purchase_order_po_number_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order
+    ADD CONSTRAINT purchase_order_po_number_key UNIQUE (po_number);
+
+
+--
+-- Name: purchase_requisition_line purchase_requisition_line_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition_line
+    ADD CONSTRAINT purchase_requisition_line_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_requisition purchase_requisition_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT purchase_requisition_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_requisition purchase_requisition_pr_number_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT purchase_requisition_pr_number_key UNIQUE (pr_number);
+
+
+--
+-- Name: quotation quotation_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.quotation
+    ADD CONSTRAINT quotation_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: status_master status_master_module_name_status_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.status_master
+    ADD CONSTRAINT status_master_module_name_status_code_key UNIQUE (module_name, status_code);
+
+
+--
+-- Name: status_master status_master_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.status_master
+    ADD CONSTRAINT status_master_pkey PRIMARY KEY (status_id);
+
+
+--
+-- Name: system_configuration system_configuration_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.system_configuration
+    ADD CONSTRAINT system_configuration_pkey PRIMARY KEY (config_key);
+
+
+--
+-- Name: tax_rate_rule tax_rate_rule_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rate_rule
+    ADD CONSTRAINT tax_rate_rule_pkey PRIMARY KEY (tax_rate_rule_id);
+
+
+--
+-- Name: tax_rule_condition tax_rule_condition_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule_condition
+    ADD CONSTRAINT tax_rule_condition_pkey PRIMARY KEY (tax_rule_condition_id);
+
+
+--
+-- Name: tax_rule tax_rule_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule
+    ADD CONSTRAINT tax_rule_pkey PRIMARY KEY (tax_rule_id);
+
+
+--
+-- Name: tax_rule tax_rule_rule_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule
+    ADD CONSTRAINT tax_rule_rule_code_key UNIQUE (rule_code);
+
+
+--
+-- Name: tax_type tax_type_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_type
+    ADD CONSTRAINT tax_type_pkey PRIMARY KEY (tax_type_id);
+
+
+--
+-- Name: vendor_address vendor_address_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_address
+    ADD CONSTRAINT vendor_address_pkey PRIMARY KEY (vendor_address_id);
+
+
+--
+-- Name: vendor_bank vendor_bank_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_bank
+    ADD CONSTRAINT vendor_bank_pkey PRIMARY KEY (vendor_bank_id);
+
+
+--
+-- Name: vendor_category vendor_category_category_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category
+    ADD CONSTRAINT vendor_category_category_code_key UNIQUE (category_code);
+
+
+--
+-- Name: vendor_category_mapping vendor_category_mapping_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category_mapping
+    ADD CONSTRAINT vendor_category_mapping_pkey PRIMARY KEY (vendor_category_mapping_id);
+
+
+--
+-- Name: vendor_category_mapping vendor_category_mapping_unique; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category_mapping
+    ADD CONSTRAINT vendor_category_mapping_unique UNIQUE (vendor_id, vendor_category_id);
+
+
+--
+-- Name: vendor_category vendor_category_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category
+    ADD CONSTRAINT vendor_category_pkey PRIMARY KEY (vendor_category_id);
+
+
+--
+-- Name: vendor vendor_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor
+    ADD CONSTRAINT vendor_pkey PRIMARY KEY (vendor_id);
+
+
+--
+-- Name: vendor_tax vendor_tax_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_tax
+    ADD CONSTRAINT vendor_tax_pkey PRIMARY KEY (vendor_tax_id);
+
+
+--
+-- Name: vendor vendor_vendor_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor
+    ADD CONSTRAINT vendor_vendor_code_key UNIQUE (vendor_code);
+
+
+--
+-- Name: idx_audit_new_values; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_audit_new_values ON ap.audit_log USING gin (new_values);
+
+
+--
+-- Name: idx_audit_table_record; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_audit_table_record ON ap.audit_log USING btree (table_name, record_id);
+
+
+--
+-- Name: idx_grn_line_grn; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_grn_line_grn ON ap.goods_receipt_line USING btree (grn_id);
+
+
+--
+-- Name: idx_grn_line_po_line; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_grn_line_po_line ON ap.goods_receipt_line USING btree (po_line_id);
+
+
+--
+-- Name: idx_grn_po; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_grn_po ON ap.goods_receipt USING btree (po_id);
+
+
+--
+-- Name: idx_grn_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_grn_vendor ON ap.goods_receipt USING btree (vendor_id);
+
+
+--
+-- Name: idx_inbound_document_message_id; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_inbound_document_message_id ON ap.inbound_document USING btree (email_message_id);
+
+
+--
+-- Name: idx_inbound_document_raw_data; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_inbound_document_raw_data ON ap.inbound_document USING gin (raw_extracted_data);
+
+
+--
+-- Name: idx_inbound_document_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_inbound_document_status ON ap.inbound_document USING btree (extraction_status);
+
+
+--
+-- Name: idx_invoice_approval_invoice; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_approval_invoice ON ap.invoice_approval USING btree (invoice_id);
+
+
+--
+-- Name: idx_invoice_due_date; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_due_date ON ap.invoice USING btree (due_date);
+
+
+--
+-- Name: idx_invoice_issue_invoice; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_issue_invoice ON ap.invoice_issue USING btree (invoice_id);
+
+
+--
+-- Name: idx_invoice_issue_severity; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_issue_severity ON ap.invoice_issue USING btree (severity);
+
+
+--
+-- Name: idx_invoice_line_po_line; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_line_po_line ON ap.invoice_line USING btree (po_line_id);
+
+
+--
+-- Name: idx_invoice_po; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_po ON ap.invoice USING btree (po_id);
+
+
+--
+-- Name: idx_invoice_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_status ON ap.invoice USING btree (status_id);
+
+
+--
+-- Name: idx_invoice_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_invoice_vendor ON ap.invoice USING btree (vendor_id);
+
+
+--
+-- Name: idx_payment_invoice_invoice; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_payment_invoice_invoice ON ap.payment_invoice USING btree (invoice_id);
+
+
+--
+-- Name: idx_payment_invoice_payment; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_payment_invoice_payment ON ap.payment_invoice USING btree (payment_id);
+
+
+--
+-- Name: idx_payment_scheduled_date; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_payment_scheduled_date ON ap.payment USING btree (scheduled_date);
+
+
+--
+-- Name: idx_payment_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_payment_vendor ON ap.payment USING btree (vendor_id);
+
+
+--
+-- Name: idx_po_line_po; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_po_line_po ON ap.purchase_order_line USING btree (po_id);
+
+
+--
+-- Name: idx_po_line_pr_line; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_po_line_pr_line ON ap.purchase_order_line USING btree (pr_line_id);
+
+
+--
+-- Name: idx_po_pr; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_po_pr ON ap.purchase_order USING btree (pr_id);
+
+
+--
+-- Name: idx_po_quotation; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_po_quotation ON ap.purchase_order USING btree (quotation_id);
+
+
+--
+-- Name: idx_po_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_po_status ON ap.purchase_order USING btree (status_id);
+
+
+--
+-- Name: idx_po_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_po_vendor ON ap.purchase_order USING btree (vendor_id);
+
+
+--
+-- Name: idx_pr_category; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_category ON ap.purchase_requisition USING btree (purchase_category_id);
+
+
+--
+-- Name: idx_pr_created_by; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_created_by ON ap.purchase_requisition USING btree (created_by);
+
+
+--
+-- Name: idx_pr_department; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_department ON ap.purchase_requisition USING btree (department_id);
+
+
+--
+-- Name: idx_pr_line_pr; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_line_pr ON ap.purchase_requisition_line USING btree (pr_id);
+
+
+--
+-- Name: idx_pr_selected_quotation; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_selected_quotation ON ap.purchase_requisition USING btree (selected_quotation_id);
+
+
+--
+-- Name: idx_pr_selected_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_selected_vendor ON ap.purchase_requisition USING btree (selected_vendor_id);
+
+
+--
+-- Name: idx_pr_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_pr_status ON ap.purchase_requisition USING btree (status_id);
+
+
+--
+-- Name: idx_quotation_pr; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_quotation_pr ON ap.quotation USING btree (pr_id);
+
+
+--
+-- Name: idx_quotation_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_quotation_status ON ap.quotation USING btree (status_id);
+
+
+--
+-- Name: idx_quotation_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_quotation_vendor ON ap.quotation USING btree (vendor_id);
+
+
+--
+-- Name: idx_vendor_address_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_vendor_address_vendor ON ap.vendor_address USING btree (vendor_id);
+
+
+--
+-- Name: idx_vendor_bank_active; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_vendor_bank_active ON ap.vendor_bank USING btree (vendor_id, effective_to);
+
+
+--
+-- Name: idx_vendor_bank_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_vendor_bank_vendor ON ap.vendor_bank USING btree (vendor_id);
+
+
+--
+-- Name: idx_vendor_country; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_vendor_country ON ap.vendor USING btree (country_id);
+
+
+--
+-- Name: idx_vendor_email; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_vendor_email ON ap.vendor USING btree (email);
+
+
+--
+-- Name: idx_vendor_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_vendor_status ON ap.vendor USING btree (status_id);
+
+
+--
+-- Name: department_purchase_category fk_dpc_department; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department_purchase_category
+    ADD CONSTRAINT fk_dpc_department FOREIGN KEY (department_id) REFERENCES ap.department(id) ON DELETE CASCADE;
+
+
+--
+-- Name: department_purchase_category fk_dpc_purchase_category; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.department_purchase_category
+    ADD CONSTRAINT fk_dpc_purchase_category FOREIGN KEY (purchase_category_id) REFERENCES ap.purchase_category(id) ON DELETE CASCADE;
+
+
+--
+-- Name: goods_receipt fk_goods_receipt_po; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt
+    ADD CONSTRAINT fk_goods_receipt_po FOREIGN KEY (po_id) REFERENCES ap.purchase_order(id);
+
+
+--
+-- Name: inbound_document fk_inbound_document_invoice; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.inbound_document
+    ADD CONSTRAINT fk_inbound_document_invoice FOREIGN KEY (invoice_id) REFERENCES ap.invoice(invoice_id);
+
+
+--
+-- Name: purchase_order_line fk_po_line_po; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order_line
+    ADD CONSTRAINT fk_po_line_po FOREIGN KEY (po_id) REFERENCES ap.purchase_order(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchase_order_line fk_po_line_pr_line; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order_line
+    ADD CONSTRAINT fk_po_line_pr_line FOREIGN KEY (pr_line_id) REFERENCES ap.purchase_requisition_line(id);
+
+
+--
+-- Name: purchase_order fk_po_pr; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order
+    ADD CONSTRAINT fk_po_pr FOREIGN KEY (pr_id) REFERENCES ap.purchase_requisition(id);
+
+
+--
+-- Name: purchase_order fk_po_quotation; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order
+    ADD CONSTRAINT fk_po_quotation FOREIGN KEY (quotation_id) REFERENCES ap.quotation(id);
+
+
+--
+-- Name: purchase_order fk_po_status; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order
+    ADD CONSTRAINT fk_po_status FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: purchase_order fk_po_vendor; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_order
+    ADD CONSTRAINT fk_po_vendor FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: purchase_requisition fk_pr_department; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT fk_pr_department FOREIGN KEY (department_id) REFERENCES ap.department(id);
+
+
+--
+-- Name: purchase_requisition_line fk_pr_line_pr; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition_line
+    ADD CONSTRAINT fk_pr_line_pr FOREIGN KEY (pr_id) REFERENCES ap.purchase_requisition(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchase_requisition fk_pr_purchase_category; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT fk_pr_purchase_category FOREIGN KEY (purchase_category_id) REFERENCES ap.purchase_category(id);
+
+
+--
+-- Name: purchase_requisition fk_pr_selected_quotation; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT fk_pr_selected_quotation FOREIGN KEY (selected_quotation_id) REFERENCES ap.quotation(id);
+
+
+--
+-- Name: purchase_requisition fk_pr_status; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT fk_pr_status FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: purchase_requisition fk_pr_vendor; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_requisition
+    ADD CONSTRAINT fk_pr_vendor FOREIGN KEY (selected_vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: quotation fk_quotation_pr; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.quotation
+    ADD CONSTRAINT fk_quotation_pr FOREIGN KEY (pr_id) REFERENCES ap.purchase_requisition(id) ON DELETE CASCADE;
+
+
+--
+-- Name: quotation fk_quotation_status; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.quotation
+    ADD CONSTRAINT fk_quotation_status FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: quotation fk_quotation_vendor; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.quotation
+    ADD CONSTRAINT fk_quotation_vendor FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: goods_receipt_line goods_receipt_line_grn_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt_line
+    ADD CONSTRAINT goods_receipt_line_grn_id_fkey FOREIGN KEY (grn_id) REFERENCES ap.goods_receipt(grn_id) ON DELETE CASCADE;
+
+
+--
+-- Name: goods_receipt goods_receipt_vendor_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.goods_receipt
+    ADD CONSTRAINT goods_receipt_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: inbound_document inbound_document_vendor_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.inbound_document
+    ADD CONSTRAINT inbound_document_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: invoice_approval invoice_approval_invoice_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_approval
+    ADD CONSTRAINT invoice_approval_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES ap.invoice(invoice_id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoice_approval invoice_approval_invoice_issue_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_approval
+    ADD CONSTRAINT invoice_approval_invoice_issue_id_fkey FOREIGN KEY (invoice_issue_id) REFERENCES ap.invoice_issue(invoice_issue_id);
+
+
+--
+-- Name: invoice_attachment invoice_attachment_invoice_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_attachment
+    ADD CONSTRAINT invoice_attachment_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES ap.invoice(invoice_id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoice invoice_currency_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_currency_id_fkey FOREIGN KEY (currency_id) REFERENCES ap.currency(currency_id);
+
+
+--
+-- Name: invoice invoice_grn_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_grn_id_fkey FOREIGN KEY (grn_id) REFERENCES ap.goods_receipt(grn_id);
+
+
+--
+-- Name: invoice invoice_inbound_document_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_inbound_document_id_fkey FOREIGN KEY (inbound_document_id) REFERENCES ap.inbound_document(inbound_document_id);
+
+
+--
+-- Name: invoice_issue invoice_issue_invoice_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_issue
+    ADD CONSTRAINT invoice_issue_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES ap.invoice(invoice_id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoice_issue invoice_issue_status_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_issue
+    ADD CONSTRAINT invoice_issue_status_id_fkey FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: invoice_line invoice_line_invoice_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_line
+    ADD CONSTRAINT invoice_line_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES ap.invoice(invoice_id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoice_line invoice_line_tax_type_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice_line
+    ADD CONSTRAINT invoice_line_tax_type_id_fkey FOREIGN KEY (tax_type_id) REFERENCES ap.tax_type(tax_type_id);
+
+
+--
+-- Name: invoice invoice_payment_term_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_payment_term_id_fkey FOREIGN KEY (payment_term_id) REFERENCES ap.payment_term(payment_term_id);
+
+
+--
+-- Name: invoice invoice_status_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_status_id_fkey FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: invoice invoice_vendor_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.invoice
+    ADD CONSTRAINT invoice_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: payment payment_currency_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment
+    ADD CONSTRAINT payment_currency_id_fkey FOREIGN KEY (currency_id) REFERENCES ap.currency(currency_id);
+
+
+--
+-- Name: payment_invoice payment_invoice_invoice_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_invoice
+    ADD CONSTRAINT payment_invoice_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES ap.invoice(invoice_id);
+
+
+--
+-- Name: payment_invoice payment_invoice_payment_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment_invoice
+    ADD CONSTRAINT payment_invoice_payment_id_fkey FOREIGN KEY (payment_id) REFERENCES ap.payment(payment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: payment payment_status_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment
+    ADD CONSTRAINT payment_status_id_fkey FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: payment payment_vendor_bank_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment
+    ADD CONSTRAINT payment_vendor_bank_id_fkey FOREIGN KEY (vendor_bank_id) REFERENCES ap.vendor_bank(vendor_bank_id);
+
+
+--
+-- Name: payment payment_vendor_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.payment
+    ADD CONSTRAINT payment_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: tax_rate_rule tax_rate_rule_tax_rule_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rate_rule
+    ADD CONSTRAINT tax_rate_rule_tax_rule_id_fkey FOREIGN KEY (tax_rule_id) REFERENCES ap.tax_rule(tax_rule_id) ON DELETE CASCADE;
+
+
+--
+-- Name: tax_rule_condition tax_rule_condition_tax_rule_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule_condition
+    ADD CONSTRAINT tax_rule_condition_tax_rule_id_fkey FOREIGN KEY (tax_rule_id) REFERENCES ap.tax_rule(tax_rule_id) ON DELETE CASCADE;
+
+
+--
+-- Name: tax_rule tax_rule_tax_type_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_rule
+    ADD CONSTRAINT tax_rule_tax_type_id_fkey FOREIGN KEY (tax_type_id) REFERENCES ap.tax_type(tax_type_id);
+
+
+--
+-- Name: tax_type tax_type_country_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_type
+    ADD CONSTRAINT tax_type_country_id_fkey FOREIGN KEY (country_id) REFERENCES ap.country(country_id);
+
+
+--
+-- Name: vendor_address vendor_address_country_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_address
+    ADD CONSTRAINT vendor_address_country_id_fkey FOREIGN KEY (country_id) REFERENCES ap.country(country_id);
+
+
+--
+-- Name: vendor_address vendor_address_vendor_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_address
+    ADD CONSTRAINT vendor_address_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id) ON DELETE CASCADE;
+
+
+--
+-- Name: vendor_bank vendor_bank_vendor_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_bank
+    ADD CONSTRAINT vendor_bank_vendor_id_fkey FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id) ON DELETE CASCADE;
+
+
+--
+-- Name: vendor_category_mapping vendor_category_mapping_category_fk; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category_mapping
+    ADD CONSTRAINT vendor_category_mapping_category_fk FOREIGN KEY (vendor_category_id) REFERENCES ap.vendor_category(vendor_category_id);
+
+
+--
+-- Name: vendor_category_mapping vendor_category_mapping_vendor_fk; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category_mapping
+    ADD CONSTRAINT vendor_category_mapping_vendor_fk FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: vendor_category vendor_category_parent_fk; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_category
+    ADD CONSTRAINT vendor_category_parent_fk FOREIGN KEY (parent_category_id) REFERENCES ap.vendor_category(vendor_category_id);
+
+
+--
+-- Name: vendor vendor_country_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor
+    ADD CONSTRAINT vendor_country_id_fkey FOREIGN KEY (country_id) REFERENCES ap.country(country_id);
+
+
+--
+-- Name: vendor vendor_currency_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor
+    ADD CONSTRAINT vendor_currency_id_fkey FOREIGN KEY (currency_id) REFERENCES ap.currency(currency_id);
+
+
+--
+-- Name: vendor vendor_payment_term_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor
+    ADD CONSTRAINT vendor_payment_term_id_fkey FOREIGN KEY (payment_term_id) REFERENCES ap.payment_term(payment_term_id);
+
+
+--
+-- Name: vendor vendor_status_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor
+    ADD CONSTRAINT vendor_status_id_fkey FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: vendor_tax vendor_tax_vendor_address_id_fkey; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_tax
+    ADD CONSTRAINT vendor_tax_vendor_address_id_fkey FOREIGN KEY (vendor_address_id) REFERENCES ap.vendor_address(vendor_address_id);
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict 24blkwLEGiYZghsaGi1qs0OVVumsInAu5k8PK5TYRG3LAhGUItbP56ikK57BfvX
+
