@@ -32,23 +32,29 @@ class GoodsReceiptSummaryDTO(BaseModel):
 
 
 class PurchaseOrderLineRequest(BaseModel):
-    item_code: Optional[str] = None
-    description: str
+    item_name: str
+    description: Optional[str] = None
+    uom: Optional[str] = None
     quantity: decimal.Decimal = Field(default=decimal.Decimal("1"))
-    unit_price: decimal.Decimal
+    unit_price: decimal.Decimal = Field(default=decimal.Decimal("0"))
+    tax_rate: decimal.Decimal = Field(default=decimal.Decimal("0"))
     tax_amount: decimal.Decimal = Field(default=decimal.Decimal("0"))
-    line_amount: decimal.Decimal
+    total_amount: decimal.Decimal = Field(default=decimal.Decimal("0"))
+    pr_line_id: Optional[int] = None
 
 
 class PurchaseOrderLineDTO(BaseModel):
     po_line_id: int
     po_id: int
-    item_code: Optional[str]
-    description: str
+    item_name: str
+    description: Optional[str]
+    uom: Optional[str]
     quantity: decimal.Decimal
     unit_price: decimal.Decimal
+    tax_rate: decimal.Decimal
     tax_amount: decimal.Decimal
-    line_amount: decimal.Decimal
+    total_amount: decimal.Decimal
+    pr_line_id: Optional[int]
 
 
 # =====================================================
@@ -58,11 +64,15 @@ class PurchaseOrderLineDTO(BaseModel):
 
 class PurchaseOrderCreateRequest(BaseModel):
     po_number: str
+    pr_id: int
     vendor_id: int
+    quotation_id: Optional[int] = None
     status_id: Optional[int] = None
     po_date: Optional[datetime.date] = None
     expected_delivery_date: Optional[datetime.date] = None
-    currency_id: Optional[int] = None
+    delivery_location: Optional[str] = None
+    payment_terms: Optional[str] = None
+    delivery_terms: Optional[str] = None
     subtotal: Optional[decimal.Decimal] = None
     tax_amount: Optional[decimal.Decimal] = None
     total_amount: Optional[decimal.Decimal] = None
@@ -72,10 +82,13 @@ class PurchaseOrderCreateRequest(BaseModel):
 class PurchaseOrderUpdateRequest(BaseModel):
     po_number: Optional[str] = None
     vendor_id: Optional[int] = None
+    quotation_id: Optional[int] = None
     status_id: Optional[int] = None
     po_date: Optional[datetime.date] = None
     expected_delivery_date: Optional[datetime.date] = None
-    currency_id: Optional[int] = None
+    delivery_location: Optional[str] = None
+    payment_terms: Optional[str] = None
+    delivery_terms: Optional[str] = None
     subtotal: Optional[decimal.Decimal] = None
     tax_amount: Optional[decimal.Decimal] = None
     total_amount: Optional[decimal.Decimal] = None
@@ -106,14 +119,17 @@ class UploadPurchaseOrderDocumentResponse(BaseModel):
 class PurchaseOrderDTO(BaseModel):
     po_id: int
     po_number: str
+    pr_id: int
     vendor_id: int
+    quotation_id: Optional[int]
     created_at: datetime.datetime
-    file_path: Optional[str]
     status_id: Optional[int]
     created_by: Optional[str]
     po_date: Optional[datetime.date]
     expected_delivery_date: Optional[datetime.date]
-    currency_id: Optional[int]
+    delivery_location: Optional[str]
+    payment_terms: Optional[str]
+    delivery_terms: Optional[str]
     subtotal: Optional[decimal.Decimal]
     tax_amount: Optional[decimal.Decimal]
     total_amount: Optional[decimal.Decimal]

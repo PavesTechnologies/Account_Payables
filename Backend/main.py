@@ -15,6 +15,7 @@ from Backend.API_Layer.routes import (
     invoice_extraction_route,
     master_route,
     payment_route,
+    procurement_route,
     purchase_order_route,
     system_route,
     vendor_route,
@@ -127,6 +128,7 @@ api_router.include_router(invoice_details_route.router, tags=["Invoice Details"]
 api_router.include_router(purchase_order_route.router, tags=["Purchase Order"], prefix="/po")
 api_router.include_router(goods_receipt_route.router, tags=["Goods Receipt"], prefix="/grn")
 api_router.include_router(payment_route.router, tags=["Payment"], prefix="/payment")
+api_router.include_router(procurement_route.router, tags=["Procurement"], prefix="/procurement")
 app.include_router(api_router)
 
 

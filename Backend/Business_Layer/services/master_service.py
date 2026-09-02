@@ -11,7 +11,7 @@ from Backend.Data_Access_Layer.models.master import (
     SystemConfiguration,
     TaxType,
 )
-from Backend.Data_Access_Layer.models.purchase import Department
+from Backend.Data_Access_Layer.models.purchase import Department, PurchaseCategory
 
 class MasterService:
     def __init__(self, db):
@@ -325,7 +325,7 @@ class MasterService:
         code = code.upper().replace(" ", "")
         # code and name should be unique
         existing_department = self.master_dao.get_department_by_code_or_name(code, name)
-        if existing_department and existing_department.department_id != department_id:
+        if existing_department and existing_department.id != department_id:
             raise ValueError("Department with the same code or name already exists.")
 
         department.code = code
@@ -345,6 +345,78 @@ class MasterService:
             raise ValueError("Department not found.")
 
         self.master_dao.delete_department(department)
+
+        self.db.commit()
+
+        return True
+
+    # =========================================================
+    # Purchase Category
+    # =========================================================
+
+    def get_all_purchase_categories(self):
+        return self.master_dao.get_all_purchase_categories()
+
+    def get_purchase_category_by_id(self, purchase_category_id: int) -> PurchaseCategory:
+
+        purchase_category = self.master_dao.get_purchase_category_by_id(purchase_category_id)
+
+        if purchase_category is None:
+            raise ValueError("Purchase category not found")
+
+        return purchase_category
+
+    def create_purchase_category(self, payload):
+        code = payload.code
+        name = payload.name
+        # code should be in uppercase without spaces
+        code = code.upper().replace(" ", "")
+        # code and name should be unique
+        existing_purchase_category = self.master_dao.get_purchase_category_by_code_or_name(code, name)
+        if existing_purchase_category:
+            raise ValueError("Purchase category with the same code or name already exists.")
+        purchase_category = PurchaseCategory(
+            code=code,
+            name=name,
+            is_active=payload.is_active
+        )
+        purchase_category = self.master_dao.create_purchase_category(purchase_category)
+        self.db.commit()
+        self.db.refresh(purchase_category)
+        return purchase_category
+
+    def update_purchase_category(self, purchase_category_id: int, payload):
+        purchase_category = self.master_dao.get_purchase_category_by_id(purchase_category_id)
+
+        if purchase_category is None:
+            raise ValueError("Purchase category not found")
+
+        code = payload.code
+        name = payload.name
+        # code should be in uppercase without spaces
+        code = code.upper().replace(" ", "")
+        # code and name should be unique
+        existing_purchase_category = self.master_dao.get_purchase_category_by_code_or_name(code, name)
+        if existing_purchase_category and existing_purchase_category.id != purchase_category_id:
+            raise ValueError("Purchase category with the same code or name already exists.")
+
+        purchase_category.code = code
+        purchase_category.name = name
+        purchase_category.is_active = payload.is_active
+
+        self.db.commit()
+        self.db.refresh(purchase_category)
+
+        return purchase_category
+
+    def delete_purchase_category(self, purchase_category_id: int):
+
+        purchase_category = self.master_dao.get_purchase_category_by_id(purchase_category_id)
+
+        if purchase_category is None:
+            raise ValueError("Purchase category not found.")
+
+        self.master_dao.delete_purchase_category(purchase_category)
 
         self.db.commit()
 

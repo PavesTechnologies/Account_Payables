@@ -20,6 +20,9 @@ from Backend.API_Layer.interface.master_interface import (
     DepartmentDetails,
     DepartmentRequest,
     DepartmentResponse,
+    PurchaseCategoryDetails,
+    PurchaseCategoryRequest,
+    PurchaseCategoryResponse,
 )
 from Backend.Business_Layer.services.master_service import MasterService
 
@@ -428,6 +431,114 @@ def delete_department(id: int, http_request: Request):
         return DepartmentResponse(
             id=id,
             message="Department deleted successfully",
+        )
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# purchase category details apis
+@router.get("/purchase-categories", response_model=list[PurchaseCategoryDetails])
+def get_all_purchase_categories(http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        return service.get_all_purchase_categories()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/purchase-categories", response_model=PurchaseCategoryResponse)
+def create_purchase_category(payload: PurchaseCategoryRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+
+        service = MasterService(db)
+        purchase_category = service.create_purchase_category(payload)
+
+        return PurchaseCategoryResponse(
+            id=purchase_category.id,
+            message="Purchase category created successfully",
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Purchase category with this code or name already exists",
+        )
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/purchase-categories/{id}", response_model=PurchaseCategoryDetails)
+def get_purchase_category_by_id(id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        return service.get_purchase_category_by_id(id)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/purchase-categories/{id}", response_model=PurchaseCategoryResponse)
+def update_purchase_category(id: int, payload: PurchaseCategoryRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        purchase_category = service.update_purchase_category(id, payload)
+
+        return PurchaseCategoryResponse(
+            id=purchase_category.id,
+            message="Purchase category updated successfully",
+        )
+
+    except ValueError as e:
+        db.rollback()
+        status_code = 404 if str(e) == "Purchase category not found" else 422
+        raise HTTPException(status_code=status_code, detail=str(e))
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Purchase category with this code or name already exists",
+        )
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/purchase-categories/{id}", response_model=PurchaseCategoryResponse)
+def delete_purchase_category(id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        service.delete_purchase_category(id)
+
+        return PurchaseCategoryResponse(
+            id=id,
+            message="Purchase category deleted successfully",
         )
 
     except ValueError as e:

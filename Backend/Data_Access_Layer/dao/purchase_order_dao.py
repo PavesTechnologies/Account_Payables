@@ -6,10 +6,9 @@ from sqlalchemy.orm import selectinload
 
 from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.master import Currency, StatusMaster
+from Backend.Data_Access_Layer.models.purchase import PurchaseRequisition, Quotation
 from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
 from Backend.Data_Access_Layer.models.vendor import Vendor
-from Backend.Data_Access_Layer.models.master import StatusMaster
-from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
 
 PO_STATUS_MODULE = "PO"
 
@@ -132,12 +131,21 @@ class PurchaseOrderDAO:
             .filter(StatusMaster.status_id == status_id)
             .first()
         )
-    def get_purchase_order_by_id(self, po_id: int) -> Optional[PurchaseOrder]:
+
+    def purchase_requisition_exists(self, pr_id: int) -> bool:
         return (
-            self.db.query(PurchaseOrder)
-            .options(selectinload(PurchaseOrder.purchase_order_line))
-            .filter(PurchaseOrder.po_id == po_id)
+            self.db.query(PurchaseRequisition.id)
+            .filter(PurchaseRequisition.id == pr_id)
             .first()
+            is not None
+        )
+
+    def quotation_exists(self, quotation_id: int) -> bool:
+        return (
+            self.db.query(Quotation.id)
+            .filter(Quotation.id == quotation_id)
+            .first()
+            is not None
         )
 
     def get_purchase_order_by_number(self, po_number: str) -> Optional[PurchaseOrder]:

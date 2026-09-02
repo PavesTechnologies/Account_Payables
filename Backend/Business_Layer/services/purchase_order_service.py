@@ -35,22 +35,29 @@ class PurchaseOrderService:
         if self.po_dao.po_number_exists(po_number):
             raise ValueError("A purchase order with this po_number already exists")
 
+        if not self.po_dao.purchase_requisition_exists(data.pr_id):
+            raise ValueError("Purchase requisition not found for the given pr_id")
+
         if not self.po_dao.vendor_exists(data.vendor_id):
             raise ValueError("Vendor not found for the given vendor_id")
 
-        if data.currency_id is not None and not self.po_dao.currency_exists(data.currency_id):
-            raise ValueError("Currency not found for the given currency_id")
+        if data.quotation_id is not None and not self.po_dao.quotation_exists(data.quotation_id):
+            raise ValueError("Quotation not found for the given quotation_id")
 
         status_id = self._resolve_status_id(data.status_id)
 
         purchase_order = PurchaseOrder(
             po_number=po_number,
+            pr_id=data.pr_id,
             vendor_id=data.vendor_id,
+            quotation_id=data.quotation_id,
             status_id=status_id,
             created_by=user_id,
             po_date=data.po_date,
             expected_delivery_date=data.expected_delivery_date,
-            currency_id=data.currency_id,
+            delivery_location=data.delivery_location,
+            payment_terms=data.payment_terms,
+            delivery_terms=data.delivery_terms,
             subtotal=data.subtotal,
             tax_amount=data.tax_amount,
             total_amount=data.total_amount,
@@ -111,19 +118,28 @@ class PurchaseOrderService:
                 raise ValueError("Vendor not found for the given vendor_id")
             purchase_order.vendor_id = data.vendor_id
 
+        if data.quotation_id is not None:
+            if not self.po_dao.quotation_exists(data.quotation_id):
+                raise ValueError("Quotation not found for the given quotation_id")
+            purchase_order.quotation_id = data.quotation_id
+
         if data.status_id is not None:
             purchase_order.status_id = self._resolve_status_id(data.status_id)
-
-        if data.currency_id is not None:
-            if not self.po_dao.currency_exists(data.currency_id):
-                raise ValueError("Currency not found for the given currency_id")
-            purchase_order.currency_id = data.currency_id
 
         if data.po_date is not None:
             purchase_order.po_date = data.po_date
 
         if data.expected_delivery_date is not None:
             purchase_order.expected_delivery_date = data.expected_delivery_date
+
+        if data.delivery_location is not None:
+            purchase_order.delivery_location = data.delivery_location
+
+        if data.payment_terms is not None:
+            purchase_order.payment_terms = data.payment_terms
+
+        if data.delivery_terms is not None:
+            purchase_order.delivery_terms = data.delivery_terms
 
         if data.subtotal is not None:
             purchase_order.subtotal = data.subtotal
@@ -239,41 +255,36 @@ class PurchaseOrderService:
 
     def _create_lines(self, po_id: int, lines: List[PurchaseOrderLineRequest]) -> None:
         for line_data in lines:
-            description, quantity, unit_price, tax_amount, line_amount = self._validate_line(
-                line_data
-            )
+            self._validate_line(line_data)
             self.po_dao.create_purchase_order_line(
                 PurchaseOrderLine(
                     po_id=po_id,
-                    item_code=line_data.item_code,
-                    description=description,
-                    quantity=quantity,
-                    unit_price=unit_price,
-                    tax_amount=tax_amount,
-                    line_amount=line_amount,
+                    item_name=line_data.item_name.strip(),
+                    description=line_data.description,
+                    uom=line_data.uom,
+                    quantity=line_data.quantity,
+                    unit_price=line_data.unit_price,
+                    tax_rate=line_data.tax_rate,
+                    tax_amount=line_data.tax_amount,
+                    total_amount=line_data.total_amount,
+                    pr_line_id=line_data.pr_line_id,
                 )
             )
 
     @staticmethod
-    def _validate_line(line_data: PurchaseOrderLineRequest) -> tuple:
-        if not line_data.description.strip():
-            raise ValueError("description is required for a purchase order line")
+    def _validate_line(line_data: PurchaseOrderLineRequest) -> None:
+        if not line_data.item_name.strip():
+            raise ValueError("item_name is required for a purchase order line")
         if line_data.quantity <= 0:
             raise ValueError("quantity must be greater than 0 for a purchase order line")
         if line_data.unit_price < 0:
             raise ValueError("unit_price cannot be negative for a purchase order line")
+        if line_data.tax_rate < 0:
+            raise ValueError("tax_rate cannot be negative for a purchase order line")
         if line_data.tax_amount < 0:
             raise ValueError("tax_amount cannot be negative for a purchase order line")
-        if line_data.line_amount < 0:
-            raise ValueError("line_amount cannot be negative for a purchase order line")
-
-        return (
-            line_data.description.strip(),
-            line_data.quantity,
-            line_data.unit_price,
-            line_data.tax_amount,
-            line_data.line_amount,
-        )
+        if line_data.total_amount < 0:
+            raise ValueError("total_amount cannot be negative for a purchase order line")
 
     @staticmethod
     def _validate_po_number(po_number: str) -> str:
@@ -299,16 +310,19 @@ class PurchaseOrderService:
     def _snapshot(purchase_order: PurchaseOrder) -> dict:
         return {
             "po_number": purchase_order.po_number,
+            "pr_id": purchase_order.pr_id,
             "vendor_id": purchase_order.vendor_id,
+            "quotation_id": purchase_order.quotation_id,
             "status_id": purchase_order.status_id,
-            "file_path": purchase_order.file_path,
             "po_date": str(purchase_order.po_date) if purchase_order.po_date else None,
             "expected_delivery_date": (
                 str(purchase_order.expected_delivery_date)
                 if purchase_order.expected_delivery_date
                 else None
             ),
-            "currency_id": purchase_order.currency_id,
+            "delivery_location": purchase_order.delivery_location,
+            "payment_terms": purchase_order.payment_terms,
+            "delivery_terms": purchase_order.delivery_terms,
             "subtotal": (
                 str(purchase_order.subtotal) if purchase_order.subtotal is not None else None
             ),

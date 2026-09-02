@@ -134,3 +134,18 @@ class DepartmentRequest(BaseModel):
 class DepartmentResponse(BaseModel):
     id: int
     message: str
+
+class PurchaseCategoryDetails(BaseModel):
+    id: int
+    code: str
+    name: str
+    is_active: bool
+
+class PurchaseCategoryRequest(BaseModel):
+    code: str
+    name: str
+    is_active: bool = True
+
+class PurchaseCategoryResponse(BaseModel):
+    id: int
+    message: str

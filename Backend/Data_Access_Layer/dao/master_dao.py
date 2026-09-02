@@ -168,3 +168,37 @@ class MasterDAO:
         return department_obj
     def delete_department(self, department: Department) -> None:
         self.db.delete(department)
+
+    # =====================================================
+    # Purchase Category
+    # =====================================================
+
+    def get_all_purchase_categories(self):
+        return (
+            self.db.query(PurchaseCategory)
+            .order_by(PurchaseCategory.name.asc())
+            .all()
+        )
+    def get_purchase_category_by_id(self, purchase_category_id: int) -> Optional[PurchaseCategory]:
+        return (
+            self.db.query(PurchaseCategory)
+            .filter(PurchaseCategory.id == purchase_category_id)
+            .first()
+        )
+    def get_purchase_category_by_code_or_name(self, code: str, name: str):
+        return (
+            self.db.query(PurchaseCategory)
+            .filter((PurchaseCategory.code == code) | (PurchaseCategory.name == name))
+            .first()
+        )
+    def create_purchase_category(self, purchase_category):
+        purchase_category_obj = PurchaseCategory(
+            code=purchase_category.code,
+            name=purchase_category.name,
+            is_active=purchase_category.is_active
+        )
+        self.db.add(purchase_category_obj)
+        self.db.flush()
+        return purchase_category_obj
+    def delete_purchase_category(self, purchase_category: PurchaseCategory) -> None:
+        self.db.delete(purchase_category)
