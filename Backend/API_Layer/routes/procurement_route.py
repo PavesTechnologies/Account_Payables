@@ -21,7 +21,9 @@ from Backend.API_Layer.interface.procurement_interface import (
     QuotationDTO,
     QuotationResponse,
     RejectPurchaseRequisitionRequest,
+    ReturnPurchaseRequisitionRequest,
     SelectVendorRequest,
+    SourcingDecisionRequest,
 )
 from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.s3_utils import download_from_s3, upload_to_s3, view_from_s3
@@ -273,6 +275,48 @@ def reject_purchase_requisition(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/purchase-requisitions/{pr_id}/return", response_model=PurchaseRequisitionDTO)
+def return_purchase_requisition(
+    pr_id: int,
+    payload: ReturnPurchaseRequisitionRequest,
+    http_request: Request,
+):
+    db = http_request.state.db
+
+    try:
+        user_id = _get_user_id(http_request)
+
+        service = ProcurementService(db)
+        return service.return_for_clarification(pr_id, user_id, payload.reason)
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=_status_code_for(str(e), _PR_NOT_FOUND), detail=str(e))
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/purchase-requisitions/{pr_id}/resubmit", response_model=PurchaseRequisitionDTO)
+def resubmit_purchase_requisition(pr_id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        user_id = _get_user_id(http_request)
+
+        service = ProcurementService(db)
+        return service.resubmit_pr(pr_id, user_id)
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=_status_code_for(str(e), _PR_NOT_FOUND), detail=str(e))
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------
 # Purchase Requisition Lines (DRAFT only)
 # ---------------------------------------------------------
@@ -341,6 +385,26 @@ def delete_purchase_requisition_line(pr_id: int, line_id: int, http_request: Req
 
 
 # ---------------------------------------------------------
+# RFQ or Catalog decision
+# ---------------------------------------------------------
+@router.post("/purchase-requisitions/{pr_id}/sourcing-decision", response_model=PurchaseRequisitionDTO)
+def record_sourcing_decision(pr_id: int, payload: SourcingDecisionRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = ProcurementService(db)
+        return service.record_sourcing_decision(pr_id, payload.sourcing_type)
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=_status_code_for(str(e), _PR_NOT_FOUND), detail=str(e))
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------
 # Quotation
 # ---------------------------------------------------------
 @router.post("/purchase-requisitions/{pr_id}/quotations", response_model=QuotationResponse)
@@ -352,6 +416,9 @@ async def create_quotation(
     quotation_date: Optional[datetime.date] = Form(None),
     valid_until: Optional[datetime.date] = Form(None),
     total_amount: Optional[decimal.Decimal] = Form(None),
+    rfq_id: Optional[int] = Form(None),
+    delivery_days: Optional[int] = Form(None),
+    payment_terms: Optional[str] = Form(None),
     file: UploadFile = File(...),
 ):
     db = http_request.state.db
@@ -379,6 +446,9 @@ async def create_quotation(
             valid_until=valid_until,
             total_amount=total_amount,
             user_id=user_id,
+            rfq_id=rfq_id,
+            delivery_days=delivery_days,
+            payment_terms=payment_terms,
         )
 
         return QuotationResponse(id=quotation.id, message="Quotation created successfully")
@@ -485,7 +555,7 @@ def select_vendor(pr_id: int, payload: SelectVendorRequest, http_request: Reques
 
     try:
         service = ProcurementService(db)
-        return service.select_vendor(pr_id, payload.quotation_id)
+        return service.select_vendor(pr_id, payload.quotation_id, payload.reason)
 
     except ValueError as e:
         db.rollback()

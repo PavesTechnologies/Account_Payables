@@ -6,12 +6,15 @@ from typing import List, Optional
 from Backend.Data_Access_Layer.dao.master_dao import MasterDAO
 from Backend.Data_Access_Layer.dao.procurement_dao import ProcurementDAO
 from Backend.Data_Access_Layer.dao.purchase_order_dao import PurchaseOrderDAO
+from Backend.Data_Access_Layer.dao.rfq_dao import RFQDAO
+from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.purchase import (
     PurchaseRequisition,
     PurchaseRequisitionLine,
     Quotation,
 )
 from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
+from Backend.Business_Layer.services.rfq_service import RFQ_STATUS_MODULE
 
 PR_STATUS_MODULE = "PURCHASE_REQUISITION"
 QUOTATION_STATUS_MODULE = "QUOTATION"
@@ -19,13 +22,16 @@ PO_STATUS_MODULE = "PO"
 
 PR_TRANSITIONS = {
     "DRAFT": {"PENDING_APPROVAL", "CANCELLED"},
-    "PENDING_APPROVAL": {"APPROVED", "REJECTED", "CANCELLED"},
+    "PENDING_APPROVAL": {"APPROVED", "REJECTED", "RETURNED", "CANCELLED"},
+    "RETURNED": {"PENDING_APPROVAL"},
     "APPROVED": {"VENDOR_SELECTION", "CANCELLED"},
     "VENDOR_SELECTION": {"PO_GENERATED", "CANCELLED"},
     "PO_GENERATED": set(),
     "REJECTED": set(),
     "CANCELLED": set(),
 }
+
+PR_HISTORY_TABLE = "purchase_requisition"
 
 VALID_PRIORITIES = {"LOW", "NORMAL", "HIGH", "URGENT"}
 
@@ -36,6 +42,7 @@ class ProcurementService:
         self.procurement_dao = ProcurementDAO(db)
         self.master_dao = MasterDAO(db)
         self.po_dao = PurchaseOrderDAO(db)
+        self.rfq_dao = RFQDAO(db)
 
     # =========================================================
     # Purchase Requisition
@@ -210,6 +217,7 @@ class ProcurementService:
         pr.approved_by = user_id
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = comment
+        self._record_pr_history(pr_id, "APPROVED", user_id, comment)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -229,6 +237,75 @@ class ProcurementService:
         pr.approved_by = user_id
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = comment.strip()
+        self._record_pr_history(pr_id, "REJECTED", user_id, comment.strip())
+
+        self.db.commit()
+        self.db.refresh(pr)
+        return pr
+
+    def return_for_clarification(
+        self, pr_id: int, user_id: str, reason: str
+    ) -> PurchaseRequisition:
+
+        if not reason or not reason.strip():
+            raise ValueError("A reason is required to return a purchase requisition for clarification")
+        reason = reason.strip()
+
+        pr = self._require_pr(pr_id)
+        self._require_pr_status(pr, {"PENDING_APPROVAL"}, "returned for clarification")
+
+        self._transition_pr(pr, "RETURNED")
+        pr.approved_by = user_id
+        pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
+        pr.approval_comment = reason
+        self._record_pr_history(pr_id, "RETURNED", user_id, reason)
+
+        self.db.commit()
+        self.db.refresh(pr)
+        return pr
+
+    def resubmit_pr(self, pr_id: int, user_id: str) -> PurchaseRequisition:
+        pr = self._require_pr(pr_id)
+        self._require_pr_status(pr, {"RETURNED"}, "resubmitted")
+
+        if pr.created_by != user_id:
+            raise ValueError("Only the purchase requisition's requester can resubmit it")
+
+        lines = self.procurement_dao.get_lines_by_pr_id(pr_id)
+        if not lines:
+            raise ValueError(
+                "Purchase requisition must have at least one line before it can be resubmitted"
+            )
+
+        previous_return_reason = pr.approval_comment
+
+        self._transition_pr(pr, "PENDING_APPROVAL")
+        pr.approved_by = None
+        pr.approved_at = None
+        pr.approval_comment = None
+        self._record_pr_history(pr_id, "RESUBMITTED", user_id, previous_return_reason)
+
+        self.db.commit()
+        self.db.refresh(pr)
+        return pr
+
+    # =========================================================
+    # RFQ or Catalog decision
+    # =========================================================
+
+    def record_sourcing_decision(self, pr_id: int, sourcing_type: str) -> PurchaseRequisition:
+        pr = self._require_pr(pr_id)
+        self._require_pr_status(pr, {"APPROVED", "VENDOR_SELECTION"}, "given a sourcing decision")
+
+        sourcing_type = (sourcing_type or "").upper()
+        if sourcing_type not in {"CATALOG", "RFQ"}:
+            raise ValueError("sourcing_type must be one of ['CATALOG', 'RFQ']")
+        if pr.sourcing_type is not None and pr.sourcing_type != sourcing_type:
+            raise ValueError(
+                f"Purchase requisition sourcing decision is already recorded as {pr.sourcing_type}"
+            )
+
+        pr.sourcing_type = sourcing_type
 
         self.db.commit()
         self.db.refresh(pr)
@@ -248,11 +325,26 @@ class ProcurementService:
         valid_until,
         total_amount,
         user_id: str,
+        rfq_id: Optional[int] = None,
+        delivery_days: Optional[int] = None,
+        payment_terms: Optional[str] = None,
     ) -> Quotation:
 
         pr = self._require_pr(pr_id)
         self._require_pr_status(pr, {"APPROVED", "VENDOR_SELECTION"}, "given a quotation")
         self._require_active_vendor(vendor_id)
+
+        rfq = None
+        if rfq_id is not None:
+            rfq = self.rfq_dao.get_rfq_by_id(rfq_id)
+            if rfq is None:
+                raise ValueError("RFQ not found")
+            if rfq.pr_id != pr_id:
+                raise ValueError("RFQ does not belong to this purchase requisition")
+            if rfq.status.status_code == "CLOSED":
+                raise ValueError("RFQ is closed and cannot accept new quotations")
+            if not self.rfq_dao.is_vendor_invited(rfq_id, vendor_id):
+                raise ValueError("Vendor was not invited to this RFQ")
 
         received_status = self._require_status(QUOTATION_STATUS_MODULE, "RECEIVED")
 
@@ -266,11 +358,18 @@ class ProcurementService:
             quotation_date=quotation_date,
             valid_until=valid_until,
             total_amount=total_amount,
+            rfq_id=rfq_id,
+            delivery_days=delivery_days,
+            payment_terms=payment_terms,
         )
         self.procurement_dao.create_quotation(quotation)
 
         if pr.status.status_code == "APPROVED":
             self._transition_pr(pr, "VENDOR_SELECTION")
+
+        if rfq is not None and rfq.status.status_code == "SENT":
+            response_received_status = self._require_rfq_status_row("RESPONSE_RECEIVED")
+            rfq.status_id = response_received_status.status_id
 
         self.db.commit()
         self.db.refresh(quotation)
@@ -302,7 +401,10 @@ class ProcurementService:
     # Vendor Selection
     # =========================================================
 
-    def select_vendor(self, pr_id: int, quotation_id: int) -> PurchaseRequisition:
+    def select_vendor(
+        self, pr_id: int, quotation_id: int, reason: Optional[str] = None
+    ) -> PurchaseRequisition:
+
         pr = self._require_pr(pr_id)
         self._require_pr_status(pr, {"VENDOR_SELECTION"}, "used to select a vendor")
 
@@ -311,6 +413,11 @@ class ProcurementService:
             raise ValueError("Quotation does not belong to this purchase requisition")
         if quotation.status.status_code != "RECEIVED":
             raise ValueError("Only a RECEIVED quotation can be selected")
+
+        if quotation.rfq_id is not None:
+            rfq = self.rfq_dao.get_rfq_by_id(quotation.rfq_id)
+            if rfq is not None and rfq.status.status_code != "CLOSED":
+                raise ValueError("RFQ must be closed before a vendor can be selected")
 
         self._require_active_vendor(quotation.vendor_id)
 
@@ -325,6 +432,8 @@ class ProcurementService:
 
         pr.selected_vendor_id = quotation.vendor_id
         pr.selected_quotation_id = quotation.id
+        if reason is not None:
+            pr.selection_reason = reason
 
         self.db.commit()
         self.db.refresh(pr)
@@ -423,6 +532,25 @@ class ProcurementService:
         if status is None:
             raise ValueError(f"Status '{status_code}' is not configured for module '{module_name}'")
         return status
+
+    def _require_rfq_status_row(self, status_code: str):
+        status = self.rfq_dao.get_status_by_module_code(RFQ_STATUS_MODULE, status_code)
+        if status is None:
+            raise ValueError(f"Status '{status_code}' is not configured for module '{RFQ_STATUS_MODULE}'")
+        return status
+
+    def _record_pr_history(
+        self, pr_id: int, action: str, user_id: str, comment: Optional[str] = None
+    ) -> None:
+        self.procurement_dao.create_audit_log(
+            AuditLog(
+                table_name=PR_HISTORY_TABLE,
+                record_id=pr_id,
+                action=action,
+                changed_by=user_id,
+                new_values={"comment": comment} if comment is not None else None,
+            )
+        )
 
     def _require_active_vendor(self, vendor_id: int):
         vendor = self.procurement_dao.get_vendor_by_id(vendor_id)

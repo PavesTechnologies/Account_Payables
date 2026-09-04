@@ -17,6 +17,7 @@ from Backend.API_Layer.routes import (
     payment_route,
     procurement_route,
     purchase_order_route,
+    rfq_route,
     system_route,
     vendor_route,
     invoice_details_route,
@@ -44,7 +45,7 @@ app = FastAPI(
 
 FRONTEND_URL = get_env_var("FRONTEND_URL", "http://localhost:5173")
 
-# app.add_middleware(JWTMiddleware)
+app.add_middleware(JWTMiddleware)
 app.add_middleware(DBSessionMiddleware)
 
 # Add CORS last so it wraps *all* responses
@@ -129,6 +130,7 @@ api_router.include_router(purchase_order_route.router, tags=["Purchase Order"], 
 api_router.include_router(goods_receipt_route.router, tags=["Goods Receipt"], prefix="/grn")
 api_router.include_router(payment_route.router, tags=["Payment"], prefix="/payment")
 api_router.include_router(procurement_route.router, tags=["Procurement"], prefix="/procurement")
+api_router.include_router(rfq_route.router, tags=["RFQ"], prefix="/rfq")
 app.include_router(api_router)
 
 

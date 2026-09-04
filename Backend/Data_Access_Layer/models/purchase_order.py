@@ -2,8 +2,7 @@
 from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
-import uuid
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from Backend.Data_Access_Layer.models.base import Base
@@ -44,7 +43,7 @@ class PurchaseOrder(Base):
     tax_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default=text('0'))
     total_amount: Mapped[decimal.Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default=text('0'))
     status_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     quotation_id: Mapped[Optional[int]] = mapped_column(BigInteger)

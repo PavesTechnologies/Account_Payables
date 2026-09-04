@@ -4,6 +4,7 @@ from typing import List, Optional, Set
 
 from sqlalchemy.orm import selectinload
 
+from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.master import StatusMaster
 from Backend.Data_Access_Layer.models.purchase import (
     PurchaseRequisition,
@@ -155,6 +156,14 @@ class ProcurementDAO:
             .all()
         )
 
+    def get_quotations_by_rfq_id(self, rfq_id: int) -> List[Quotation]:
+        return (
+            self.db.query(Quotation)
+            .filter(Quotation.rfq_id == rfq_id)
+            .order_by(Quotation.id.asc())
+            .all()
+        )
+
     def delete_quotation(self, quotation: Quotation) -> None:
         self.db.delete(quotation)
         self.db.flush()
@@ -200,3 +209,12 @@ class ProcurementDAO:
             )
             .first()
         )
+
+    # =====================================================
+    # Audit Log (approval/return/resubmit history)
+    # =====================================================
+
+    def create_audit_log(self, audit_log: AuditLog) -> AuditLog:
+        self.db.add(audit_log)
+        self.db.flush()
+        return audit_log

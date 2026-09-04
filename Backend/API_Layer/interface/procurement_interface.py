@@ -47,6 +47,9 @@ class QuotationDTO(BaseModel):
     total_amount: Optional[decimal.Decimal]
     created_by: Optional[str]
     created_at: datetime.datetime
+    rfq_id: Optional[int] = None
+    delivery_days: Optional[int] = None
+    payment_terms: Optional[str] = None
 
 
 class QuotationResponse(BaseModel):
@@ -110,6 +113,8 @@ class PurchaseRequisitionDTO(BaseModel):
     approved_by: Optional[str]
     approved_at: Optional[datetime.datetime]
     approval_comment: Optional[str]
+    sourcing_type: Optional[str] = None
+    selection_reason: Optional[str] = None
     # Field names match the PurchaseRequisition ORM relationship attributes
     # (purchase_requisition_line/quotation) so FastAPI can populate them
     # directly from the model instance.
@@ -130,6 +135,19 @@ class RejectPurchaseRequisitionRequest(BaseModel):
     comment: str
 
 
+class ReturnPurchaseRequisitionRequest(BaseModel):
+    reason: str
+
+
+# =====================================================
+# RFQ or Catalog decision
+# =====================================================
+
+
+class SourcingDecisionRequest(BaseModel):
+    sourcing_type: str
+
+
 # =====================================================
 # Vendor Selection
 # =====================================================
@@ -137,6 +155,7 @@ class RejectPurchaseRequisitionRequest(BaseModel):
 
 class SelectVendorRequest(BaseModel):
     quotation_id: int
+    reason: Optional[str] = None
 
 
 # =====================================================

@@ -1,13 +1,12 @@
 # Backend/Data_Access_Layer/models/purchase.py
 import datetime
 import decimal
-import uuid
 from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Column, Date, DateTime,
     ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint,
-    String, Table, Text, UniqueConstraint, Uuid, text,
+    String, Table, Text, UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceLine
     from Backend.Data_Access_Layer.models.vendor import Vendor
     from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
+    from Backend.Data_Access_Layer.models.rfq import RFQ
 
 
 department_purchase_category = Table(
@@ -94,6 +94,10 @@ class PurchaseRequisition(Base):
             "priority IN ('LOW', 'NORMAL', 'HIGH', 'URGENT')",
             name='chk_pr_priority'
         ),
+        CheckConstraint(
+            "sourcing_type IS NULL OR sourcing_type IN ('CATALOG', 'RFQ')",
+            name='chk_pr_sourcing_type'
+        ),
         ForeignKeyConstraint(['department_id'], ['ap.department.id'], name='fk_pr_department'),
         ForeignKeyConstraint(['purchase_category_id'], ['ap.purchase_category.id'], name='fk_pr_purchase_category'),
         ForeignKeyConstraint(['selected_quotation_id'], ['ap.quotation.id'], name='fk_pr_selected_quotation'),
@@ -117,7 +121,7 @@ class PurchaseRequisition(Base):
     status_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     priority: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'NORMAL'::character varying"))
     estimated_total: Mapped[decimal.Decimal] = mapped_column(Numeric(18, 2), nullable=False, server_default=text('0'))
-    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     required_by: Mapped[Optional[datetime.date]] = mapped_column(Date)
@@ -125,9 +129,11 @@ class PurchaseRequisition(Base):
     justification: Mapped[Optional[str]] = mapped_column(Text)
     selected_vendor_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     selected_quotation_id: Mapped[Optional[int]] = mapped_column(BigInteger)
-    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(100))
     approved_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
     approval_comment: Mapped[Optional[str]] = mapped_column(Text)
+    sourcing_type: Mapped[Optional[str]] = mapped_column(String(20))
+    selection_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     department: Mapped['Department'] = relationship('Department', back_populates='purchase_requisition')
     purchase_category: Mapped['PurchaseCategory'] = relationship('PurchaseCategory', back_populates='purchase_requisition')
@@ -185,11 +191,14 @@ class Quotation(Base):
     __tablename__ = 'quotation'
     __table_args__ = (
         CheckConstraint('total_amount IS NULL OR total_amount >= 0', name='chk_quotation_total'),
+        CheckConstraint('delivery_days IS NULL OR delivery_days >= 0', name='chk_quotation_delivery_days'),
         ForeignKeyConstraint(['pr_id'], ['ap.purchase_requisition.id'], ondelete='CASCADE', name='fk_quotation_pr'),
+        ForeignKeyConstraint(['rfq_id'], ['ap.rfq.id'], ondelete='SET NULL', name='fk_quotation_rfq'),
         ForeignKeyConstraint(['status_id'], ['ap.status_master.status_id'], name='fk_quotation_status'),
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='fk_quotation_vendor'),
         PrimaryKeyConstraint('id', name='quotation_pkey'),
         Index('idx_quotation_pr', 'pr_id'),
+        Index('idx_quotation_rfq', 'rfq_id'),
         Index('idx_quotation_status', 'status_id'),
         Index('idx_quotation_vendor', 'vendor_id'),
         {'schema': 'ap'}
@@ -200,17 +209,21 @@ class Quotation(Base):
     vendor_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     file_url: Mapped[str] = mapped_column(Text, nullable=False)
     status_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     quotation_number: Mapped[Optional[str]] = mapped_column(String(100))
     quotation_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
     valid_until: Mapped[Optional[datetime.date]] = mapped_column(Date)
     total_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+    rfq_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    delivery_days: Mapped[Optional[int]] = mapped_column(Integer)
+    payment_terms: Mapped[Optional[str]] = mapped_column(String(100))
 
     pr: Mapped['PurchaseRequisition'] = relationship(
         'PurchaseRequisition', back_populates='quotation', foreign_keys=[pr_id]
     )
+    rfq: Mapped[Optional['RFQ']] = relationship('RFQ', back_populates='quotation', foreign_keys=[rfq_id])
     vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='quotation')
     status: Mapped['StatusMaster'] = relationship('StatusMaster', back_populates='quotation')
     purchase_order: Mapped[list['PurchaseOrder']] = relationship('PurchaseOrder', back_populates='quotation')
