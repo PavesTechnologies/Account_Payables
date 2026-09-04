@@ -96,6 +96,12 @@ class FakeProcurementDAO:
         self.lines[line.id] = line
         return line
 
+    def get_line_by_id(self, line_id):
+        return self.lines.get(line_id)
+
+    def delete_purchase_requisition_line(self, line):
+        self.lines.pop(line.id, None)
+
     def get_allowed_category_ids_for_department(self, department_id):
         return set()
 
@@ -279,6 +285,114 @@ def test_rejected_pr_cannot_be_resubmitted(wf: Workflow):
 
     with pytest.raises(ValueError, match="status REJECTED"):
         wf.procurement_service.resubmit_pr(pr.id, "requester1")
+
+
+# ---------------------------------------------------------------------------
+# Editing a RETURNED PR (header + lines), by the requester only
+# ---------------------------------------------------------------------------
+
+
+def test_requester_can_edit_returned_pr_header(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse B", justification=None,
+    )
+    updated = wf.procurement_service.update_purchase_requisition(pr.id, update, user_id="requester1")
+
+    assert updated.delivery_location == "Warehouse B"
+    # saving a RETURNED PR must not change its status or discard the
+    # approver's return reason
+    assert updated.status.status_code == "RETURNED"
+    assert updated.approval_comment == "Need more detail"
+
+
+def test_non_requester_cannot_edit_returned_pr_header(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse B", justification=None,
+    )
+    with pytest.raises(ValueError, match="requester"):
+        wf.procurement_service.update_purchase_requisition(pr.id, update, user_id="someone_else")
+
+
+def test_requester_can_add_edit_delete_lines_on_returned_pr(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    new_line_data = SimpleNamespace(
+        item_name="Extra Chair", description=None, quantity=2, uom="EA",
+        estimated_unit_price=5000, estimated_amount=10000,
+    )
+    line = wf.procurement_service.add_line(pr.id, new_line_data, user_id="requester1")
+    assert line.item_name == "Extra Chair"
+
+    edited_line_data = SimpleNamespace(
+        item_name="Extra Chair (Ergonomic)", description=None, quantity=3, uom="EA",
+        estimated_unit_price=5500, estimated_amount=16500,
+    )
+    updated_line = wf.procurement_service.update_line(pr.id, line.id, edited_line_data, user_id="requester1")
+    assert updated_line.item_name == "Extra Chair (Ergonomic)"
+
+    wf.procurement_service.delete_line(pr.id, line.id, user_id="requester1")
+    assert wf.procurement_dao.get_line_by_id(line.id) is None
+
+    pr_after = wf.procurement_dao.get_purchase_requisition_by_id(pr.id)
+    assert pr_after.status.status_code == "RETURNED"
+
+
+def test_non_requester_cannot_add_edit_delete_lines_on_returned_pr(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+    existing_line = wf.procurement_dao.get_lines_by_pr_id(pr.id)[0]
+
+    new_line_data = SimpleNamespace(
+        item_name="Extra Chair", description=None, quantity=2, uom="EA",
+        estimated_unit_price=5000, estimated_amount=10000,
+    )
+    with pytest.raises(ValueError, match="requester"):
+        wf.procurement_service.add_line(pr.id, new_line_data, user_id="someone_else")
+
+    with pytest.raises(ValueError, match="requester"):
+        wf.procurement_service.update_line(pr.id, existing_line.id, new_line_data, user_id="someone_else")
+
+    with pytest.raises(ValueError, match="requester"):
+        wf.procurement_service.delete_line(pr.id, existing_line.id, user_id="someone_else")
+
+
+def test_draft_editing_is_unaffected_by_requester_check(wf: Workflow):
+    """DRAFT behavior must remain unchanged: no requester restriction."""
+    payload = SimpleNamespace(
+        department_id=10, purchase_category_id=20, priority="NORMAL",
+        required_by=None, delivery_location=None, justification=None, lines=[],
+    )
+    pr = wf.procurement_service.create_purchase_requisition(payload, user_id="requester1")
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse C", justification=None,
+    )
+    # edited by a different user than the creator, with no user_id even
+    # supplied - still allowed, exactly like before this change
+    updated = wf.procurement_service.update_purchase_requisition(pr.id, update)
+    assert updated.delivery_location == "Warehouse C"
+    assert updated.status.status_code == "DRAFT"
+
+
+def test_requester_id_type_mismatch_is_normalized(wf: Workflow):
+    """Reproduces the PR-000007 bug: created_by stored as string '1', but
+    the authenticated user id may arrive as a different type (e.g. int 1)
+    depending on the JWT claim - the comparison must not be type-sensitive."""
+    pr = wf.create_submitted_pr(requester="1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    resubmitted = wf.procurement_service.resubmit_pr(pr.id, 1)  # int, not str
+    assert resubmitted.status.status_code == "PENDING_APPROVAL"
 
 
 # ---------------------------------------------------------------------------

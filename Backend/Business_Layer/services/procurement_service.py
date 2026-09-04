@@ -101,9 +101,13 @@ class ProcurementService:
     def list_pending_approval(self, department_id: Optional[int] = None) -> List[PurchaseRequisition]:
         return self.procurement_dao.get_pending_approval_requisitions(department_id)
 
-    def update_purchase_requisition(self, pr_id: int, data) -> PurchaseRequisition:
+    def update_purchase_requisition(self, pr_id: int, data, user_id: Optional[str] = None) -> PurchaseRequisition:
         pr = self._require_pr(pr_id)
-        self._require_pr_status(pr, {"DRAFT"}, "updated")
+        self._require_pr_status(pr, {"DRAFT", "RETURNED"}, "updated")
+        if pr.status.status_code == "RETURNED":
+            self._require_requester(
+                pr, user_id, "Only the purchase requisition's requester can edit it while it is RETURNED"
+            )
 
         if data.department_id is not None or data.purchase_category_id is not None:
             department_id = data.department_id if data.department_id is not None else pr.department_id
@@ -156,9 +160,13 @@ class ProcurementService:
     # Purchase Requisition Line
     # =========================================================
 
-    def add_line(self, pr_id: int, line_data) -> PurchaseRequisitionLine:
+    def add_line(self, pr_id: int, line_data, user_id: Optional[str] = None) -> PurchaseRequisitionLine:
         pr = self._require_pr(pr_id)
-        self._require_pr_status(pr, {"DRAFT"}, "modified")
+        self._require_pr_status(pr, {"DRAFT", "RETURNED"}, "modified")
+        if pr.status.status_code == "RETURNED":
+            self._require_requester(
+                pr, user_id, "Only the purchase requisition's requester can add a line while it is RETURNED"
+            )
 
         line = self._build_line(pr_id, line_data)
         self.procurement_dao.create_purchase_requisition_line(line)
@@ -168,9 +176,15 @@ class ProcurementService:
         self.db.refresh(line)
         return line
 
-    def update_line(self, pr_id: int, line_id: int, line_data) -> PurchaseRequisitionLine:
+    def update_line(
+        self, pr_id: int, line_id: int, line_data, user_id: Optional[str] = None
+    ) -> PurchaseRequisitionLine:
         pr = self._require_pr(pr_id)
-        self._require_pr_status(pr, {"DRAFT"}, "modified")
+        self._require_pr_status(pr, {"DRAFT", "RETURNED"}, "modified")
+        if pr.status.status_code == "RETURNED":
+            self._require_requester(
+                pr, user_id, "Only the purchase requisition's requester can edit a line while it is RETURNED"
+            )
 
         line = self.procurement_dao.get_line_by_id(line_id)
         if line is None or line.pr_id != pr_id:
@@ -190,9 +204,13 @@ class ProcurementService:
         self.db.refresh(line)
         return line
 
-    def delete_line(self, pr_id: int, line_id: int) -> None:
+    def delete_line(self, pr_id: int, line_id: int, user_id: Optional[str] = None) -> None:
         pr = self._require_pr(pr_id)
-        self._require_pr_status(pr, {"DRAFT"}, "modified")
+        self._require_pr_status(pr, {"DRAFT", "RETURNED"}, "modified")
+        if pr.status.status_code == "RETURNED":
+            self._require_requester(
+                pr, user_id, "Only the purchase requisition's requester can delete a line while it is RETURNED"
+            )
 
         line = self.procurement_dao.get_line_by_id(line_id)
         if line is None or line.pr_id != pr_id:
@@ -267,9 +285,7 @@ class ProcurementService:
     def resubmit_pr(self, pr_id: int, user_id: str) -> PurchaseRequisition:
         pr = self._require_pr(pr_id)
         self._require_pr_status(pr, {"RETURNED"}, "resubmitted")
-
-        if pr.created_by != user_id:
-            raise ValueError("Only the purchase requisition's requester can resubmit it")
+        self._require_requester(pr, user_id, "Only the purchase requisition's requester can resubmit it")
 
         lines = self.procurement_dao.get_lines_by_pr_id(pr_id)
         if not lines:
@@ -532,6 +548,14 @@ class ProcurementService:
         if status is None:
             raise ValueError(f"Status '{status_code}' is not configured for module '{module_name}'")
         return status
+
+    @staticmethod
+    def _require_requester(pr: PurchaseRequisition, user_id: Optional[str], message: str) -> None:
+        # IDs may arrive as different types depending on their source (JWT
+        # claim vs. DB column), so compare as strings rather than requiring
+        # an exact type match.
+        if str(pr.created_by) != str(user_id):
+            raise ValueError(message)
 
     def _require_rfq_status_row(self, status_code: str):
         status = self.rfq_dao.get_status_by_module_code(RFQ_STATUS_MODULE, status_code)

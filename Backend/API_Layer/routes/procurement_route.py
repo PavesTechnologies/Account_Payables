@@ -144,15 +144,17 @@ def get_purchase_requisition_by_id(pr_id: int, http_request: Request):
 
 
 # ---------------------------------------------------------
-# Update Purchase Requisition (DRAFT only)
+# Update Purchase Requisition (DRAFT: any user; RETURNED: requester only)
 # ---------------------------------------------------------
 @router.put("/purchase-requisitions/{pr_id}", response_model=PurchaseRequisitionDTO)
 def update_purchase_requisition(pr_id: int, payload: PurchaseRequisitionUpdateRequest, http_request: Request):
     db = http_request.state.db
 
     try:
+        user_id = _get_user_id(http_request)
+
         service = ProcurementService(db)
-        return service.update_purchase_requisition(pr_id, payload)
+        return service.update_purchase_requisition(pr_id, payload, user_id)
 
     except ValueError as e:
         db.rollback()
@@ -318,7 +320,7 @@ def resubmit_purchase_requisition(pr_id: int, http_request: Request):
 
 
 # ---------------------------------------------------------
-# Purchase Requisition Lines (DRAFT only)
+# Purchase Requisition Lines (DRAFT: any user; RETURNED: requester only)
 # ---------------------------------------------------------
 @router.post("/purchase-requisitions/{pr_id}/lines", response_model=PurchaseRequisitionLineDTO)
 def add_purchase_requisition_line(
@@ -329,8 +331,10 @@ def add_purchase_requisition_line(
     db = http_request.state.db
 
     try:
+        user_id = _get_user_id(http_request)
+
         service = ProcurementService(db)
-        return service.add_line(pr_id, payload)
+        return service.add_line(pr_id, payload, user_id)
 
     except ValueError as e:
         db.rollback()
@@ -351,8 +355,10 @@ def update_purchase_requisition_line(
     db = http_request.state.db
 
     try:
+        user_id = _get_user_id(http_request)
+
         service = ProcurementService(db)
-        return service.update_line(pr_id, line_id, payload)
+        return service.update_line(pr_id, line_id, payload, user_id)
 
     except ValueError as e:
         db.rollback()
@@ -369,8 +375,10 @@ def delete_purchase_requisition_line(pr_id: int, line_id: int, http_request: Req
     db = http_request.state.db
 
     try:
+        user_id = _get_user_id(http_request)
+
         service = ProcurementService(db)
-        service.delete_line(pr_id, line_id)
+        service.delete_line(pr_id, line_id, user_id)
 
         return DeletePurchaseRequisitionResponse(message="Purchase requisition line deleted successfully")
 
