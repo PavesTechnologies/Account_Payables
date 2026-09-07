@@ -4,9 +4,11 @@ import datetime
 import decimal
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, Depends
 from sqlalchemy.exc import IntegrityError
 
+
+from Backend.API_Layer.middleware.role_base_access import role_based_access
 from Backend.API_Layer.interface.procurement_interface import (
     ApprovePurchaseRequisitionRequest,
     DeletePurchaseRequisitionResponse,
@@ -56,8 +58,22 @@ def _status_code_for(message: str, not_found_message: str) -> int:
 # ---------------------------------------------------------
 # Create Purchase Requisition
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions", response_model=PurchaseRequisitionResponse)
-def create_purchase_requisition(payload: PurchaseRequisitionCreateRequest, http_request: Request):
+@router.post(
+    "/purchase-requisitions",
+    response_model=PurchaseRequisitionResponse,
+    dependencies=[
+        Depends(
+            role_based_access(
+                ["PROCUREMENT_REQUESTER", "SUPER_ADMIN"]
+            )
+        )
+    ],
+)
+def create_purchase_requisition(
+    payload: PurchaseRequisitionCreateRequest,
+    http_request: Request,
+):
+
     db = http_request.state.db
 
     try:
@@ -66,14 +82,20 @@ def create_purchase_requisition(payload: PurchaseRequisitionCreateRequest, http_
         service = ProcurementService(db)
         pr = service.create_purchase_requisition(payload, user_id)
 
-        return PurchaseRequisitionResponse(id=pr.id, message="Purchase requisition created successfully")
+        return PurchaseRequisitionResponse(
+            id=pr.id,
+            message="Purchase requisition created successfully",
+        )
 
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Could not create purchase requisition")
+        raise HTTPException(
+            status_code=409,
+            detail="Could not create purchase requisition",
+        )
 
     except Exception as e:
         db.rollback()
