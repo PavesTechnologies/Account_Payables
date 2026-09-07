@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, D
 from sqlalchemy.exc import IntegrityError
 
 
-from Backend.API_Layer.middleware.role_base_access import role_based_access
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 from Backend.API_Layer.interface.procurement_interface import (
     ApprovePurchaseRequisitionRequest,
     DeletePurchaseRequisitionResponse,
@@ -62,11 +62,7 @@ def _status_code_for(message: str, not_found_message: str) -> int:
     "/purchase-requisitions",
     response_model=PurchaseRequisitionResponse,
     dependencies=[
-        Depends(
-            role_based_access(
-                ["PROCUREMENT_REQUESTER", "SUPER_ADMIN"]
-            )
-        )
+        Depends(permission_based_access(["PR_CREATE"]))
     ],
 )
 def create_purchase_requisition(
@@ -105,7 +101,13 @@ def create_purchase_requisition(
 # ---------------------------------------------------------
 # List Purchase Requisitions
 # ---------------------------------------------------------
-@router.get("/purchase-requisitions", response_model=list[PurchaseRequisitionDTO])
+@router.get(
+    "/purchase-requisitions",
+    response_model=list[PurchaseRequisitionDTO],
+    dependencies=[
+        Depends(permission_based_access(["PR_VIEW"]))
+    ],
+)
 def get_all_purchase_requisitions(
     http_request: Request,
     department_id: Optional[int] = None,
@@ -132,7 +134,13 @@ def get_all_purchase_requisitions(
 # List Purchase Requisitions Pending Approval
 # (must be registered before the "/{pr_id}" route below)
 # ---------------------------------------------------------
-@router.get("/purchase-requisitions/pending-approval", response_model=list[PurchaseRequisitionDTO])
+@router.get(
+    "/purchase-requisitions/pending-approval",
+    response_model=list[PurchaseRequisitionDTO],
+    dependencies=[
+        Depends(permission_based_access(["PR_APPROVAL_VIEW"]))
+    ],
+)
 def get_pending_approval_purchase_requisitions(
     http_request: Request,
     department_id: Optional[int] = None,
@@ -150,7 +158,13 @@ def get_pending_approval_purchase_requisitions(
 # ---------------------------------------------------------
 # Get Purchase Requisition By ID
 # ---------------------------------------------------------
-@router.get("/purchase-requisitions/{pr_id}", response_model=PurchaseRequisitionDTO)
+@router.get(
+    "/purchase-requisitions/{pr_id}",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_VIEW"]))
+    ],
+)
 def get_purchase_requisition_by_id(pr_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -168,7 +182,13 @@ def get_purchase_requisition_by_id(pr_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Update Purchase Requisition (DRAFT: any user; RETURNED: requester only)
 # ---------------------------------------------------------
-@router.put("/purchase-requisitions/{pr_id}", response_model=PurchaseRequisitionDTO)
+@router.put(
+    "/purchase-requisitions/{pr_id}",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_EDIT"]))
+    ],
+)
 def update_purchase_requisition(pr_id: int, payload: PurchaseRequisitionUpdateRequest, http_request: Request):
     db = http_request.state.db
 
@@ -194,7 +214,13 @@ def update_purchase_requisition(pr_id: int, payload: PurchaseRequisitionUpdateRe
 # ---------------------------------------------------------
 # Delete Purchase Requisition (DRAFT only)
 # ---------------------------------------------------------
-@router.delete("/purchase-requisitions/{pr_id}", response_model=DeletePurchaseRequisitionResponse)
+@router.delete(
+    "/purchase-requisitions/{pr_id}",
+    response_model=DeletePurchaseRequisitionResponse,
+    dependencies=[
+        Depends(permission_based_access(["PR_DELETE"]))
+    ],
+)
 def delete_purchase_requisition(pr_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -216,7 +242,13 @@ def delete_purchase_requisition(pr_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Submit / Cancel Purchase Requisition
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/submit", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/submit",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_SUBMIT"]))
+    ],
+)
 def submit_purchase_requisition(pr_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -233,7 +265,13 @@ def submit_purchase_requisition(pr_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/purchase-requisitions/{pr_id}/cancel", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/cancel",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_SUBMIT"]))
+    ],
+)
 def cancel_purchase_requisition(pr_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -253,7 +291,13 @@ def cancel_purchase_requisition(pr_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Approve / Reject Purchase Requisition
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/approve", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/approve",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_APPROVE"]))
+    ],
+)
 def approve_purchase_requisition(
     pr_id: int,
     payload: ApprovePurchaseRequisitionRequest,
@@ -276,7 +320,13 @@ def approve_purchase_requisition(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/purchase-requisitions/{pr_id}/reject", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/reject",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_REJECT"]))
+    ],
+)
 def reject_purchase_requisition(
     pr_id: int,
     payload: RejectPurchaseRequisitionRequest,
@@ -299,7 +349,13 @@ def reject_purchase_requisition(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/purchase-requisitions/{pr_id}/return", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/return",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_REJECT"]))
+    ],
+)
 def return_purchase_requisition(
     pr_id: int,
     payload: ReturnPurchaseRequisitionRequest,
@@ -322,7 +378,13 @@ def return_purchase_requisition(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/purchase-requisitions/{pr_id}/resubmit", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/resubmit",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_SUBMIT"]))
+    ],
+)
 def resubmit_purchase_requisition(pr_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -344,7 +406,13 @@ def resubmit_purchase_requisition(pr_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Purchase Requisition Lines (DRAFT: any user; RETURNED: requester only)
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/lines", response_model=PurchaseRequisitionLineDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/lines",
+    response_model=PurchaseRequisitionLineDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_EDIT"]))
+    ],
+)
 def add_purchase_requisition_line(
     pr_id: int,
     payload: PurchaseRequisitionLineRequest,
@@ -367,7 +435,13 @@ def add_purchase_requisition_line(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/purchase-requisitions/{pr_id}/lines/{line_id}", response_model=PurchaseRequisitionLineDTO)
+@router.put(
+    "/purchase-requisitions/{pr_id}/lines/{line_id}",
+    response_model=PurchaseRequisitionLineDTO,
+    dependencies=[
+        Depends(permission_based_access(["PR_EDIT"]))
+    ],
+)
 def update_purchase_requisition_line(
     pr_id: int,
     line_id: int,
@@ -392,7 +466,13 @@ def update_purchase_requisition_line(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/purchase-requisitions/{pr_id}/lines/{line_id}", response_model=DeletePurchaseRequisitionResponse)
+@router.delete(
+    "/purchase-requisitions/{pr_id}/lines/{line_id}",
+    response_model=DeletePurchaseRequisitionResponse,
+    dependencies=[
+        Depends(permission_based_access(["PR_EDIT"]))
+    ],
+)
 def delete_purchase_requisition_line(pr_id: int, line_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -417,7 +497,13 @@ def delete_purchase_requisition_line(pr_id: int, line_id: int, http_request: Req
 # ---------------------------------------------------------
 # RFQ or Catalog decision
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/sourcing-decision", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/sourcing-decision",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_CREATE"]))
+    ],
+)
 def record_sourcing_decision(pr_id: int, payload: SourcingDecisionRequest, http_request: Request):
     db = http_request.state.db
 
@@ -437,7 +523,13 @@ def record_sourcing_decision(pr_id: int, payload: SourcingDecisionRequest, http_
 # ---------------------------------------------------------
 # Quotation
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/quotations", response_model=QuotationResponse)
+@router.post(
+    "/purchase-requisitions/{pr_id}/quotations",
+    response_model=QuotationResponse,
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_CREATE"]))
+    ],
+)
 async def create_quotation(
     pr_id: int,
     http_request: Request,
@@ -492,7 +584,13 @@ async def create_quotation(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/purchase-requisitions/{pr_id}/quotations", response_model=list[QuotationDTO])
+@router.get(
+    "/purchase-requisitions/{pr_id}/quotations",
+    response_model=list[QuotationDTO],
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_VIEW"]))
+    ],
+)
 def get_quotations_for_pr(pr_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -507,7 +605,13 @@ def get_quotations_for_pr(pr_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/quotations/{quotation_id}", response_model=QuotationDTO)
+@router.get(
+    "/quotations/{quotation_id}",
+    response_model=QuotationDTO,
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_VIEW"]))
+    ],
+)
 def get_quotation_by_id(quotation_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -522,7 +626,12 @@ def get_quotation_by_id(quotation_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/quotations/{quotation_id}/document/view")
+@router.get(
+    "/quotations/{quotation_id}/document/view",
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_VIEW"]))
+    ],
+)
 def view_quotation_document(quotation_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -539,7 +648,12 @@ def view_quotation_document(quotation_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/quotations/{quotation_id}/document/download")
+@router.get(
+    "/quotations/{quotation_id}/document/download",
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_VIEW"]))
+    ],
+)
 def download_quotation_document(quotation_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -556,7 +670,13 @@ def download_quotation_document(quotation_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/quotations/{quotation_id}", response_model=DeleteQuotationResponse)
+@router.delete(
+    "/quotations/{quotation_id}",
+    response_model=DeleteQuotationResponse,
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_DELETE"]))
+    ],
+)
 def delete_quotation(quotation_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -579,7 +699,13 @@ def delete_quotation(quotation_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Vendor Selection
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/select-vendor", response_model=PurchaseRequisitionDTO)
+@router.post(
+    "/purchase-requisitions/{pr_id}/select-vendor",
+    response_model=PurchaseRequisitionDTO,
+    dependencies=[
+        Depends(permission_based_access(["VENDOR_SELECT"]))
+    ],
+)
 def select_vendor(pr_id: int, payload: SelectVendorRequest, http_request: Request):
     db = http_request.state.db
 
@@ -600,7 +726,13 @@ def select_vendor(pr_id: int, payload: SelectVendorRequest, http_request: Reques
 # ---------------------------------------------------------
 # Purchase Order Generation
 # ---------------------------------------------------------
-@router.post("/purchase-requisitions/{pr_id}/generate-po", response_model=GeneratePurchaseOrderResponse)
+@router.post(
+    "/purchase-requisitions/{pr_id}/generate-po",
+    response_model=GeneratePurchaseOrderResponse,
+    dependencies=[
+        Depends(permission_based_access(["PO_CREATE"]))
+    ],
+)
 def generate_purchase_order(pr_id: int, http_request: Request):
     db = http_request.state.db
 
