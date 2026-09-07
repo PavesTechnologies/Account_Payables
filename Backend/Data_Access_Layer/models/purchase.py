@@ -58,14 +58,24 @@ class Department(Base):
     purchase_requisition: Mapped[list['PurchaseRequisition']] = relationship(
         'PurchaseRequisition', back_populates='department'
     )
+    # Real one-to-many ownership (distinct from the many-to-many
+    # department/purchase_category pair above, which predates this and is
+    # left untouched): every PurchaseCategory belongs to exactly one
+    # Department via purchase_category.department_id.
+    purchase_categories: Mapped[list['PurchaseCategory']] = relationship(
+        'PurchaseCategory', foreign_keys='PurchaseCategory.department_id',
+        back_populates='owning_department'
+    )
 
 
 class PurchaseCategory(Base):
     __tablename__ = 'purchase_category'
     __table_args__ = (
+        ForeignKeyConstraint(['department_id'], ['ap.department.id'], name='fk_purchase_category_department'),
         PrimaryKeyConstraint('id', name='purchase_category_pkey'),
         UniqueConstraint('code', name='purchase_category_code_key'),
         UniqueConstraint('name', name='purchase_category_name_key'),
+        Index('idx_purchase_category_department', 'department_id'),
         {'schema': 'ap'}
     )
 
@@ -76,10 +86,15 @@ class PurchaseCategory(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     description: Mapped[Optional[str]] = mapped_column(Text)
+    department_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     department: Mapped[list['Department']] = relationship(
         'Department', secondary=department_purchase_category,
         back_populates='purchase_category'
+    )
+    # Real one-to-many ownership - see Department.purchase_categories above.
+    owning_department: Mapped['Department'] = relationship(
+        'Department', foreign_keys=[department_id], back_populates='purchase_categories'
     )
     purchase_requisition: Mapped[list['PurchaseRequisition']] = relationship(
         'PurchaseRequisition', back_populates='purchase_category'

@@ -597,9 +597,8 @@ class ProcurementService:
         if not purchase_category.is_active:
             raise ValueError("Purchase category is not active")
 
-        allowed_category_ids = self.procurement_dao.get_allowed_category_ids_for_department(department_id)
-        if allowed_category_ids and purchase_category_id not in allowed_category_ids:
-            raise ValueError("This purchase category is not allowed for the selected department")
+        if purchase_category.department_id != department_id:
+            raise ValueError("Purchase category does not belong to the selected department.")
 
     @staticmethod
     def _validate_priority(priority: str) -> str:

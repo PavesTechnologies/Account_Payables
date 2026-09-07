@@ -1,5 +1,7 @@
 # Backend/API_Layer/routes/master_route.py
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 
@@ -447,12 +449,12 @@ def delete_department(id: int, http_request: Request):
 
 # purchase category details apis
 @router.get("/purchase-categories", response_model=list[PurchaseCategoryDetails])
-def get_all_purchase_categories(http_request: Request):
+def get_all_purchase_categories(http_request: Request, department_id: Optional[int] = None):
     db = http_request.state.db
 
     try:
         service = MasterService(db)
-        return service.get_all_purchase_categories()
+        return service.get_all_purchase_categories(department_id)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -354,8 +354,8 @@ class MasterService:
     # Purchase Category
     # =========================================================
 
-    def get_all_purchase_categories(self):
-        return self.master_dao.get_all_purchase_categories()
+    def get_all_purchase_categories(self, department_id: int = None):
+        return self.master_dao.get_all_purchase_categories(department_id)
 
     def get_purchase_category_by_id(self, purchase_category_id: int) -> PurchaseCategory:
 
@@ -366,7 +366,17 @@ class MasterService:
 
         return purchase_category
 
+    def _require_active_department(self, department_id: int) -> Department:
+        department = self.master_dao.get_department_by_id(department_id)
+        if department is None:
+            raise ValueError("Department not found for the given department_id")
+        if not department.is_active:
+            raise ValueError("Department is not active")
+        return department
+
     def create_purchase_category(self, payload):
+        self._require_active_department(payload.department_id)
+
         code = payload.code
         name = payload.name
         # code should be in uppercase without spaces
@@ -378,7 +388,8 @@ class MasterService:
         purchase_category = PurchaseCategory(
             code=code,
             name=name,
-            is_active=payload.is_active
+            is_active=payload.is_active,
+            department_id=payload.department_id,
         )
         purchase_category = self.master_dao.create_purchase_category(purchase_category)
         self.db.commit()
@@ -390,6 +401,8 @@ class MasterService:
 
         if purchase_category is None:
             raise ValueError("Purchase category not found")
+
+        self._require_active_department(payload.department_id)
 
         code = payload.code
         name = payload.name
@@ -403,6 +416,9 @@ class MasterService:
         purchase_category.code = code
         purchase_category.name = name
         purchase_category.is_active = payload.is_active
+        # department_id is always taken explicitly from the payload (never
+        # inferred/defaulted), so reassignment is supported but never silent.
+        purchase_category.department_id = payload.department_id
 
         self.db.commit()
         self.db.refresh(purchase_category)

@@ -140,10 +140,12 @@ class PurchaseCategoryDetails(BaseModel):
     code: str
     name: str
     is_active: bool
+    department_id: int
 
 class PurchaseCategoryRequest(BaseModel):
     code: str
     name: str
+    department_id: int
     is_active: bool = True
 
 class PurchaseCategoryResponse(BaseModel):

@@ -153,7 +153,7 @@ class Workflow:
         self.registry.add("RFQ", "DRAFT")
 
         self.departments = {10: SimpleNamespace(id=10, is_active=True)}
-        self.categories = {20: SimpleNamespace(id=20, is_active=True)}
+        self.categories = {20: SimpleNamespace(id=20, is_active=True, department_id=10)}
 
         self.procurement_dao = FakeProcurementDAO(self.registry, self.departments, self.categories)
         self.master_dao = FakeMasterDAO(self.departments, self.categories)

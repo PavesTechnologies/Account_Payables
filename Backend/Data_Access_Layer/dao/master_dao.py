@@ -173,12 +173,11 @@ class MasterDAO:
     # Purchase Category
     # =====================================================
 
-    def get_all_purchase_categories(self):
-        return (
-            self.db.query(PurchaseCategory)
-            .order_by(PurchaseCategory.name.asc())
-            .all()
-        )
+    def get_all_purchase_categories(self, department_id: Optional[int] = None):
+        query = self.db.query(PurchaseCategory)
+        if department_id is not None:
+            query = query.filter(PurchaseCategory.department_id == department_id)
+        return query.order_by(PurchaseCategory.name.asc()).all()
     def get_purchase_category_by_id(self, purchase_category_id: int) -> Optional[PurchaseCategory]:
         return (
             self.db.query(PurchaseCategory)
@@ -195,7 +194,8 @@ class MasterDAO:
         purchase_category_obj = PurchaseCategory(
             code=purchase_category.code,
             name=purchase_category.name,
-            is_active=purchase_category.is_active
+            is_active=purchase_category.is_active,
+            department_id=purchase_category.department_id,
         )
         self.db.add(purchase_category_obj)
         self.db.flush()

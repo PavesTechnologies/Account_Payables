@@ -269,7 +269,7 @@ class Workflow:
             3: FakeVendor(3, active),  # PQR Systems
         }
         self.departments = {10: SimpleNamespace(id=10, is_active=True)}
-        self.categories = {20: SimpleNamespace(id=20, is_active=True)}
+        self.categories = {20: SimpleNamespace(id=20, is_active=True, department_id=10)}
 
         self.procurement_dao = FakeProcurementDAO(self.registry, self.vendors, self.departments, self.categories)
         self.rfq_dao = FakeRFQDAO(self.registry, self.vendors)
