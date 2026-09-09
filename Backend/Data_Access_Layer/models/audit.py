@@ -20,7 +20,7 @@ class AuditLog(Base):
     audit_log_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     table_name: Mapped[str] = mapped_column(String(50), nullable=False)
     record_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
     changed_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     changed_by: Mapped[Optional[str]] = mapped_column(String(100))
     old_values: Mapped[Optional[dict]] = mapped_column(JSONB)

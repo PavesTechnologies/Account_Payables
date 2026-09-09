@@ -8,6 +8,7 @@ from Backend.Data_Access_Layer.models.master import (
     Currency,
     SystemConfiguration,
     TaxType,
+    UnitOfMeasure,
 )
 from Backend.Data_Access_Layer.models.purchase import Department, PurchaseCategory
 
@@ -202,3 +203,20 @@ class MasterDAO:
         return purchase_category_obj
     def delete_purchase_category(self, purchase_category: PurchaseCategory) -> None:
         self.db.delete(purchase_category)
+
+    # =====================================================
+    # Unit of Measure
+    # =====================================================
+
+    def get_all_uoms(self, active_only: bool = True) -> List[UnitOfMeasure]:
+        query = self.db.query(UnitOfMeasure)
+        if active_only:
+            query = query.filter(UnitOfMeasure.is_active.is_(True))
+        return query.order_by(UnitOfMeasure.category.asc(), UnitOfMeasure.code.asc()).all()
+
+    def get_uom_by_code(self, code: str) -> Optional[UnitOfMeasure]:
+        return (
+            self.db.query(UnitOfMeasure)
+            .filter(UnitOfMeasure.code == code)
+            .first()
+        )

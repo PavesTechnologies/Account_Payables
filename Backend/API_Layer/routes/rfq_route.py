@@ -2,9 +2,10 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from sqlalchemy.exc import IntegrityError
 
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 from Backend.API_Layer.interface.procurement_interface import QuotationDTO
 from Backend.API_Layer.interface.rfq_interface import (
     CreateRFQRequest,
@@ -41,7 +42,11 @@ def _status_code_for(message: str, not_found_message: str) -> int:
 # ---------------------------------------------------------
 # Create RFQ
 # ---------------------------------------------------------
-@router.post("/", response_model=RFQResponse)
+@router.post(
+    "/",
+    response_model=RFQResponse,
+    dependencies=[Depends(permission_based_access(["QUOTATION_CREATE"]))],
+)
 def create_rfq(payload: CreateRFQRequest, http_request: Request):
     db = http_request.state.db
 
@@ -69,7 +74,11 @@ def create_rfq(payload: CreateRFQRequest, http_request: Request):
 # ---------------------------------------------------------
 # List RFQs
 # ---------------------------------------------------------
-@router.get("/", response_model=list[RFQDTO])
+@router.get(
+    "/",
+    response_model=list[RFQDTO],
+    dependencies=[Depends(permission_based_access(["QUOTATION_VIEW"]))],
+)
 def get_all_rfqs(
     http_request: Request,
     pr_id: Optional[int] = None,
@@ -90,7 +99,11 @@ def get_all_rfqs(
 # ---------------------------------------------------------
 # Get RFQ By ID
 # ---------------------------------------------------------
-@router.get("/{rfq_id}", response_model=RFQDTO)
+@router.get(
+    "/{rfq_id}",
+    response_model=RFQDTO,
+    dependencies=[Depends(permission_based_access(["QUOTATION_VIEW"]))],
+)
 def get_rfq_by_id(rfq_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -108,7 +121,11 @@ def get_rfq_by_id(rfq_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Invite / List Vendors
 # ---------------------------------------------------------
-@router.post("/{rfq_id}/vendors", response_model=RFQDTO)
+@router.post(
+    "/{rfq_id}/vendors",
+    response_model=RFQDTO,
+    dependencies=[Depends(permission_based_access(["INVITE_VENDOR"]))],
+)
 def invite_vendors(rfq_id: int, payload: InviteVendorsRequest, http_request: Request):
     db = http_request.state.db
 
@@ -127,7 +144,11 @@ def invite_vendors(rfq_id: int, payload: InviteVendorsRequest, http_request: Req
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{rfq_id}/vendors", response_model=list[RFQVendorDTO])
+@router.get(
+    "/{rfq_id}/vendors",
+    response_model=list[RFQVendorDTO],
+    dependencies=[Depends(permission_based_access(["QUOTATION_VIEW"]))],
+)
 def get_rfq_vendors(rfq_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -145,7 +166,11 @@ def get_rfq_vendors(rfq_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Send / Close RFQ
 # ---------------------------------------------------------
-@router.post("/{rfq_id}/send", response_model=SendRFQResponse)
+@router.post(
+    "/{rfq_id}/send",
+    response_model=SendRFQResponse,
+    dependencies=[Depends(permission_based_access(["SEND_RFQ"]))],
+)
 def send_rfq(rfq_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -179,7 +204,11 @@ def send_rfq(rfq_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{rfq_id}/close", response_model=RFQDTO)
+@router.post(
+    "/{rfq_id}/close",
+    response_model=RFQDTO,
+    dependencies=[Depends(permission_based_access(["QUOTATION_UPDATE"]))],
+)
 def close_rfq(rfq_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -201,7 +230,11 @@ def close_rfq(rfq_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Quotations for an RFQ
 # ---------------------------------------------------------
-@router.get("/{rfq_id}/quotations", response_model=list[QuotationDTO])
+@router.get(
+    "/{rfq_id}/quotations",
+    response_model=list[QuotationDTO],
+    dependencies=[Depends(permission_based_access(["QUOTATION_VIEW"]))],
+)
 def get_quotations_for_rfq(rfq_id: int, http_request: Request):
     db = http_request.state.db
 

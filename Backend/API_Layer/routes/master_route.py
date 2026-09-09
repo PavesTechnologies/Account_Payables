@@ -25,6 +25,7 @@ from Backend.API_Layer.interface.master_interface import (
     PurchaseCategoryDetails,
     PurchaseCategoryRequest,
     PurchaseCategoryResponse,
+    UnitOfMeasureDTO,
 )
 from Backend.Business_Layer.services.master_service import MasterService
 
@@ -485,6 +486,18 @@ def create_purchase_category(payload: PurchaseCategoryRequest, http_request: Req
 
     except Exception as e:
         db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# unit of measure apis
+@router.get("/uoms", response_model=list[UnitOfMeasureDTO])
+def get_all_uoms(http_request: Request, active_only: bool = True):
+    db = http_request.state.db
+
+    try:
+        service = MasterService(db)
+        return service.get_all_uoms(active_only)
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/purchase-categories/{id}", response_model=PurchaseCategoryDetails)

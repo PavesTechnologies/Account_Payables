@@ -218,3 +218,14 @@ class ProcurementDAO:
         self.db.add(audit_log)
         self.db.flush()
         return audit_log
+
+    def get_pr_history(self, pr_id: int) -> List[AuditLog]:
+        return (
+            self.db.query(AuditLog)
+            .filter(
+                AuditLog.table_name == "purchase_requisition",
+                AuditLog.record_id == pr_id,
+            )
+            .order_by(AuditLog.changed_at.asc(), AuditLog.audit_log_id.asc())
+            .all()
+        )

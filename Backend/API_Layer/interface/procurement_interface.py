@@ -15,6 +15,7 @@ class PurchaseRequisitionLineRequest(BaseModel):
     description: Optional[str] = None
     quantity: decimal.Decimal
     uom: Optional[str] = None
+    is_custom_uom: bool = False
     estimated_unit_price: Optional[decimal.Decimal] = None
     estimated_amount: Optional[decimal.Decimal] = None
 
@@ -26,6 +27,7 @@ class PurchaseRequisitionLineDTO(BaseModel):
     description: Optional[str]
     quantity: decimal.Decimal
     uom: Optional[str]
+    is_custom_uom: bool = False
     estimated_unit_price: Optional[decimal.Decimal]
     estimated_amount: Optional[decimal.Decimal]
 
@@ -167,3 +169,18 @@ class GeneratePurchaseOrderResponse(BaseModel):
     po_id: int
     pr_id: int
     message: str
+
+
+# =====================================================
+# PR Workflow Timeline
+# =====================================================
+
+
+class PRTimelineEntryDTO(BaseModel):
+    id: int
+    pr_id: int
+    event: str
+    performed_by: Optional[str]
+    created_at: datetime.datetime
+    reason: Optional[str] = None
+    metadata: Optional[dict] = None

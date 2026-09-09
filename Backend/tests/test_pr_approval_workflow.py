@@ -11,6 +11,7 @@ collection-sync side effects on transient objects.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Dict, Optional, Tuple
 
@@ -113,17 +114,44 @@ class FakeProcurementDAO:
         self.audit_logs.append(audit_log)
         return audit_log
 
+    def get_pr_history(self, pr_id):
+        return [
+            log for log in self.audit_logs
+            if log.table_name == "purchase_requisition" and log.record_id == pr_id
+        ]
+
+
+class FakeUOM:
+    def __init__(self, code: str, allows_decimal: bool, is_active: bool = True):
+        self.code = code
+        self.allows_decimal = allows_decimal
+        self.is_active = is_active
+
+
+# Mirrors the standard UOM set seeded by migration_uom_master.sql.
+STANDARD_UOMS = {
+    "EA": FakeUOM("EA", allows_decimal=False),
+    "PCS": FakeUOM("PCS", allows_decimal=False),
+    "KG": FakeUOM("KG", allows_decimal=True),
+    "M": FakeUOM("M", allows_decimal=True),
+    "INACTIVE_UOM": FakeUOM("INACTIVE_UOM", allows_decimal=True, is_active=False),
+}
+
 
 class FakeMasterDAO:
-    def __init__(self, departments: dict, categories: dict):
+    def __init__(self, departments: dict, categories: dict, uoms: dict = None):
         self.departments = departments
         self.categories = categories
+        self.uoms = uoms if uoms is not None else STANDARD_UOMS
 
     def get_department_by_id(self, department_id):
         return self.departments.get(department_id)
 
     def get_purchase_category_by_id(self, purchase_category_id):
         return self.categories.get(purchase_category_id)
+
+    def get_uom_by_code(self, code):
+        return self.uoms.get(code)
 
 
 class FakeRFQDAO:
@@ -180,7 +208,7 @@ class Workflow:
                 SimpleNamespace(
                     item_name="Office Chairs",
                     description=None,
-                    quantity=10,
+                    quantity=Decimal("10"),
                     uom="EA",
                     estimated_unit_price=5000,
                     estimated_amount=50000,
@@ -188,7 +216,7 @@ class Workflow:
             ],
         )
         pr = self.procurement_service.create_purchase_requisition(payload, user_id=requester)
-        return self.procurement_service.submit_purchase_requisition(pr.id)
+        return self.procurement_service.submit_purchase_requisition(pr.id, user_id=requester)
 
 
 @pytest.fixture
@@ -326,14 +354,14 @@ def test_requester_can_add_edit_delete_lines_on_returned_pr(wf: Workflow):
     wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
 
     new_line_data = SimpleNamespace(
-        item_name="Extra Chair", description=None, quantity=2, uom="EA",
+        item_name="Extra Chair", description=None, quantity=Decimal("2"), uom="EA",
         estimated_unit_price=5000, estimated_amount=10000,
     )
     line = wf.procurement_service.add_line(pr.id, new_line_data, user_id="requester1")
     assert line.item_name == "Extra Chair"
 
     edited_line_data = SimpleNamespace(
-        item_name="Extra Chair (Ergonomic)", description=None, quantity=3, uom="EA",
+        item_name="Extra Chair (Ergonomic)", description=None, quantity=Decimal("3"), uom="EA",
         estimated_unit_price=5500, estimated_amount=16500,
     )
     updated_line = wf.procurement_service.update_line(pr.id, line.id, edited_line_data, user_id="requester1")
@@ -352,7 +380,7 @@ def test_non_requester_cannot_add_edit_delete_lines_on_returned_pr(wf: Workflow)
     existing_line = wf.procurement_dao.get_lines_by_pr_id(pr.id)[0]
 
     new_line_data = SimpleNamespace(
-        item_name="Extra Chair", description=None, quantity=2, uom="EA",
+        item_name="Extra Chair", description=None, quantity=Decimal("2"), uom="EA",
         estimated_unit_price=5000, estimated_amount=10000,
     )
     with pytest.raises(ValueError, match="requester"):
@@ -363,6 +391,202 @@ def test_non_requester_cannot_add_edit_delete_lines_on_returned_pr(wf: Workflow)
 
     with pytest.raises(ValueError, match="requester"):
         wf.procurement_service.delete_line(pr.id, existing_line.id, user_id="someone_else")
+
+
+def test_approver_cannot_edit_or_resubmit_the_returned_pr_they_returned(wf: Workflow):
+    """The approver is a legitimate actor in the system (unlike an arbitrary
+    stranger) but is still not the requester, so must be denied same as
+    anyone else."""
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse B", justification=None,
+    )
+    with pytest.raises(ValueError, match="requester"):
+        wf.procurement_service.update_purchase_requisition(pr.id, update, user_id="approver1")
+
+    with pytest.raises(ValueError, match="requester"):
+        wf.procurement_service.resubmit_pr(pr.id, "approver1")
+
+
+def test_requester_cannot_update_after_resubmission(wf: Workflow):
+    """Once resubmitted, the PR is PENDING_APPROVAL again - not RETURNED -
+    so even the original requester loses edit access, matching DRAFT/
+    PENDING_APPROVAL's existing (unchanged) rules."""
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+    wf.procurement_service.resubmit_pr(pr.id, "requester1")
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse B", justification=None,
+    )
+    with pytest.raises(ValueError, match="status PENDING_APPROVAL"):
+        wf.procurement_service.update_purchase_requisition(pr.id, update, user_id="requester1")
+
+
+# ---------------------------------------------------------------------------
+# Estimated amount is always backend-derived, never trusted from the client
+# ---------------------------------------------------------------------------
+
+
+def test_line_estimated_amount_is_derived_not_trusted_from_client(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    # client sends a wildly inflated estimated_amount alongside a modest
+    # quantity/unit_price - the backend must ignore it and compute its own
+    line_data = SimpleNamespace(
+        item_name="Suspicious Line", description=None, quantity=Decimal("2"), uom="EA",
+        estimated_unit_price=100, estimated_amount=999999,
+    )
+    line = wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+    assert line.estimated_amount == 200  # 2 * 100, not the client's 999999
+
+    pr_after = wf.procurement_dao.get_purchase_requisition_by_id(pr.id)
+    # the PR's total reflects only the honest, backend-derived line amounts
+    assert pr_after.estimated_total == 50000 + 200
+
+
+def test_line_with_no_unit_price_has_no_estimated_amount(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    line_data = SimpleNamespace(
+        item_name="No Price Yet", description=None, quantity=Decimal("1"), uom="EA",
+        estimated_unit_price=None, estimated_amount=12345,
+    )
+    line = wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+    assert line.estimated_amount is None
+
+
+# ---------------------------------------------------------------------------
+# updated_at is backend-controlled on every PR/line mutation
+# ---------------------------------------------------------------------------
+
+
+def test_update_purchase_requisition_bumps_updated_at(wf: Workflow):
+    import datetime as _datetime
+
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+    # the fake DAO never populates the real server_default(now()) timestamp,
+    # so seed an explicit baseline to compare the backend-set value against
+    original_updated_at = _datetime.datetime(2020, 1, 1, tzinfo=_datetime.timezone.utc)
+    pr.updated_at = original_updated_at
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse B", justification=None,
+    )
+    updated = wf.procurement_service.update_purchase_requisition(pr.id, update, user_id="requester1")
+    assert updated.updated_at > original_updated_at
+    # created_by/created_at must never move
+    assert updated.created_by == "requester1"
+
+
+def test_add_line_bumps_pr_updated_at(wf: Workflow):
+    import datetime as _datetime
+
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+    original_updated_at = _datetime.datetime(2020, 1, 1, tzinfo=_datetime.timezone.utc)
+    pr.updated_at = original_updated_at
+
+    line_data = SimpleNamespace(
+        item_name="Extra Chair", description=None, quantity=Decimal("1"), uom="EA",
+        estimated_unit_price=100, estimated_amount=None,
+    )
+    wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+
+    pr_after = wf.procurement_dao.get_purchase_requisition_by_id(pr.id)
+    assert pr_after.updated_at > original_updated_at
+
+
+# ---------------------------------------------------------------------------
+# UOM / quantity validation matrix
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "uom, quantity, should_succeed",
+    [
+        ("EA", Decimal("2"), True),
+        ("EA", Decimal("2.5"), False),
+        ("EA", Decimal("0.2"), False),
+        ("EA", Decimal("0"), False),
+        ("EA", Decimal("-1"), False),
+        ("KG", Decimal("2.5"), True),
+        ("M", Decimal("2.5"), True),
+    ],
+)
+def test_uom_quantity_matrix(wf: Workflow, uom, quantity, should_succeed):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    line_data = SimpleNamespace(
+        item_name="Matrix Item", description=None, quantity=quantity, uom=uom,
+        is_custom_uom=False, estimated_unit_price=10, estimated_amount=None,
+    )
+    if should_succeed:
+        line = wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+        assert line.quantity == quantity
+        assert line.uom == uom
+    else:
+        with pytest.raises(ValueError):
+            wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+
+
+def test_unknown_uom_is_rejected(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    line_data = SimpleNamespace(
+        item_name="Bad UOM Item", description=None, quantity=Decimal("1"), uom="NOT_A_UOM",
+        is_custom_uom=False, estimated_unit_price=10, estimated_amount=None,
+    )
+    with pytest.raises(ValueError, match="not a recognized active unit of measure"):
+        wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+
+
+def test_inactive_uom_is_rejected(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    line_data = SimpleNamespace(
+        item_name="Inactive UOM Item", description=None, quantity=Decimal("1"), uom="INACTIVE_UOM",
+        is_custom_uom=False, estimated_unit_price=10, estimated_amount=None,
+    )
+    with pytest.raises(ValueError, match="not a recognized active unit of measure"):
+        wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+
+
+def test_custom_uom_persists_and_allows_decimal(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    line_data = SimpleNamespace(
+        item_name="Custom Unit Item", description=None, quantity=Decimal("2.75"), uom="Drum (200L)",
+        is_custom_uom=True, estimated_unit_price=10, estimated_amount=None,
+    )
+    line = wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
+    assert line.uom == "Drum (200L)"
+    assert line.is_custom_uom is True
+    assert line.quantity == Decimal("2.75")
+
+
+def test_custom_uom_requires_non_empty_value(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    line_data = SimpleNamespace(
+        item_name="Custom Unit Item", description=None, quantity=Decimal("1"), uom="   ",
+        is_custom_uom=True, estimated_unit_price=10, estimated_amount=None,
+    )
+    with pytest.raises(ValueError, match="is_custom_uom is true"):
+        wf.procurement_service.add_line(pr.id, line_data, user_id="requester1")
 
 
 def test_draft_editing_is_unaffected_by_requester_check(wf: Workflow):
@@ -409,19 +633,55 @@ def test_approval_history_preserves_return_and_resubmit_sequence(wf: Workflow):
 
     history = [log for log in wf.procurement_dao.audit_logs if log.record_id == pr.id]
     actions = [log.action for log in history]
-    assert actions == ["RETURNED", "RESUBMITTED", "APPROVED"]
+    assert actions == [
+        "PR_REQUEST_RAISED",
+        "SUBMITTED_FOR_APPROVAL",
+        "PR_SENT_BACK_FOR_CLARIFICATION",
+        "PR_RESUBMITTED",
+        "PR_APPROVED",
+    ]
 
-    returned_entry, resubmitted_entry, approved_entry = history
+    raised_entry, submitted_entry, returned_entry, resubmitted_entry, approved_entry = history
+    assert raised_entry.changed_by == "requester1"
+    assert submitted_entry.changed_by == "requester1"
+
     assert returned_entry.changed_by == "approver1"
-    assert returned_entry.new_values["comment"] == "Missing justification"
+    assert returned_entry.new_values["reason"] == "Missing justification"
 
     # resubmission preserves the original return reason in history even
     # though the PR's own active approval_comment was cleared
     assert resubmitted_entry.changed_by == "requester1"
-    assert resubmitted_entry.new_values["comment"] == "Missing justification"
+    assert resubmitted_entry.new_values["reason"] == "Missing justification"
 
     assert approved_entry.changed_by == "approver1"
-    assert approved_entry.new_values["comment"] == "Now complete"
+    assert approved_entry.new_values["reason"] == "Now complete"
+
+
+def test_pr_update_creates_history_entry(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.return_for_clarification(pr.id, "approver1", "Need more detail")
+
+    update = SimpleNamespace(
+        department_id=None, purchase_category_id=None, priority=None,
+        required_by=None, delivery_location="Warehouse B", justification=None,
+    )
+    wf.procurement_service.update_purchase_requisition(pr.id, update, user_id="requester1")
+
+    history = [log for log in wf.procurement_dao.audit_logs if log.record_id == pr.id]
+    assert history[-1].action == "PR_UPDATED"
+    assert history[-1].changed_by == "requester1"
+
+
+def test_get_pr_timeline_returns_events_in_order(wf: Workflow):
+    pr = wf.create_submitted_pr(requester="requester1")
+    wf.procurement_service.approve_purchase_requisition(pr.id, "approver1", "Looks good")
+
+    timeline = wf.procurement_service.get_pr_timeline(pr.id)
+    events_seq = [entry["event"] for entry in timeline]
+    assert events_seq == ["PR_REQUEST_RAISED", "SUBMITTED_FOR_APPROVAL", "PR_APPROVED"]
+    assert timeline[-1]["performed_by"] == "approver1"
+    assert timeline[-1]["reason"] == "Looks good"
+    assert all("pr_id" in entry and entry["pr_id"] == pr.id for entry in timeline)
 
 
 # ---------------------------------------------------------------------------

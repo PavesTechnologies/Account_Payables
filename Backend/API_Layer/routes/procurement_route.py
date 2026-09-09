@@ -20,6 +20,7 @@ from Backend.API_Layer.interface.procurement_interface import (
     PurchaseRequisitionLineRequest,
     PurchaseRequisitionResponse,
     PurchaseRequisitionUpdateRequest,
+    PRTimelineEntryDTO,
     QuotationDTO,
     QuotationResponse,
     RejectPurchaseRequisitionRequest,
@@ -180,6 +181,30 @@ def get_purchase_requisition_by_id(pr_id: int, http_request: Request):
 
 
 # ---------------------------------------------------------
+# PR Workflow Timeline
+# ---------------------------------------------------------
+@router.get(
+    "/purchase-requisitions/{pr_id}/timeline",
+    response_model=list[PRTimelineEntryDTO],
+    dependencies=[
+        Depends(permission_based_access(["PR_VIEW"]))
+    ],
+)
+def get_purchase_requisition_timeline(pr_id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        service = ProcurementService(db)
+        return service.get_pr_timeline(pr_id)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------
 # Update Purchase Requisition (DRAFT: any user; RETURNED: requester only)
 # ---------------------------------------------------------
 @router.put(
@@ -253,8 +278,10 @@ def submit_purchase_requisition(pr_id: int, http_request: Request):
     db = http_request.state.db
 
     try:
+        user_id = _get_user_id(http_request)
+
         service = ProcurementService(db)
-        return service.submit_purchase_requisition(pr_id)
+        return service.submit_purchase_requisition(pr_id, user_id)
 
     except ValueError as e:
         db.rollback()
@@ -710,8 +737,10 @@ def select_vendor(pr_id: int, payload: SelectVendorRequest, http_request: Reques
     db = http_request.state.db
 
     try:
+        user_id = _get_user_id(http_request)
+
         service = ProcurementService(db)
-        return service.select_vendor(pr_id, payload.quotation_id, payload.reason)
+        return service.select_vendor(pr_id, payload.quotation_id, payload.reason, user_id)
 
     except ValueError as e:
         db.rollback()

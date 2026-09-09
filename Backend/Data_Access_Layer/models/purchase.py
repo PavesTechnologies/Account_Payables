@@ -193,6 +193,7 @@ class PurchaseRequisitionLine(Base):
     uom: Mapped[Optional[str]] = mapped_column(String(50))
     estimated_unit_price: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
     estimated_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+    is_custom_uom: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
 
     pr: Mapped['PurchaseRequisition'] = relationship(
         'PurchaseRequisition', back_populates='purchase_requisition_line'

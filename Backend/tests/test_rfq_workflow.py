@@ -10,6 +10,7 @@ an end-to-end smoke test of the whole workflow described in the task.
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Dict, Optional, Tuple
 
@@ -115,6 +116,12 @@ class FakeProcurementDAO:
         self.audit_logs.append(audit_log)
         return audit_log
 
+    def get_pr_history(self, pr_id):
+        return [
+            log for log in self.audit_logs
+            if log.table_name == "purchase_requisition" and log.record_id == pr_id
+        ]
+
     def create_purchase_requisition(self, pr):
         pr.id = self._next_pr_id
         self._next_pr_id += 1
@@ -212,16 +219,27 @@ class FakeRFQDAO:
         return self.registry.get_by_module_code(module_name, status_code)
 
 
+class FakeUOM:
+    def __init__(self, code: str, allows_decimal: bool, is_active: bool = True):
+        self.code = code
+        self.allows_decimal = allows_decimal
+        self.is_active = is_active
+
+
 class FakeMasterDAO:
     def __init__(self, departments: dict, categories: dict):
         self.departments = departments
         self.categories = categories
+        self.uoms = {"EA": FakeUOM("EA", allows_decimal=False)}
 
     def get_department_by_id(self, department_id):
         return self.departments.get(department_id)
 
     def get_purchase_category_by_id(self, purchase_category_id):
         return self.categories.get(purchase_category_id)
+
+    def get_uom_by_code(self, code):
+        return self.uoms.get(code)
 
 
 class FakePurchaseOrderDAO:
@@ -298,7 +316,7 @@ class Workflow:
                 SimpleNamespace(
                     item_name="Business Laptop",
                     description=None,
-                    quantity=5,
+                    quantity=Decimal("5"),
                     uom="EA",
                     estimated_unit_price=60000,
                     estimated_amount=300000,
@@ -306,7 +324,7 @@ class Workflow:
             ],
         )
         pr = self.procurement_service.create_purchase_requisition(payload, user_id="buyer1")
-        self.procurement_service.submit_purchase_requisition(pr.id)
+        self.procurement_service.submit_purchase_requisition(pr.id, user_id="buyer1")
         return self.procurement_service.approve_purchase_requisition(pr.id, "manager1", "Approved")
 
 
@@ -343,6 +361,13 @@ def test_full_rfq_to_po_smoke_test(wf: Workflow):
     wf.rfq_service.send_rfq(rfq.id, user_id="buyer1")
     assert wf.rfq_dao.get_rfq_by_id(rfq.id).status.status_code == "SENT"
 
+    # Vendor invitation and RFQ send are recorded on the PR's unified
+    # timeline (ap.audit_log, table_name='purchase_requisition'), not just
+    # the RFQ-scoped EMAIL_SENT/EMAIL_FAILED diagnostic rows.
+    pr_history_actions = [log.action for log in wf.procurement_dao.get_pr_history(pr.id)]
+    assert "VENDOR_INVITED" in pr_history_actions
+    assert "RFQ_SENT" in pr_history_actions
+
     abc_q = wf.procurement_service.create_quotation(
         pr_id=pr.id, vendor_id=1, file_url="s3://q-abc", quotation_number="QT-ABC-001",
         quotation_date=None, valid_until=None, total_amount=300000, user_id="buyer1",
@@ -367,11 +392,15 @@ def test_full_rfq_to_po_smoke_test(wf: Workflow):
     assert wf.rfq_dao.get_rfq_by_id(rfq.id).status.status_code == "CLOSED"
 
     updated_pr = wf.procurement_service.select_vendor(
-        pr.id, pqr_q.id, reason="Faster delivery and better payment terms"
+        pr.id, pqr_q.id, reason="Faster delivery and better payment terms", user_id="buyer1"
     )
     assert updated_pr.selected_vendor_id == 3
     assert updated_pr.selected_quotation_id == pqr_q.id
     assert updated_pr.selection_reason == "Faster delivery and better payment terms"
+
+    pr_history_actions = [log.action for log in wf.procurement_dao.get_pr_history(pr.id)]
+    assert pr_history_actions.count("QUOTATION_RECEIVED") == 3
+    assert "VENDOR_SELECTED" in pr_history_actions
 
     quotations_by_vendor = {q.vendor_id: q.status.status_code for q in wf.procurement_dao.get_quotations_by_pr_id(pr.id)}
     assert quotations_by_vendor == {1: "REJECTED", 2: "REJECTED", 3: "SELECTED"}

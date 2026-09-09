@@ -213,6 +213,9 @@ class FakeProcurementDAO:
     def get_status_by_module_code(self, module_name, status_code):
         return self.registry.get_by_module_code(module_name, status_code)
 
+    def create_audit_log(self, audit_log):
+        return audit_log
+
 
 class FakeMasterDAOForPR:
     def __init__(self, departments, categories):
@@ -224,6 +227,9 @@ class FakeMasterDAOForPR:
 
     def get_purchase_category_by_id(self, purchase_category_id):
         return self.categories.get(purchase_category_id)
+
+    def get_uom_by_code(self, code):
+        return None
 
 
 @pytest.fixture

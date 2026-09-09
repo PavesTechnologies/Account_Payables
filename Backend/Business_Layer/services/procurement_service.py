@@ -15,6 +15,7 @@ from Backend.Data_Access_Layer.models.purchase import (
 )
 from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
 from Backend.Business_Layer.services.rfq_service import RFQ_STATUS_MODULE
+from Backend.Business_Layer.utils import pr_workflow_events as events
 
 PR_STATUS_MODULE = "PURCHASE_REQUISITION"
 QUOTATION_STATUS_MODULE = "QUOTATION"
@@ -34,6 +35,12 @@ PR_TRANSITIONS = {
 PR_HISTORY_TABLE = "purchase_requisition"
 
 VALID_PRIORITIES = {"LOW", "NORMAL", "HIGH", "URGENT"}
+
+# Units of measure now live in ap.unit_of_measure (Data_Access_Layer/models/master.py,
+# seeded by migration_uom_master.sql) instead of a hardcoded dict, and are exposed via
+# GET /apm/master/uoms. A PR line may also carry a free-text custom UOM
+# (PurchaseRequisitionLine.is_custom_uom) instead of a standard code - see _build_line.
+CUSTOM_UOM_MAX_LENGTH = 50
 
 
 class ProcurementService:
@@ -75,6 +82,8 @@ class ProcurementService:
             if line.estimated_amount is not None:
                 estimated_total += line.estimated_amount
         pr.estimated_total = estimated_total
+
+        self._record_pr_history(pr.id, events.PR_REQUEST_RAISED, user_id)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -127,6 +136,9 @@ class ProcurementService:
         if data.justification is not None:
             pr.justification = data.justification
 
+        pr.updated_at = datetime.datetime.now(datetime.timezone.utc)
+        self._record_pr_history(pr_id, events.PR_UPDATED, user_id)
+
         self.db.commit()
         self.db.refresh(pr)
         return pr
@@ -137,7 +149,9 @@ class ProcurementService:
         self.procurement_dao.delete_purchase_requisition(pr)
         self.db.commit()
 
-    def submit_purchase_requisition(self, pr_id: int) -> PurchaseRequisition:
+    def submit_purchase_requisition(
+        self, pr_id: int, user_id: Optional[str] = None
+    ) -> PurchaseRequisition:
         pr = self._require_pr(pr_id)
         lines = self.procurement_dao.get_lines_by_pr_id(pr_id)
         if not lines:
@@ -145,6 +159,7 @@ class ProcurementService:
                 "Purchase requisition must have at least one line before it can be submitted"
             )
         self._transition_pr(pr, "PENDING_APPROVAL")
+        self._record_pr_history(pr_id, events.SUBMITTED_FOR_APPROVAL, user_id)
         self.db.commit()
         self.db.refresh(pr)
         return pr
@@ -171,6 +186,7 @@ class ProcurementService:
         line = self._build_line(pr_id, line_data)
         self.procurement_dao.create_purchase_requisition_line(line)
         self._recalculate_estimated_total(pr)
+        pr.updated_at = datetime.datetime.now(datetime.timezone.utc)
 
         self.db.commit()
         self.db.refresh(line)
@@ -195,10 +211,12 @@ class ProcurementService:
         line.description = validated.description
         line.quantity = validated.quantity
         line.uom = validated.uom
+        line.is_custom_uom = validated.is_custom_uom
         line.estimated_unit_price = validated.estimated_unit_price
         line.estimated_amount = validated.estimated_amount
 
         self._recalculate_estimated_total(pr)
+        pr.updated_at = datetime.datetime.now(datetime.timezone.utc)
 
         self.db.commit()
         self.db.refresh(line)
@@ -218,6 +236,7 @@ class ProcurementService:
 
         self.procurement_dao.delete_purchase_requisition_line(line)
         self._recalculate_estimated_total(pr)
+        pr.updated_at = datetime.datetime.now(datetime.timezone.utc)
         self.db.commit()
 
     # =========================================================
@@ -235,7 +254,7 @@ class ProcurementService:
         pr.approved_by = user_id
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = comment
-        self._record_pr_history(pr_id, "APPROVED", user_id, comment)
+        self._record_pr_history(pr_id, events.PR_APPROVED, user_id, reason=comment)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -255,7 +274,7 @@ class ProcurementService:
         pr.approved_by = user_id
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = comment.strip()
-        self._record_pr_history(pr_id, "REJECTED", user_id, comment.strip())
+        self._record_pr_history(pr_id, events.PR_REJECTED, user_id, reason=comment.strip())
 
         self.db.commit()
         self.db.refresh(pr)
@@ -276,7 +295,7 @@ class ProcurementService:
         pr.approved_by = user_id
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = reason
-        self._record_pr_history(pr_id, "RETURNED", user_id, reason)
+        self._record_pr_history(pr_id, events.PR_SENT_BACK_FOR_CLARIFICATION, user_id, reason=reason)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -299,7 +318,7 @@ class ProcurementService:
         pr.approved_by = None
         pr.approved_at = None
         pr.approval_comment = None
-        self._record_pr_history(pr_id, "RESUBMITTED", user_id, previous_return_reason)
+        self._record_pr_history(pr_id, events.PR_RESUBMITTED, user_id, reason=previous_return_reason)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -387,6 +406,11 @@ class ProcurementService:
             response_received_status = self._require_rfq_status_row("RESPONSE_RECEIVED")
             rfq.status_id = response_received_status.status_id
 
+        self._record_pr_history(
+            pr_id, events.QUOTATION_RECEIVED, user_id,
+            metadata={"quotation_id": quotation.id, "vendor_id": vendor_id, "rfq_id": rfq_id},
+        )
+
         self.db.commit()
         self.db.refresh(quotation)
         return quotation
@@ -418,7 +442,11 @@ class ProcurementService:
     # =========================================================
 
     def select_vendor(
-        self, pr_id: int, quotation_id: int, reason: Optional[str] = None
+        self,
+        pr_id: int,
+        quotation_id: int,
+        reason: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> PurchaseRequisition:
 
         pr = self._require_pr(pr_id)
@@ -450,6 +478,11 @@ class ProcurementService:
         pr.selected_quotation_id = quotation.id
         if reason is not None:
             pr.selection_reason = reason
+
+        self._record_pr_history(
+            pr_id, events.VENDOR_SELECTED, user_id,
+            reason=reason, metadata={"quotation_id": quotation.id, "vendor_id": quotation.vendor_id},
+        )
 
         self.db.commit()
         self.db.refresh(pr)
@@ -564,17 +597,41 @@ class ProcurementService:
         return status
 
     def _record_pr_history(
-        self, pr_id: int, action: str, user_id: str, comment: Optional[str] = None
+        self,
+        pr_id: int,
+        event: str,
+        user_id: Optional[str],
+        reason: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> None:
+        values = {k: v for k, v in (metadata or {}).items() if v is not None}
+        if reason is not None:
+            values["reason"] = reason
         self.procurement_dao.create_audit_log(
             AuditLog(
                 table_name=PR_HISTORY_TABLE,
                 record_id=pr_id,
-                action=action,
+                action=event,
                 changed_by=user_id,
-                new_values={"comment": comment} if comment is not None else None,
+                new_values=values or None,
             )
         )
+
+    def get_pr_timeline(self, pr_id: int) -> List[dict]:
+        self._require_pr(pr_id)
+        timeline = []
+        for entry in self.procurement_dao.get_pr_history(pr_id):
+            metadata = entry.new_values or None
+            timeline.append({
+                "id": entry.audit_log_id,
+                "pr_id": entry.record_id,
+                "event": entry.action,
+                "performed_by": entry.changed_by,
+                "created_at": entry.changed_at,
+                "reason": metadata.get("reason") if metadata else None,
+                "metadata": metadata,
+            })
+        return timeline
 
     def _require_active_vendor(self, vendor_id: int):
         vendor = self.procurement_dao.get_vendor_by_id(vendor_id)
@@ -607,8 +664,7 @@ class ProcurementService:
             raise ValueError(f"priority must be one of {sorted(VALID_PRIORITIES)}")
         return priority
 
-    @staticmethod
-    def _build_line(pr_id: int, line_data) -> PurchaseRequisitionLine:
+    def _build_line(self, pr_id: int, line_data) -> PurchaseRequisitionLine:
         item_name = line_data.item_name.strip() if line_data.item_name else ""
         if not item_name:
             raise ValueError("item_name is required for a purchase requisition line")
@@ -616,17 +672,52 @@ class ProcurementService:
             raise ValueError("quantity must be greater than 0 for a purchase requisition line")
         if line_data.estimated_unit_price is not None and line_data.estimated_unit_price < 0:
             raise ValueError("estimated_unit_price cannot be negative")
-        if line_data.estimated_amount is not None and line_data.estimated_amount < 0:
-            raise ValueError("estimated_amount cannot be negative")
+
+        is_custom_uom = bool(getattr(line_data, "is_custom_uom", False))
+        raw_uom = (line_data.uom or "").strip()
+
+        if is_custom_uom:
+            if not raw_uom:
+                raise ValueError("uom is required when is_custom_uom is true")
+            if len(raw_uom) > CUSTOM_UOM_MAX_LENGTH:
+                raise ValueError(f"uom must be at most {CUSTOM_UOM_MAX_LENGTH} characters")
+            uom = raw_uom
+            allow_decimal = True  # custom UOM allows decimal quantity by default
+        else:
+            uom = raw_uom.upper()
+            if not uom:
+                raise ValueError("uom is required for a purchase requisition line")
+            uom_row = self.master_dao.get_uom_by_code(uom)
+            if uom_row is None or not uom_row.is_active:
+                raise ValueError(
+                    f"uom '{uom}' is not a recognized active unit of measure "
+                    "(set is_custom_uom=true to use a free-text unit)"
+                )
+            allow_decimal = uom_row.allows_decimal
+
+        if not allow_decimal and line_data.quantity != line_data.quantity.to_integral_value():
+            raise ValueError(f"quantity must be a whole number when uom is {uom}")
+
+        # estimated_amount is always derived server-side from quantity *
+        # estimated_unit_price - never trusted directly from the client, so
+        # a requester cannot arbitrarily inflate a line's (and therefore the
+        # PR's) estimated total. A line with no unit price yet contributes
+        # no amount (treated as 0 by _recalculate_estimated_total).
+        estimated_amount = (
+            line_data.quantity * line_data.estimated_unit_price
+            if line_data.estimated_unit_price is not None
+            else None
+        )
 
         return PurchaseRequisitionLine(
             pr_id=pr_id,
             item_name=item_name,
             description=line_data.description,
             quantity=line_data.quantity,
-            uom=line_data.uom,
+            uom=uom,
+            is_custom_uom=is_custom_uom,
             estimated_unit_price=line_data.estimated_unit_price,
-            estimated_amount=line_data.estimated_amount,
+            estimated_amount=estimated_amount,
         )
 
     def _recalculate_estimated_total(self, pr: PurchaseRequisition) -> None:

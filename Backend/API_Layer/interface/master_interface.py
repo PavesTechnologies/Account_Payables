@@ -151,3 +151,16 @@ class PurchaseCategoryRequest(BaseModel):
 class PurchaseCategoryResponse(BaseModel):
     id: int
     message: str
+
+# =====================================================
+# Unit of Measure
+# =====================================================
+
+
+class UnitOfMeasureDTO(BaseModel):
+    id: int
+    code: str
+    name: str
+    category: str
+    allows_decimal: bool
+    is_active: bool

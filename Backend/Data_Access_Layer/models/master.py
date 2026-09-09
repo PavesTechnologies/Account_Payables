@@ -360,6 +360,24 @@ class TaxRateRule(Base):
         back_populates='rate_rules'
     )
 
+class UnitOfMeasure(Base):
+    __tablename__ = 'unit_of_measure'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='unit_of_measure_pkey'),
+        UniqueConstraint('code', name='unit_of_measure_code_key'),
+        {'schema': 'ap'}
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(20), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    category: Mapped[str] = mapped_column(String(30), nullable=False)
+    allows_decimal: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+
+
 class TaxRuleCondition(Base):
     __tablename__ = 'tax_rule_condition'
     __table_args__ = (

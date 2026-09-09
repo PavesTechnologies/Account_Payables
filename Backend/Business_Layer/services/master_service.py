@@ -438,3 +438,10 @@ class MasterService:
 
         return True
 
+    # =========================================================
+    # Unit of Measure
+    # =========================================================
+
+    def get_all_uoms(self, active_only: bool = True):
+        return self.master_dao.get_all_uoms(active_only)
+

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from Backend.Business_Layer.utils.email_service import EmailSendResult, send_email
+from Backend.Business_Layer.utils import pr_workflow_events as events
 from Backend.Data_Access_Layer.dao.procurement_dao import ProcurementDAO
 from Backend.Data_Access_Layer.dao.rfq_dao import RFQDAO
 from Backend.Data_Access_Layer.models.audit import AuditLog
@@ -14,6 +15,7 @@ from Backend.Data_Access_Layer.models.rfq import RFQ, RFQVendor
 RFQ_STATUS_MODULE = "RFQ"
 PR_STATUS_MODULE = "PURCHASE_REQUISITION"
 RFQ_HISTORY_TABLE = "rfq"
+PR_HISTORY_TABLE = "purchase_requisition"
 
 RFQ_TRANSITIONS = {
     "DRAFT": {"SENT"},
@@ -93,12 +95,23 @@ class RFQService:
         if not vendor_ids:
             raise ValueError("At least one vendor_id is required to invite vendors")
 
+        newly_invited: List[int] = []
         for vendor_id in vendor_ids:
             self._require_active_vendor(vendor_id)
             if not self.rfq_dao.is_vendor_invited(rfq_id, vendor_id):
                 self.rfq_dao.create_rfq_vendor(
                     RFQVendor(rfq_id=rfq_id, vendor_id=vendor_id, invited_by=user_id)
                 )
+                newly_invited.append(vendor_id)
+
+        # Only record a history event when this call actually invited someone
+        # new - re-inviting already-invited vendors is a no-op and shouldn't
+        # spam the PR timeline with duplicate events.
+        if newly_invited:
+            self._record_pr_history(
+                rfq.pr_id, events.VENDOR_INVITED, user_id,
+                metadata={"rfq_id": rfq_id, "vendor_ids": newly_invited},
+            )
 
         self.db.commit()
         self.db.refresh(rfq)
@@ -147,6 +160,15 @@ class RFQService:
 
         self._transition_rfq(rfq, "SENT")
         rfq.sent_at = datetime.datetime.now(datetime.timezone.utc)
+
+        self._record_pr_history(
+            rfq.pr_id, events.RFQ_SENT, user_id,
+            metadata={
+                "rfq_id": rfq_id,
+                "vendor_count": len(results),
+                "failed_count": sum(1 for r in results if not r.success),
+            },
+        )
 
         self.db.commit()
         self.db.refresh(rfq)
@@ -230,6 +252,24 @@ class RFQService:
                 action=action,
                 changed_by=user_id,
                 new_values=details,
+            )
+        )
+
+    def _record_pr_history(
+        self, pr_id: int, event: str, user_id: Optional[str], metadata: Optional[dict] = None
+    ) -> None:
+        # Recorded against the PR (not the RFQ) so RFQService's PR-visible
+        # actions (vendor invitation, RFQ send) show up in the same unified
+        # timeline as ProcurementService's own PR events - both share
+        # ap.audit_log, table_name='purchase_requisition', keyed by pr_id.
+        values = {k: v for k, v in (metadata or {}).items() if v is not None}
+        self.procurement_dao.create_audit_log(
+            AuditLog(
+                table_name=PR_HISTORY_TABLE,
+                record_id=pr_id,
+                action=event,
+                changed_by=user_id,
+                new_values=values or None,
             )
         )
 
