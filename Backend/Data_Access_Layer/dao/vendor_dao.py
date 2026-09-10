@@ -67,6 +67,23 @@ class VendorDAO:
 
         return query.first() is not None
 
+    def get_vendor_by_name(
+        self,
+        vendor_name: str,
+    ) -> Optional[Vendor]:
+        """Case/whitespace-insensitive exact match, mirroring the
+        comparison ``vendor_name_exists`` already uses for uniqueness
+        checks - kept as a read-only lookup for quotation vendor
+        matching, never for creating/updating a vendor."""
+
+        return (
+            self.db.query(Vendor)
+            .filter(
+                func.lower(Vendor.vendor_name) == vendor_name.strip().lower()
+            )
+            .first()
+        )
+
     def get_vendor_by_gstin(
         self,
         gstin: str,

@@ -125,53 +125,134 @@ class RFQService:
     # Send / Close
     # =========================================================
 
-    def send_rfq(self, rfq_id: int, user_id: str) -> tuple[RFQ, List[RFQVendorSendResult]]:
+    def send_rfq(
+    self,
+    rfq_id: int,
+    vendor_ids: List[int],
+    user_id: str,
+) -> tuple[RFQ, List[RFQVendorSendResult]]:
+        
         rfq = self._require_rfq(rfq_id)
         self._require_rfq_status(rfq, {"DRAFT"}, "sent")
 
-        invitations = self.rfq_dao.get_rfq_vendors(rfq_id)
-        if not invitations:
-            raise ValueError("RFQ must have at least one invited vendor before it can be sent")
+        if not vendor_ids:
+            raise ValueError(
+                "At least one vendor must be selected before sending the RFQ"
+            )
 
-        pr = self.procurement_dao.get_purchase_requisition_by_id(rfq.pr_id)
-        lines = self.procurement_dao.get_lines_by_pr_id(rfq.pr_id) if pr is not None else []
+        # Normalize and remove duplicate vendor IDs.
+        selected_vendor_ids = list(
+            dict.fromkeys(
+                int(vendor_id)
+                for vendor_id in vendor_ids
+            )
+        )
+
+        invitations = self.rfq_dao.get_rfq_vendors(rfq_id)
+
+        if not invitations:
+            raise ValueError(
+                "RFQ must have at least one invited vendor before it can be sent"
+            )
+
+        invited_vendor_ids = {
+            int(invitation.vendor_id)
+            for invitation in invitations
+        }
+
+        # Never allow sending to a vendor that was not invited
+        # to this RFQ.
+        invalid_vendor_ids = [
+            vendor_id
+            for vendor_id in selected_vendor_ids
+            if vendor_id not in invited_vendor_ids
+        ]
+
+        if invalid_vendor_ids:
+            raise ValueError(
+                "One or more selected vendors are not invited to this RFQ"
+            )
+
+        # Only process the vendors selected by the user.
+        selected_invitations = [
+            invitation
+            for invitation in invitations
+            if int(invitation.vendor_id) in selected_vendor_ids
+        ]
+
+        pr = self.procurement_dao.get_purchase_requisition_by_id(
+            rfq.pr_id
+        )
+
+        lines = (
+            self.procurement_dao.get_lines_by_pr_id(rfq.pr_id)
+            if pr is not None
+            else []
+        )
 
         results: List[RFQVendorSendResult] = []
-        for invitation in invitations:
-            vendor = self.rfq_dao.get_vendor_by_id(invitation.vendor_id)
-            result = self._send_rfq_email_to_vendor(rfq, pr, lines, vendor, invitation.vendor_id)
+
+        for invitation in selected_invitations:
+            vendor = self.rfq_dao.get_vendor_by_id(
+                invitation.vendor_id
+            )
+
+            result = self._send_rfq_email_to_vendor(
+                rfq,
+                pr,
+                lines,
+                vendor,
+                invitation.vendor_id,
+            )
+
             results.append(result)
+
             self._record_rfq_history(
                 rfq_id,
                 "EMAIL_SENT" if result.success else "EMAIL_FAILED",
                 user_id,
-                {"vendor_id": result.vendor_id, "email": result.email, "error": result.error},
+                {
+                    "vendor_id": result.vendor_id,
+                    "email": result.email,
+                    "error": result.error,
+                },
             )
 
-        # The send action must be handled (attempted, and at least reach one
-        # invited vendor) before the RFQ can be marked SENT - do not claim a
-        # successful send, or move the workflow forward, if every vendor
-        # email failed.
+        # The RFQ can move to SENT only when at least one
+        # selected vendor successfully receives the RFQ.
         if not any(result.success for result in results):
             self.db.commit()
+
             raise ValueError(
-                "RFQ could not be sent: email delivery failed for every invited vendor"
+                "RFQ could not be sent: email delivery failed "
+                "for every selected vendor"
             )
 
         self._transition_rfq(rfq, "SENT")
-        rfq.sent_at = datetime.datetime.now(datetime.timezone.utc)
+
+        rfq.sent_at = datetime.datetime.now(
+            datetime.timezone.utc
+        )
 
         self._record_pr_history(
-            rfq.pr_id, events.RFQ_SENT, user_id,
+            rfq.pr_id,
+            events.RFQ_SENT,
+            user_id,
             metadata={
                 "rfq_id": rfq_id,
                 "vendor_count": len(results),
-                "failed_count": sum(1 for r in results if not r.success),
+                "selected_vendor_ids": selected_vendor_ids,
+                "failed_count": sum(
+                    1
+                    for result in results
+                    if not result.success
+                ),
             },
         )
 
         self.db.commit()
         self.db.refresh(rfq)
+
         return rfq, results
 
     def _send_rfq_email_to_vendor(self, rfq: RFQ, pr, lines, vendor, vendor_id: int) -> RFQVendorSendResult:

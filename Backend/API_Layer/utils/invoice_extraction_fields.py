@@ -1329,13 +1329,33 @@ def run_queries(
     s3_key: str,
 ) -> Tuple[Dict[str, Dict[str, Any]], str]:
 
+    return run_document_analysis_queries(
+        s3_key,
+        TEXTRACT_QUERIES,
+    )
+
+
+def run_document_analysis_queries(
+    s3_key: str,
+    queries: List[Tuple[str, str]],
+) -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """Runs an AWS Textract StartDocumentAnalysis/GetDocumentAnalysis
+    QUERIES job for an arbitrary (question, alias) list against a
+    document already in S3, returning the same
+    (alias -> {value, confidence, page, bounding_box}, full_text)
+    shape regardless of which caller's query set was used. Shared by
+    invoice extraction (``run_queries`` / ``TEXTRACT_QUERIES``) and any
+    other document-extraction pipeline (e.g. quotation extraction) so
+    the AWS client, retry handling, and polling/parsing logic are
+    never duplicated."""
+
     query_config = [
         {
             "Text": question,
             "Alias": alias,
         }
         for question, alias
-        in TEXTRACT_QUERIES
+        in queries
     ]
 
     start_response = call_textract_with_retry(

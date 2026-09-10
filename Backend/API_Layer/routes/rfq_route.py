@@ -10,6 +10,7 @@ from Backend.API_Layer.interface.procurement_interface import QuotationDTO
 from Backend.API_Layer.interface.rfq_interface import (
     CreateRFQRequest,
     InviteVendorsRequest,
+    SendRFQRequest,
     RFQDTO,
     RFQResponse,
     RFQVendorDTO,
@@ -171,37 +172,71 @@ def get_rfq_vendors(rfq_id: int, http_request: Request):
     response_model=SendRFQResponse,
     dependencies=[Depends(permission_based_access(["SEND_RFQ"]))],
 )
-def send_rfq(rfq_id: int, http_request: Request):
+def send_rfq(
+    rfq_id: int,
+    payload: SendRFQRequest,
+    http_request: Request,
+):
     db = http_request.state.db
 
     try:
         user_id = _get_user_id(http_request)
 
         service = RFQService(db)
-        rfq, results = service.send_rfq(rfq_id, user_id)
+
+        rfq, results = service.send_rfq(
+            rfq_id,
+            payload.vendor_ids,
+            user_id,
+        )
 
         failures = [r for r in results if not r.success]
-        message = (
-            "RFQ sent successfully to all invited vendors"
-            if not failures
-            else f"RFQ sent, but email delivery failed for {len(failures)} of {len(results)} vendor(s)"
-        )
+
+        if not failures:
+            message = (
+                f"RFQ sent successfully to "
+                f"{len(results)} selected vendor(s)"
+            )
+        else:
+            message = (
+                f"RFQ sent, but email delivery failed for "
+                f"{len(failures)} of {len(results)} selected vendor(s)"
+            )
+
         results_dto = [
             RFQVendorSendResultDTO(
-                vendor_id=r.vendor_id, email=r.email, success=r.success, sent_at=r.sent_at, error=r.error
+                vendor_id=r.vendor_id,
+                email=r.email,
+                success=r.success,
+                sent_at=r.sent_at,
+                error=r.error,
             )
             for r in results
         ]
 
-        return SendRFQResponse(id=rfq.id, status_id=rfq.status_id, message=message, results=results_dto)
+        return SendRFQResponse(
+            id=rfq.id,
+            status_id=rfq.status_id,
+            message=message,
+            results=results_dto,
+        )
 
     except ValueError as e:
         db.rollback()
-        raise HTTPException(status_code=_status_code_for(str(e), _RFQ_NOT_FOUND), detail=str(e))
+        raise HTTPException(
+            status_code=_status_code_for(
+                str(e),
+                _RFQ_NOT_FOUND,
+            ),
+            detail=str(e),
+        )
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
 
 
 @router.post(
