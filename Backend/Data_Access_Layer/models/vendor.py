@@ -61,6 +61,7 @@ class Vendor(Base):
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='vendor')
     purchase_requisition: Mapped[list['PurchaseRequisition']] = relationship('PurchaseRequisition', back_populates='selected_vendor')
     quotation: Mapped[list['Quotation']] = relationship('Quotation', back_populates='vendor')
+    vendor_category_mapping: Mapped[list['VendorCategoryMapping']] = relationship('VendorCategoryMapping', back_populates='vendor')
  
  
 class VendorAddress(Base):
@@ -139,4 +140,59 @@ class VendorTax(Base):
     verified_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
 
     vendor_address: Mapped['VendorAddress'] = relationship('VendorAddress', back_populates='vendor_tax')
- 
+
+
+class VendorCategory(Base):
+    """Not currently queried anywhere in the app (no ORM or raw-SQL
+    usage found) - mapped here to match the live table, not because
+    anything depends on it yet."""
+
+    __tablename__ = 'vendor_category'
+    __table_args__ = (
+        ForeignKeyConstraint(['parent_category_id'], ['ap.vendor_category.vendor_category_id'], name='vendor_category_parent_fk'),
+        PrimaryKeyConstraint('vendor_category_id', name='vendor_category_pkey'),
+        UniqueConstraint('category_code', name='vendor_category_category_code_key'),
+        {'schema': 'ap'}
+    )
+
+    vendor_category_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    category_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('true'))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    parent_category_id: Mapped[Optional[int]] = mapped_column(Integer)
+    description: Mapped[Optional[str]] = mapped_column(String(500))
+    created_by: Mapped[Optional[str]] = mapped_column(String(100))
+    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
+
+    parent_category: Mapped[Optional['VendorCategory']] = relationship('VendorCategory', remote_side=[vendor_category_id], back_populates='child_categories')
+    child_categories: Mapped[list['VendorCategory']] = relationship('VendorCategory', back_populates='parent_category')
+    vendor_category_mapping: Mapped[list['VendorCategoryMapping']] = relationship('VendorCategoryMapping', back_populates='vendor_category')
+
+
+class VendorCategoryMapping(Base):
+    """Not currently queried anywhere in the app (no ORM or raw-SQL
+    usage found) - mapped here to match the live table, not because
+    anything depends on it yet."""
+
+    __tablename__ = 'vendor_category_mapping'
+    __table_args__ = (
+        ForeignKeyConstraint(['vendor_category_id'], ['ap.vendor_category.vendor_category_id'], name='vendor_category_mapping_category_fk'),
+        ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='vendor_category_mapping_vendor_fk'),
+        PrimaryKeyConstraint('vendor_category_mapping_id', name='vendor_category_mapping_pkey'),
+        UniqueConstraint('vendor_id', 'vendor_category_id', name='vendor_category_mapping_unique'),
+        {'schema': 'ap'}
+    )
+
+    vendor_category_mapping_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vendor_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    vendor_category_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    created_by: Mapped[Optional[str]] = mapped_column(String(100))
+    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
+
+    vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='vendor_category_mapping')
+    vendor_category: Mapped['VendorCategory'] = relationship('VendorCategory', back_populates='vendor_category_mapping')

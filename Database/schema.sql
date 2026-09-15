@@ -1,9 +1,6 @@
 --
--- Database/ap_schema.sql
 -- PostgreSQL database dump
 --
-
-\restrict 24blkwLEGiYZghsaGi1qs0OVVumsInAu5k8PK5TYRG3LAhGUItbP56ikK57BfvX
 
 -- Dumped from database version 17.11
 -- Dumped by pg_dump version 18.4
@@ -27,9 +24,73 @@ SET row_security = off;
 CREATE SCHEMA ap;
 
 
+--
+-- Name: update_modified_column(); Type: FUNCTION; Schema: ap; Owner: -
+--
+
+CREATE FUNCTION ap.update_modified_column() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: approver_directory; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.approver_directory (
+    id bigint NOT NULL,
+    user_uuid uuid NOT NULL,
+    employee_uuid uuid NOT NULL,
+    department_uuid uuid,
+    is_user_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    department_name character varying(255)
+);
+
+
+--
+-- Name: approver_directory_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.approver_directory_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: approver_directory_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.approver_directory_id_seq OWNED BY ap.approver_directory.id;
+
+
+--
+-- Name: approver_directory_role; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.approver_directory_role (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_uuid uuid NOT NULL,
+    role_id integer NOT NULL,
+    role_code character varying(50) NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
 
 --
 -- Name: audit_log; Type: TABLE; Schema: ap; Owner: -
@@ -39,7 +100,7 @@ CREATE TABLE ap.audit_log (
     audit_log_id bigint NOT NULL,
     table_name character varying(50) NOT NULL,
     record_id integer NOT NULL,
-    action character varying(20) NOT NULL,
+    action character varying(50) NOT NULL,
     changed_by character varying(100),
     changed_at timestamp without time zone DEFAULT now() NOT NULL,
     old_values jsonb,
@@ -64,6 +125,48 @@ CREATE SEQUENCE ap.audit_log_audit_log_id_seq
 --
 
 ALTER SEQUENCE ap.audit_log_audit_log_id_seq OWNED BY ap.audit_log.audit_log_id;
+
+
+--
+-- Name: cdc_failure_log; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.cdc_failure_log (
+    id bigint NOT NULL,
+    kafka_topic character varying(255) NOT NULL,
+    kafka_partition integer NOT NULL,
+    kafka_offset bigint NOT NULL,
+    entity_type character varying(50) NOT NULL,
+    entity_key character varying(255),
+    operation character varying(20),
+    failure_type character varying(50) NOT NULL,
+    error_message text,
+    raw_payload jsonb,
+    retry_count integer DEFAULT 0 NOT NULL,
+    max_retries integer DEFAULT 5 NOT NULL,
+    status character varying(20) DEFAULT 'FAILED'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cdc_failure_log_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.cdc_failure_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: cdc_failure_log_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.cdc_failure_log_id_seq OWNED BY ap.cdc_failure_log.id;
 
 
 --
@@ -175,6 +278,34 @@ ALTER SEQUENCE ap.department_id_seq OWNED BY ap.department.id;
 CREATE TABLE ap.department_purchase_category (
     department_id bigint NOT NULL,
     purchase_category_id bigint NOT NULL
+);
+
+
+--
+-- Name: eos_department_cache; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.eos_department_cache (
+    department_uuid uuid NOT NULL,
+    department_name character varying(255),
+    is_active boolean DEFAULT true NOT NULL,
+    raw_payload jsonb,
+    source_ts_ms bigint,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: eos_employee_cache; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.eos_employee_cache (
+    employee_uuid uuid NOT NULL,
+    department_uuid uuid,
+    is_active boolean DEFAULT true NOT NULL,
+    raw_payload jsonb,
+    source_ts_ms bigint,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -611,7 +742,8 @@ CREATE TABLE ap.purchase_category (
     description text,
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    department_id bigint NOT NULL
 );
 
 
@@ -749,8 +881,11 @@ CREATE TABLE ap.purchase_requisition (
     created_by character varying(100) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    sourcing_type character varying(20),
+    selection_reason text,
     CONSTRAINT chk_pr_estimated_total CHECK ((estimated_total >= (0)::numeric)),
-    CONSTRAINT chk_pr_priority CHECK (((priority)::text = ANY ((ARRAY['LOW'::character varying, 'NORMAL'::character varying, 'HIGH'::character varying, 'URGENT'::character varying])::text[])))
+    CONSTRAINT chk_pr_priority CHECK (((priority)::text = ANY ((ARRAY['LOW'::character varying, 'NORMAL'::character varying, 'HIGH'::character varying, 'URGENT'::character varying])::text[]))),
+    CONSTRAINT chk_pr_sourcing_type CHECK (((sourcing_type IS NULL) OR ((sourcing_type)::text = ANY ((ARRAY['CATALOG'::character varying, 'RFQ'::character varying])::text[]))))
 );
 
 
@@ -788,6 +923,7 @@ CREATE TABLE ap.purchase_requisition_line (
     estimated_amount numeric(18,2),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_custom_uom boolean DEFAULT false NOT NULL,
     CONSTRAINT chk_pr_line_estimated_amount CHECK (((estimated_amount IS NULL) OR (estimated_amount >= (0)::numeric))),
     CONSTRAINT chk_pr_line_estimated_price CHECK (((estimated_unit_price IS NULL) OR (estimated_unit_price >= (0)::numeric))),
     CONSTRAINT chk_pr_line_quantity CHECK ((quantity > (0)::numeric))
@@ -830,6 +966,10 @@ CREATE TABLE ap.quotation (
     created_by character varying(100) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    rfq_id bigint,
+    delivery_days integer,
+    payment_terms character varying(100),
+    CONSTRAINT chk_quotation_delivery_days CHECK (((delivery_days IS NULL) OR (delivery_days >= 0))),
     CONSTRAINT chk_quotation_total CHECK (((total_amount IS NULL) OR (total_amount >= (0)::numeric)))
 );
 
@@ -851,6 +991,76 @@ CREATE SEQUENCE ap.quotation_id_seq
 --
 
 ALTER SEQUENCE ap.quotation_id_seq OWNED BY ap.quotation.id;
+
+
+--
+-- Name: rfq; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.rfq (
+    id bigint NOT NULL,
+    rfq_number character varying(50) NOT NULL,
+    pr_id bigint NOT NULL,
+    status_id bigint NOT NULL,
+    created_by character varying(100) NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    due_date date,
+    sent_at timestamp with time zone,
+    closed_by character varying(100),
+    closed_at timestamp with time zone
+);
+
+
+--
+-- Name: rfq_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.rfq_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: rfq_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.rfq_id_seq OWNED BY ap.rfq.id;
+
+
+--
+-- Name: rfq_vendor; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.rfq_vendor (
+    id bigint NOT NULL,
+    rfq_id bigint NOT NULL,
+    vendor_id bigint NOT NULL,
+    invited_by character varying(100) NOT NULL,
+    invited_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: rfq_vendor_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.rfq_vendor_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: rfq_vendor_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.rfq_vendor_id_seq OWNED BY ap.rfq_vendor.id;
 
 
 --
@@ -1062,6 +1272,109 @@ ALTER SEQUENCE ap.tax_type_tax_type_id_seq OWNED BY ap.tax_type.tax_type_id;
 
 
 --
+-- Name: ums_role_cache; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.ums_role_cache (
+    role_id integer NOT NULL,
+    role_name character varying(150),
+    raw_payload jsonb,
+    source_ts_ms bigint,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ums_role_cache_role_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.ums_role_cache_role_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ums_role_cache_role_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.ums_role_cache_role_id_seq OWNED BY ap.ums_role_cache.role_id;
+
+
+--
+-- Name: ums_user_cache; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.ums_user_cache (
+    user_id integer NOT NULL,
+    user_uuid uuid NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    raw_payload jsonb,
+    source_ts_ms bigint,
+    synced_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ums_user_cache_user_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.ums_user_cache_user_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ums_user_cache_user_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.ums_user_cache_user_id_seq OWNED BY ap.ums_user_cache.user_id;
+
+
+--
+-- Name: unit_of_measure; Type: TABLE; Schema: ap; Owner: -
+--
+
+CREATE TABLE ap.unit_of_measure (
+    id integer NOT NULL,
+    code character varying(20) NOT NULL,
+    name character varying(100) NOT NULL,
+    category character varying(30) NOT NULL,
+    allows_decimal boolean DEFAULT true NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: unit_of_measure_id_seq; Type: SEQUENCE; Schema: ap; Owner: -
+--
+
+CREATE SEQUENCE ap.unit_of_measure_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: unit_of_measure_id_seq; Type: SEQUENCE OWNED BY; Schema: ap; Owner: -
+--
+
+ALTER SEQUENCE ap.unit_of_measure_id_seq OWNED BY ap.unit_of_measure.id;
+
+
+--
 -- Name: vendor; Type: TABLE; Schema: ap; Owner: -
 --
 
@@ -1238,7 +1551,7 @@ CREATE TABLE ap.vendor_tax (
     is_verified boolean DEFAULT false NOT NULL,
     verified_at timestamp without time zone,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
-    vendor_address_id integer
+    vendor_address_id integer NOT NULL
 );
 
 
@@ -1283,10 +1596,24 @@ ALTER SEQUENCE ap.vendor_vendor_id_seq OWNED BY ap.vendor.vendor_id;
 
 
 --
+-- Name: approver_directory id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.approver_directory ALTER COLUMN id SET DEFAULT nextval('ap.approver_directory_id_seq'::regclass);
+
+
+--
 -- Name: audit_log audit_log_id; Type: DEFAULT; Schema: ap; Owner: -
 --
 
 ALTER TABLE ONLY ap.audit_log ALTER COLUMN audit_log_id SET DEFAULT nextval('ap.audit_log_audit_log_id_seq'::regclass);
+
+
+--
+-- Name: cdc_failure_log id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.cdc_failure_log ALTER COLUMN id SET DEFAULT nextval('ap.cdc_failure_log_id_seq'::regclass);
 
 
 --
@@ -1430,6 +1757,20 @@ ALTER TABLE ONLY ap.quotation ALTER COLUMN id SET DEFAULT nextval('ap.quotation_
 
 
 --
+-- Name: rfq id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq ALTER COLUMN id SET DEFAULT nextval('ap.rfq_id_seq'::regclass);
+
+
+--
+-- Name: rfq_vendor id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq_vendor ALTER COLUMN id SET DEFAULT nextval('ap.rfq_vendor_id_seq'::regclass);
+
+
+--
 -- Name: status_master status_id; Type: DEFAULT; Schema: ap; Owner: -
 --
 
@@ -1465,6 +1806,27 @@ ALTER TABLE ONLY ap.tax_type ALTER COLUMN tax_type_id SET DEFAULT nextval('ap.ta
 
 
 --
+-- Name: ums_role_cache role_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.ums_role_cache ALTER COLUMN role_id SET DEFAULT nextval('ap.ums_role_cache_role_id_seq'::regclass);
+
+
+--
+-- Name: ums_user_cache user_id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.ums_user_cache ALTER COLUMN user_id SET DEFAULT nextval('ap.ums_user_cache_user_id_seq'::regclass);
+
+
+--
+-- Name: unit_of_measure id; Type: DEFAULT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.unit_of_measure ALTER COLUMN id SET DEFAULT nextval('ap.unit_of_measure_id_seq'::regclass);
+
+
+--
 -- Name: vendor vendor_id; Type: DEFAULT; Schema: ap; Owner: -
 --
 
@@ -1493,11 +1855,51 @@ ALTER TABLE ONLY ap.vendor_tax ALTER COLUMN vendor_tax_id SET DEFAULT nextval('a
 
 
 --
+-- Name: approver_directory approver_directory_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.approver_directory
+    ADD CONSTRAINT approver_directory_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: approver_directory_role approver_directory_role_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.approver_directory_role
+    ADD CONSTRAINT approver_directory_role_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: approver_directory_role approver_directory_role_user_role_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.approver_directory_role
+    ADD CONSTRAINT approver_directory_role_user_role_key UNIQUE (user_uuid, role_id);
+
+
+--
+-- Name: approver_directory approver_directory_user_uuid_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.approver_directory
+    ADD CONSTRAINT approver_directory_user_uuid_key UNIQUE (user_uuid);
+
+
+--
 -- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
 --
 
 ALTER TABLE ONLY ap.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (audit_log_id);
+
+
+--
+-- Name: cdc_failure_log cdc_failure_log_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.cdc_failure_log
+    ADD CONSTRAINT cdc_failure_log_pkey PRIMARY KEY (id);
 
 
 --
@@ -1562,6 +1964,22 @@ ALTER TABLE ONLY ap.department
 
 ALTER TABLE ONLY ap.department_purchase_category
     ADD CONSTRAINT department_purchase_category_pkey PRIMARY KEY (department_id, purchase_category_id);
+
+
+--
+-- Name: eos_department_cache eos_department_cache_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.eos_department_cache
+    ADD CONSTRAINT eos_department_cache_pkey PRIMARY KEY (department_uuid);
+
+
+--
+-- Name: eos_employee_cache eos_employee_cache_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.eos_employee_cache
+    ADD CONSTRAINT eos_employee_cache_pkey PRIMARY KEY (employee_uuid);
 
 
 --
@@ -1765,6 +2183,38 @@ ALTER TABLE ONLY ap.quotation
 
 
 --
+-- Name: rfq rfq_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq
+    ADD CONSTRAINT rfq_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: rfq rfq_rfq_number_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq
+    ADD CONSTRAINT rfq_rfq_number_key UNIQUE (rfq_number);
+
+
+--
+-- Name: rfq_vendor rfq_vendor_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq_vendor
+    ADD CONSTRAINT rfq_vendor_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: rfq_vendor rfq_vendor_rfq_id_vendor_id_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq_vendor
+    ADD CONSTRAINT rfq_vendor_rfq_id_vendor_id_key UNIQUE (rfq_id, vendor_id);
+
+
+--
 -- Name: status_master status_master_module_name_status_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
 --
 
@@ -1821,11 +2271,51 @@ ALTER TABLE ONLY ap.tax_rule
 
 
 --
+-- Name: tax_type tax_type_country_id_tax_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.tax_type
+    ADD CONSTRAINT tax_type_country_id_tax_code_key UNIQUE (country_id, tax_code);
+
+
+--
 -- Name: tax_type tax_type_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
 --
 
 ALTER TABLE ONLY ap.tax_type
     ADD CONSTRAINT tax_type_pkey PRIMARY KEY (tax_type_id);
+
+
+--
+-- Name: ums_role_cache ums_role_cache_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.ums_role_cache
+    ADD CONSTRAINT ums_role_cache_pkey PRIMARY KEY (role_id);
+
+
+--
+-- Name: ums_user_cache ums_user_cache_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.ums_user_cache
+    ADD CONSTRAINT ums_user_cache_pkey PRIMARY KEY (user_id);
+
+
+--
+-- Name: unit_of_measure unit_of_measure_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.unit_of_measure
+    ADD CONSTRAINT unit_of_measure_code_key UNIQUE (code);
+
+
+--
+-- Name: unit_of_measure unit_of_measure_pkey; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.unit_of_measure
+    ADD CONSTRAINT unit_of_measure_pkey PRIMARY KEY (id);
 
 
 --
@@ -1893,11 +2383,26 @@ ALTER TABLE ONLY ap.vendor_tax
 
 
 --
+-- Name: vendor_tax vendor_tax_vendor_address_id_registration_type_key; Type: CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.vendor_tax
+    ADD CONSTRAINT vendor_tax_vendor_address_id_registration_type_key UNIQUE (vendor_address_id, registration_type);
+
+
+--
 -- Name: vendor vendor_vendor_code_key; Type: CONSTRAINT; Schema: ap; Owner: -
 --
 
 ALTER TABLE ONLY ap.vendor
     ADD CONSTRAINT vendor_vendor_code_key UNIQUE (vendor_code);
+
+
+--
+-- Name: idx_audit_log_changed_at; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_audit_log_changed_at ON ap.audit_log USING btree (changed_at);
 
 
 --
@@ -2139,10 +2644,24 @@ CREATE INDEX idx_pr_status ON ap.purchase_requisition USING btree (status_id);
 
 
 --
+-- Name: idx_purchase_category_department; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_purchase_category_department ON ap.purchase_category USING btree (department_id);
+
+
+--
 -- Name: idx_quotation_pr; Type: INDEX; Schema: ap; Owner: -
 --
 
 CREATE INDEX idx_quotation_pr ON ap.quotation USING btree (pr_id);
+
+
+--
+-- Name: idx_quotation_rfq; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_quotation_rfq ON ap.quotation USING btree (rfq_id);
 
 
 --
@@ -2157,6 +2676,34 @@ CREATE INDEX idx_quotation_status ON ap.quotation USING btree (status_id);
 --
 
 CREATE INDEX idx_quotation_vendor ON ap.quotation USING btree (vendor_id);
+
+
+--
+-- Name: idx_rfq_pr; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_rfq_pr ON ap.rfq USING btree (pr_id);
+
+
+--
+-- Name: idx_rfq_status; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_rfq_status ON ap.rfq USING btree (status_id);
+
+
+--
+-- Name: idx_rfq_vendor_rfq; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_rfq_vendor_rfq ON ap.rfq_vendor USING btree (rfq_id);
+
+
+--
+-- Name: idx_rfq_vendor_vendor; Type: INDEX; Schema: ap; Owner: -
+--
+
+CREATE INDEX idx_rfq_vendor_vendor ON ap.rfq_vendor USING btree (vendor_id);
 
 
 --
@@ -2199,6 +2746,13 @@ CREATE INDEX idx_vendor_email ON ap.vendor USING btree (email);
 --
 
 CREATE INDEX idx_vendor_status ON ap.vendor USING btree (status_id);
+
+
+--
+-- Name: approver_directory update_approver_directory_modtime; Type: TRIGGER; Schema: ap; Owner: -
+--
+
+CREATE TRIGGER update_approver_directory_modtime BEFORE UPDATE ON ap.approver_directory FOR EACH ROW EXECUTE FUNCTION ap.update_modified_column();
 
 
 --
@@ -2330,11 +2884,27 @@ ALTER TABLE ONLY ap.purchase_requisition
 
 
 --
+-- Name: purchase_category fk_purchase_category_department; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.purchase_category
+    ADD CONSTRAINT fk_purchase_category_department FOREIGN KEY (department_id) REFERENCES ap.department(id);
+
+
+--
 -- Name: quotation fk_quotation_pr; Type: FK CONSTRAINT; Schema: ap; Owner: -
 --
 
 ALTER TABLE ONLY ap.quotation
     ADD CONSTRAINT fk_quotation_pr FOREIGN KEY (pr_id) REFERENCES ap.purchase_requisition(id) ON DELETE CASCADE;
+
+
+--
+-- Name: quotation fk_quotation_rfq; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.quotation
+    ADD CONSTRAINT fk_quotation_rfq FOREIGN KEY (rfq_id) REFERENCES ap.rfq(id) ON DELETE SET NULL;
 
 
 --
@@ -2351,6 +2921,38 @@ ALTER TABLE ONLY ap.quotation
 
 ALTER TABLE ONLY ap.quotation
     ADD CONSTRAINT fk_quotation_vendor FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
+
+
+--
+-- Name: rfq fk_rfq_pr; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq
+    ADD CONSTRAINT fk_rfq_pr FOREIGN KEY (pr_id) REFERENCES ap.purchase_requisition(id) ON DELETE CASCADE;
+
+
+--
+-- Name: rfq fk_rfq_status; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq
+    ADD CONSTRAINT fk_rfq_status FOREIGN KEY (status_id) REFERENCES ap.status_master(status_id);
+
+
+--
+-- Name: rfq_vendor fk_rfq_vendor_rfq; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq_vendor
+    ADD CONSTRAINT fk_rfq_vendor_rfq FOREIGN KEY (rfq_id) REFERENCES ap.rfq(id) ON DELETE CASCADE;
+
+
+--
+-- Name: rfq_vendor fk_rfq_vendor_vendor; Type: FK CONSTRAINT; Schema: ap; Owner: -
+--
+
+ALTER TABLE ONLY ap.rfq_vendor
+    ADD CONSTRAINT fk_rfq_vendor_vendor FOREIGN KEY (vendor_id) REFERENCES ap.vendor(vendor_id);
 
 
 --
@@ -2652,6 +3254,4 @@ ALTER TABLE ONLY ap.vendor_tax
 --
 -- PostgreSQL database dump complete
 --
-
-\unrestrict 24blkwLEGiYZghsaGi1qs0OVVumsInAu5k8PK5TYRG3LAhGUItbP56ikK57BfvX
 

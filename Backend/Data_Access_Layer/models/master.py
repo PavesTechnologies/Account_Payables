@@ -3,7 +3,7 @@ from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
 
-from sqlalchemy import Boolean, CHAR, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
+from sqlalchemy import Boolean, CHAR, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from Backend.Data_Access_Layer.models.base import Base
 
@@ -211,7 +211,7 @@ class TaxRule(Base):
     )
 
     description: Mapped[Optional[str]] = mapped_column(
-        String(255)
+        Text
     )
 
     priority: Mapped[int] = mapped_column(

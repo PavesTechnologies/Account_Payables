@@ -1,7 +1,9 @@
 *.env
 */pycache/
 **.pyc
-*__init__.py
 *ap/
 .ap/
 .venv/
+*__init__.py
+__init__.py
+**/__init__.py
