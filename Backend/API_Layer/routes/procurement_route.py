@@ -28,10 +28,21 @@ from Backend.API_Layer.interface.procurement_interface import (
     SelectVendorRequest,
     SourcingDecisionRequest,
 )
+from Backend.API_Layer.interface.quotation_extraction_interface import (
+    QuotationExtractionResponse,
+)
 from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.s3_utils import download_from_s3, upload_to_s3, view_from_s3
 from Backend.Business_Layer.services.procurement_service import ProcurementService
-from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
+from Backend.Business_Layer.services.quotation_extraction_service import (
+    QuotationExtractionService,
+)
+from Backend.Business_Layer.utils.exceptions import (
+    InvalidUploadFile,
+    QuotationExtractionFailure,
+    TextractServiceError,
+    UnsupportedFileType,
+)
 
 router = APIRouter()
 
@@ -550,6 +561,72 @@ def record_sourcing_decision(pr_id: int, payload: SourcingDecisionRequest, http_
 # ---------------------------------------------------------
 # Quotation
 # ---------------------------------------------------------
+@router.post(
+    "/quotations/extract",
+    response_model=QuotationExtractionResponse,
+    dependencies=[
+        Depends(permission_based_access(["QUOTATION_CREATE"]))
+    ],
+)
+async def extract_quotation(
+    http_request: Request,
+    file: UploadFile = File(...),
+):
+    """Document -> structured quotation data for the Add Quotation
+    form to pre-fill. Read-only: no Quotation/Vendor record is created
+    or updated here - the existing create-quotation endpoint above
+    remains the only place a quotation is persisted, from whatever
+    values the PR Officer reviews/edits in the frontend afterward."""
+
+    db = http_request.state.db
+
+    content = await file.read()
+
+    try:
+        validate_upload_file(file, content)
+    except (UnsupportedFileType, InvalidUploadFile) as e:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid quotation document",
+        ) from e
+
+    try:
+        upload_result = upload_to_s3(file.filename, content, file.content_type)
+
+        service = QuotationExtractionService(db)
+        result = await service.extract(s3_key=upload_result["filepath"])
+
+        return QuotationExtractionResponse(
+            success=True,
+            message=result["message"],
+            data=result["data"],
+        )
+
+    except QuotationExtractionFailure as e:
+        raise HTTPException(
+            status_code=422,
+            detail="Unable to extract quotation details from the document",
+        ) from e
+
+    except TextractServiceError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Quotation document extraction service is "
+                "temporarily unavailable"
+            ),
+        ) from e
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to process quotation document",
+        ) from e
+
+
 @router.post(
     "/purchase-requisitions/{pr_id}/quotations",
     response_model=QuotationResponse,

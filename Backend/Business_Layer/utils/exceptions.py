@@ -41,3 +41,11 @@ class InvalidUploadFile(InvoiceProcessingError):
 
 class DuplicateInvoiceError(InvoiceProcessingError):
     """Raised when a matched vendor already has an invoice with the same invoice_number."""
+
+
+class QuotationExtractionFailure(InvoiceProcessingError):
+    """Raised when no quotation fields at all could be extracted from a document."""
+
+
+class TextractServiceError(InvoiceProcessingError):
+    """Raised when the underlying AWS Textract call fails, times out, or reports a failed job."""

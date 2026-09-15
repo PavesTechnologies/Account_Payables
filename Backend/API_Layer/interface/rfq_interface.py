@@ -43,6 +43,7 @@ class RFQDTO(BaseModel):
     sent_at: Optional[datetime.datetime]
     closed_by: Optional[str]
     closed_at: Optional[datetime.datetime]
+
     # Field name matches the RFQ ORM relationship attribute (rfq_vendor) so
     # FastAPI can populate it directly from the model instance.
     rfq_vendor: List[RFQVendorDTO] = Field(default_factory=list)
@@ -56,6 +57,13 @@ class RFQResponse(BaseModel):
 # =====================================================
 # Send RFQ (email dispatch results)
 # =====================================================
+
+
+class SendRFQRequest(BaseModel):
+    """
+    Request payload for sending an RFQ to selected invited vendors.
+    """
+    vendor_ids: List[int] = Field(..., min_length=1)
 
 
 class RFQVendorSendResultDTO(BaseModel):
