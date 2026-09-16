@@ -3,7 +3,7 @@ from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from Backend.Data_Access_Layer.models.base import Base
@@ -15,14 +15,17 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.approval import InvoiceApproval
     from Backend.Data_Access_Layer.models.payment import PaymentInvoice
     from Backend.Data_Access_Layer.models.master import Currency, PaymentTerm, StatusMaster, TaxType
+    from Backend.Data_Access_Layer.models.purchase import Department, PurchaseCategory
 
 class Invoice(Base):
     __tablename__ = 'invoice'
     __table_args__ = (
         ForeignKeyConstraint(['currency_id'], ['ap.currency.currency_id'], name='invoice_currency_id_fkey'),
+        ForeignKeyConstraint(['department_id'], ['ap.department.id'], name='invoice_department_id_fkey'),
         ForeignKeyConstraint(['grn_id'], ['ap.goods_receipt.grn_id'], name='invoice_grn_id_fkey'),
         ForeignKeyConstraint(['inbound_document_id'], ['ap.inbound_document.inbound_document_id'], name='invoice_inbound_document_id_fkey'),
         ForeignKeyConstraint(['payment_term_id'], ['ap.payment_term.payment_term_id'], name='invoice_payment_term_id_fkey'),
+        ForeignKeyConstraint(['purchase_category_id'], ['ap.purchase_category.id'], name='invoice_purchase_category_id_fkey'),
         ForeignKeyConstraint(['status_id'], ['ap.status_master.status_id'], name='invoice_status_id_fkey'),
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='invoice_vendor_id_fkey'),
         PrimaryKeyConstraint('invoice_id', name='invoice_pkey'),
@@ -55,8 +58,16 @@ class Invoice(Base):
     status_id: Mapped[Optional[int]] = mapped_column(Integer)
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))
+    # Approval context: for a PO invoice, derived from the PR behind the PO;
+    # for a NON-PO invoice, collected during review. Nullable - only
+    # required once an invoice is actually sent for approval (see
+    # InvoiceApprovalService.send_for_approval).
+    department_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    purchase_category_id: Mapped[Optional[int]] = mapped_column(BigInteger)
 
     currency: Mapped['Currency'] = relationship('Currency', back_populates='invoice')
+    department: Mapped[Optional['Department']] = relationship('Department')
+    purchase_category: Mapped[Optional['PurchaseCategory']] = relationship('PurchaseCategory')
     grn: Mapped[Optional['GoodsReceipt']] = relationship('GoodsReceipt', back_populates='invoice')
     inbound_document: Mapped[Optional['InboundDocument']] = relationship('InboundDocument', foreign_keys=[inbound_document_id])
     payment_term: Mapped[Optional['PaymentTerm']] = relationship('PaymentTerm', back_populates='invoice')

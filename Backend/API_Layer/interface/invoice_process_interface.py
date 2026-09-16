@@ -282,6 +282,13 @@ class InvoiceOCRReviewRequest(BaseModel):
     ``vendor_id`` is required the first time this is submitted for a
     document whose vendor could not be auto-matched (Path B); optional
     thereafter, when merely confirming/correcting an already-matched invoice.
+
+    ``department_id``/``purchase_category_id`` are the approval-routing
+    context (see Backend/Business_Layer/services/invoice_approval_service.py).
+    Required for a NON_PO invoice (there's no other source for them);
+    ignored for a PO invoice, where apply_ocr_review derives them from the
+    PO's purchase requisition instead - the client-submitted value would
+    never be trusted over that authoritative source anyway.
     """
 
     vendor_id: Optional[int] = None
@@ -296,6 +303,8 @@ class InvoiceOCRReviewRequest(BaseModel):
     net_amount: Optional[Decimal] = None
     po_id: Optional[int] = None
     payment_term_id: Optional[int] = None
+    department_id: Optional[int] = None
+    purchase_category_id: Optional[int] = None
     lines: Optional[List[InvoiceLineReviewRequest]] = None
 
 class UploadDocumentResponse(BaseModel):

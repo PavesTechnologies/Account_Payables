@@ -8,6 +8,7 @@ from fastapi.openapi.utils import get_openapi
 from Backend.API_Layer.middleware.db_middleware import DBSessionMiddleware
 from Backend.API_Layer.middleware.jwt_middleware import JWTMiddleware
 from Backend.API_Layer.routes import (
+    approval_policy_route,
     goods_receipt_route,
     intake_route,
     invoice_approval_route,
@@ -131,6 +132,7 @@ api_router.include_router(goods_receipt_route.router, tags=["Goods Receipt"], pr
 api_router.include_router(payment_route.router, tags=["Payment"], prefix="/payment")
 api_router.include_router(procurement_route.router, tags=["Procurement"], prefix="/procurement")
 api_router.include_router(rfq_route.router, tags=["RFQ"], prefix="/rfq")
+api_router.include_router(approval_policy_route.router, tags=["Approval Policy"])
 app.include_router(api_router)
 
 

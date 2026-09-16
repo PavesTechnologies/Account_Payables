@@ -208,6 +208,16 @@ class _FakeMasterDAO:
     def get_system_config_by_key(self, key):
         return None
 
+    def get_department_by_id(self, department_id):
+        if department_id == 10:
+            return SimpleNamespace(id=10, is_active=True)
+        return None
+
+    def get_purchase_category_by_id(self, purchase_category_id):
+        if purchase_category_id == 20:
+            return SimpleNamespace(id=20, is_active=True, department_id=10)
+        return None
+
 
 class _FakeInboundDocumentDAO:
     def __init__(self, db):
@@ -396,6 +406,10 @@ def test_apply_ocr_review_create_branch_success():
         currency_id=1,
         gross_amount=Decimal("1000.00"),
         net_amount=Decimal("1180.00"),
+        # NON_PO (the default) needs these - there's no other source for
+        # the approval-routing context. See _resolve_approval_context.
+        department_id=10,
+        purchase_category_id=20,
         lines=[InvoiceLineReviewRequest(line_number=1, description="Laptop", line_amount=Decimal("1000.00"))],
     )
 
@@ -411,6 +425,11 @@ def test_apply_ocr_review_update_branch_resolves_open_issues():
     db = _FakeDB()
     existing_invoice = SimpleNamespace(
         invoice_id=555, invoice_line=[], status_id=6, updated_by=None, vendor_id=42,
+        # PO with no po_id yet: _resolve_approval_context returns early
+        # without needing department/category, which this test isn't
+        # about - see test_apply_ocr_review_po_mandatory_flags_issue_
+        # without_blocking for the analogous PO_MANDATORY case.
+        invoice_type="PO", po_id=None,
     )
     inbound_document = _inbound_document(invoice_id=555)
     _FakeInboundDocumentDAO._store[3] = inbound_document
@@ -442,7 +461,7 @@ def test_apply_ocr_review_po_mandatory_flags_issue_without_blocking(monkeypatch)
     db = _FakeDB()
     existing_invoice = SimpleNamespace(
         invoice_id=556, invoice_line=[], status_id=6, updated_by=None, vendor_id=42,
-        po_id=None, net_amount=Decimal("10.00"),
+        po_id=None, net_amount=Decimal("10.00"), invoice_type="PO",
     )
     inbound_document = _inbound_document(invoice_id=556)
     _FakeInboundDocumentDAO._store[4] = inbound_document

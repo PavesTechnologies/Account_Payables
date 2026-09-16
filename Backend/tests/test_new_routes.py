@@ -18,7 +18,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from Backend.API_Layer.routes import (
     goods_receipt_route,
-    invoice_approval_route,
     payment_route,
     purchase_order_route,
 )
@@ -37,7 +36,6 @@ def client():
     app.add_middleware(_FakeAuthAndDBMiddleware)
     app.include_router(purchase_order_route.router, prefix="/po")
     app.include_router(goods_receipt_route.router, prefix="/grn")
-    app.include_router(invoice_approval_route.router, prefix="/invoice")
     app.include_router(payment_route.router, prefix="/payment")
     return TestClient(app)
 
@@ -72,65 +70,12 @@ def test_get_grn_not_found_returns_404(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Invoice Approval
+# Invoice Approval is now covered by test_invoice_approval_workflow.py
+# (business logic) and test_invoice_approval_authorization.py (routing/
+# permission wiring) - the old single-level approve_invoice/reject_invoice/
+# get_approval_history API this section used to test no longer exists,
+# replaced by the policy-driven multi-level engine.
 # ---------------------------------------------------------------------------
-
-
-def test_approve_invoice_success(client, monkeypatch):
-    from Backend.Business_Layer.services import invoice_approval_service
-
-    def _approve(self, invoice_id, approver_name, comments):
-        assert approver_name == "test-user"
-        return SimpleNamespace(invoice_approval_id=1)
-
-    monkeypatch.setattr(invoice_approval_service.InvoiceApprovalService, "approve_invoice", _approve)
-
-    response = client.post("/invoice/1/approve", json={"comments": "ok"})
-    assert response.status_code == 200
-    assert response.json()["status_code"] == "APPROVED"
-
-
-def test_approve_invoice_not_pending_returns_422(client, monkeypatch):
-    from Backend.Business_Layer.services import invoice_approval_service
-
-    def _raise(self, invoice_id, approver_name, comments):
-        raise ValueError("Invoice 1 is not pending approval (current status: DRAFT)")
-
-    monkeypatch.setattr(invoice_approval_service.InvoiceApprovalService, "approve_invoice", _raise)
-
-    response = client.post("/invoice/1/approve", json={})
-    assert response.status_code == 422
-
-
-def test_reject_invoice_requires_comments(client):
-    response = client.post("/invoice/1/reject", json={})
-    assert response.status_code == 422  # comments is a required field
-
-
-def test_reject_invoice_success(client, monkeypatch):
-    from Backend.Business_Layer.services import invoice_approval_service
-
-    def _reject(self, invoice_id, approver_name, comments):
-        assert comments == "GST mismatch"
-        return SimpleNamespace(invoice_approval_id=2)
-
-    monkeypatch.setattr(invoice_approval_service.InvoiceApprovalService, "reject_invoice", _reject)
-
-    response = client.post("/invoice/1/reject", json={"comments": "GST mismatch"})
-    assert response.status_code == 200
-    assert response.json()["status_code"] == "REJECTED"
-
-
-def test_get_approval_history_not_found_returns_404(client, monkeypatch):
-    from Backend.Business_Layer.services import invoice_approval_service
-
-    def _raise(self, invoice_id):
-        raise ValueError("Invoice 1 not found")
-
-    monkeypatch.setattr(invoice_approval_service.InvoiceApprovalService, "get_approval_history", _raise)
-
-    response = client.get("/invoice/1/approvals")
-    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------

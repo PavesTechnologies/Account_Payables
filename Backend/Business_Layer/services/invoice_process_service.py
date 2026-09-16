@@ -61,6 +61,8 @@ from Backend.Business_Layer.utils.vendor_matcher import match_vendor
 from Backend.Data_Access_Layer.dao.inbound_document_dao import InboundDocumentDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.master_dao import MasterDAO
+from Backend.Data_Access_Layer.dao.procurement_dao import ProcurementDAO
+from Backend.Data_Access_Layer.dao.purchase_order_dao import PurchaseOrderDAO
 from Backend.Data_Access_Layer.dao.vendor_dao import VendorDAO
 from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
 from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceAttachment, InvoiceLine
@@ -618,6 +620,8 @@ def apply_ocr_review(
             po_required_issue.invoice_id = invoice.invoice_id
             invoice_dao.create_invoice_issue(po_required_issue)
 
+        _resolve_approval_context(invoice, db)
+
         _maybe_auto_approve(invoice, invoice_dao, db)
 
         db.commit()
@@ -626,6 +630,51 @@ def apply_ocr_review(
     except Exception:
         db.rollback()
         raise
+
+
+def _resolve_approval_context(invoice: Invoice, db) -> None:
+    """Populates department_id/purchase_category_id - the approval-routing
+    context InvoiceApprovalService.send_for_approval requires (see
+    Backend/Data_Access_Layer/models/invoice.py).
+
+    PO invoice: always derived from the PO's purchase requisition, never
+    trusted from the client - same reasoning as a PR line's estimated
+    amount always being server-computed rather than client-supplied.
+    Overwrites whatever the client sent, if anything.
+
+    NON_PO invoice: there's no other source, so this is a hard
+    requirement - the review cannot be saved without it.
+    """
+    if invoice.invoice_type == InvoiceType.PO.value:
+        if invoice.po_id is None:
+            return  # the PO_MANDATORY issue above (if enabled) already covers this gap
+        po = PurchaseOrderDAO(db).get_purchase_order_by_id(invoice.po_id)
+        if po is None:
+            raise ValueError(f"Invoice references po_id={invoice.po_id}, which does not exist")
+        pr = ProcurementDAO(db).get_purchase_requisition_by_id(po.pr_id)
+        if pr is None:
+            raise ValueError(
+                f"Purchase order {invoice.po_id} references a purchase requisition that no longer exists"
+            )
+        invoice.department_id = pr.department_id
+        invoice.purchase_category_id = pr.purchase_category_id
+        return
+
+    if invoice.department_id is None or invoice.purchase_category_id is None:
+        raise ValueError(
+            "department_id and purchase_category_id are required for a NON_PO invoice"
+        )
+
+    master_dao = MasterDAO(db)
+    department = master_dao.get_department_by_id(invoice.department_id)
+    if department is None or not department.is_active:
+        raise ValueError("department_id does not match an active department")
+
+    purchase_category = master_dao.get_purchase_category_by_id(invoice.purchase_category_id)
+    if purchase_category is None or not purchase_category.is_active:
+        raise ValueError("purchase_category_id does not match an active purchase category")
+    if purchase_category.department_id != invoice.department_id:
+        raise ValueError("purchase_category_id does not belong to the selected department")
 
 
 def _maybe_auto_approve(invoice: Invoice, invoice_dao: InvoiceDAO, db) -> None:
@@ -695,6 +744,8 @@ def _create_invoice_from_review(
         inbound_document_id=inbound_document.inbound_document_id,
         po_id=review.po_id,
         payment_term_id=review.payment_term_id,
+        department_id=review.department_id,
+        purchase_category_id=review.purchase_category_id,
         created_by=user_id,
         updated_by=user_id,
     )
@@ -713,7 +764,7 @@ def _apply_review_updates(
     simple_fields = (
         "vendor_id", "invoice_number", "invoice_date", "due_date", "currency_id",
         "gross_amount", "discount_amount", "tax_amount", "net_amount", "po_id",
-        "payment_term_id",
+        "payment_term_id", "department_id", "purchase_category_id",
     )
     for field_name in simple_fields:
         value = getattr(review, field_name)
