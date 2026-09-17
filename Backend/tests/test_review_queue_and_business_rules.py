@@ -1,8 +1,8 @@
 # Backend/tests/test_review_queue_and_business_rules.py
-"""Unit tests for:
-- get_review_queue (Path A/Path B, derived — no dedicated queue table)
-- PO_MANDATORY wiring (creates a PO_REQUIRED issue instead of blocking)
-- AUTO_APPROVAL_LIMIT wiring (_maybe_auto_approve)
+"""Unit tests for get_review_queue (Path A/Path B, derived — no dedicated queue table).
+
+PO_MANDATORY wiring is covered in test_invoice_status_and_persistence.py
+(test_apply_ocr_review_po_mandatory_flags_issue_without_blocking).
 
 DAOs are faked, same convention as the rest of this test suite.
 """
@@ -105,12 +105,6 @@ def _patch_daos(monkeypatch):
     monkeypatch.setattr(svc, "InvoiceDAO", _FakeInvoiceDAO)
     monkeypatch.setattr(svc, "InboundDocumentDAO", _FakeInboundDocumentDAO)
     monkeypatch.setattr(svc, "MasterDAO", _FakeMasterDAO)
-
-    def _fake_get_numeric_system_config(db, key, default=None):
-        value = _FakeMasterDAO.config.get(key)
-        return None if value is None else Decimal(value)
-
-    monkeypatch.setattr(svc, "get_numeric_system_config", _fake_get_numeric_system_config)
     yield
 
 
@@ -156,63 +150,3 @@ def test_get_review_queue_pagination_window():
     # Sorted descending by created_at: day5, day4, day3, day2, day1 -> skip 1, take 2 -> day4, day3
     assert items[0]["invoice_id"] == 4
     assert items[1]["invoice_id"] == 3
-
-
-# ---------------------------------------------------------------------------
-# PO_MANDATORY
-# ---------------------------------------------------------------------------
-
-
-def test_maybe_auto_approve_skipped_when_po_required_issue_is_open():
-    _FakeMasterDAO.config["AUTO_APPROVAL_LIMIT"] = "5000"
-    invoice = _Invoice(invoice_id=1, net_amount=Decimal("100"), status_id=8)  # PENDING_APPROVAL
-    invoice_dao = _FakeInvoiceDAO(db=None)
-    invoice_dao.open_issues[1] = [object()]  # an unresolved issue exists (e.g. PO_REQUIRED)
-
-    svc._maybe_auto_approve(invoice, invoice_dao, db=object())
-
-    assert invoice.status_id == 8  # unchanged - still PENDING_APPROVAL
-
-
-# ---------------------------------------------------------------------------
-# AUTO_APPROVAL_LIMIT
-# ---------------------------------------------------------------------------
-
-
-def test_maybe_auto_approve_approves_when_within_limit_and_clean():
-    _FakeMasterDAO.config["AUTO_APPROVAL_LIMIT"] = "5000"
-    invoice = _Invoice(invoice_id=1, net_amount=Decimal("100"), status_id=8)  # PENDING_APPROVAL
-    invoice_dao = _FakeInvoiceDAO(db=None)
-
-    svc._maybe_auto_approve(invoice, invoice_dao, db=object())
-
-    assert invoice.status_id == 9  # APPROVED
-
-
-def test_maybe_auto_approve_does_nothing_when_over_limit():
-    _FakeMasterDAO.config["AUTO_APPROVAL_LIMIT"] = "5000"
-    invoice = _Invoice(invoice_id=1, net_amount=Decimal("50000"), status_id=8)
-    invoice_dao = _FakeInvoiceDAO(db=None)
-
-    svc._maybe_auto_approve(invoice, invoice_dao, db=object())
-
-    assert invoice.status_id == 8  # unchanged
-
-
-def test_maybe_auto_approve_does_nothing_when_limit_not_configured():
-    invoice = _Invoice(invoice_id=1, net_amount=Decimal("100"), status_id=8)
-    invoice_dao = _FakeInvoiceDAO(db=None)
-
-    svc._maybe_auto_approve(invoice, invoice_dao, db=object())
-
-    assert invoice.status_id == 8  # unchanged - AUTO_APPROVAL_LIMIT not configured
-
-
-def test_maybe_auto_approve_ignores_invoices_not_pending_approval():
-    _FakeMasterDAO.config["AUTO_APPROVAL_LIMIT"] = "5000"
-    invoice = _Invoice(invoice_id=1, net_amount=Decimal("100"), status_id=5)  # some other status
-    invoice_dao = _FakeInvoiceDAO(db=None)
-
-    svc._maybe_auto_approve(invoice, invoice_dao, db=object())
-
-    assert invoice.status_id == 5  # untouched

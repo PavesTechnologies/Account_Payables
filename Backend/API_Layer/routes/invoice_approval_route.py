@@ -17,6 +17,7 @@ from Backend.API_Layer.interface.approval_interface import (
     InvoiceApprovalDecisionRequest,
     InvoiceApprovalStepDTO,
     InvoiceRejectionRequest,
+    InvoiceSendBackRequest,
     StatusResponse,
 )
 from Backend.Business_Layer.services.invoice_approval_service import InvoiceApprovalService
@@ -24,6 +25,14 @@ from Backend.Business_Layer.services.invoice_approval_service import InvoiceAppr
 router = APIRouter()
 
 _INVOICE_NOT_FOUND = "not found"
+
+# Viewing the approval status/timeline is broader than deciding on it — per the role matrix, an
+# AP Executive tracking what they submitted and a Finance user checking why an invoice isn't
+# Approved yet both need read access here too, not just an actual approver. INVOICE_VIEW is the
+# one permission every AP Invoice group (Intake/Approver/Finance) carries, so it alone covers all
+# three; INVOICE_APPROVE/INVOICE_REJECT stay listed for a caller who somehow holds those without
+# INVOICE_VIEW.
+_APPROVAL_VIEW_PERMISSIONS = ["INVOICE_VIEW", "INVOICE_APPROVAL_VIEW", "INVOICE_APPROVE", "INVOICE_REJECT"]
 
 
 def _get_user_id(http_request: Request) -> str:
@@ -111,12 +120,33 @@ def reject_invoice(invoice_id: int, payload: InvoiceRejectionRequest, http_reque
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post(
+    "/{invoice_id}/send-back",
+    response_model=InvoiceApprovalDTO,
+    dependencies=[
+        Depends(permission_based_access(["INVOICE_SEND_BACK"]))
+    ],
+)
+def send_invoice_back(invoice_id: int, payload: InvoiceSendBackRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        user_id = _get_user_id(http_request)
+        return InvoiceApprovalService(db).send_back(invoice_id, user_id, payload.comments)
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=_status_code_for(str(e)), detail=str(e))
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get(
     "/{invoice_id}/approval",
     response_model=InvoiceApprovalDTO,
-    dependencies=[
-        Depends(permission_based_access(["INVOICE_APPROVAL_VIEW", "INVOICE_APPROVE", "INVOICE_REJECT"]))
-    ],
+    dependencies=[Depends(permission_based_access(_APPROVAL_VIEW_PERMISSIONS))],
 )
 def get_invoice_approval(invoice_id: int, http_request: Request):
     db = http_request.state.db
@@ -134,9 +164,7 @@ def get_invoice_approval(invoice_id: int, http_request: Request):
 @router.get(
     "/{invoice_id}/approval/steps",
     response_model=List[InvoiceApprovalStepDTO],
-    dependencies=[
-        Depends(permission_based_access(["INVOICE_APPROVAL_VIEW", "INVOICE_APPROVE", "INVOICE_REJECT"]))
-    ],
+    dependencies=[Depends(permission_based_access(_APPROVAL_VIEW_PERMISSIONS))],
 )
 def get_invoice_approval_steps(invoice_id: int, http_request: Request):
     db = http_request.state.db

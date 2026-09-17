@@ -11,6 +11,7 @@ from Backend.Data_Access_Layer.models.invoice import (
 )
 from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
 from Backend.Data_Access_Layer.models.master import StatusMaster
+from Backend.Data_Access_Layer.models.audit import AuditLog
 
 INVOICE_STATUS_MODULE = "INVOICE"
 
@@ -123,6 +124,24 @@ class InvoiceDAO:
     def update_invoice(self, invoice: Invoice) -> Invoice:
         self.db.merge(invoice)
         return invoice
+    def create_audit_log(self, audit_log: AuditLog) -> AuditLog:
+        self.db.add(audit_log)
+        self.db.flush()
+        return audit_log
+
+    def get_audit_log_for_record(self, table_name: str, record_id: int) -> List[AuditLog]:
+        """Full lifecycle history for one record — invoice creation/OCR-review events are
+        recorded here directly (see invoice_process_service.py); approval and payment events
+        are recorded the same way by their own services (same shared ap.audit_log table,
+        table_name='invoice' for both, since a payment audit row's record_id is the payment,
+        not the invoice — only invoice-authored events land under table_name='invoice')."""
+        return (
+            self.db.query(AuditLog)
+            .filter(AuditLog.table_name == table_name, AuditLog.record_id == record_id)
+            .order_by(AuditLog.changed_at.asc())
+            .all()
+        )
+
     def get_all_statuses(self) -> List[StatusMaster]:
         return (
             self.db.query(StatusMaster)

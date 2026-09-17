@@ -13,6 +13,7 @@ from Backend.Data_Access_Layer.dao.invoice_extraction_dao import (
     InvoiceExtractionDAO,
 )
 from Backend.Data_Access_Layer.dao.master_dao import MasterDAO
+from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.inbound_document import (
     InboundDocument,
 )
@@ -631,13 +632,9 @@ class InvoiceExtractionService:
 
         validation = extracted.validation
 
-        print(
-            "Extraction validation status:",
+        logger.debug(
+            "Extraction validation status=%s is_valid=%s",
             validation.status,
-        )
-
-        print(
-            "Extraction is valid:",
             validation.is_valid,
         )
 
@@ -1665,6 +1662,20 @@ class InvoiceExtractionService:
                 invoice_dao.create_invoice_attachment(attachment)
 
             inbound_document.invoice_id = invoice.invoice_id
+
+            # Mirrors invoice_process_service.apply_ocr_review's INVOICE_CREATED write — this is
+            # the other invoice-creation pathway (Stage 1 upload/review/create-invoice, used by
+            # InvoiceUploadPage) and had no audit trail at all before this, so an invoice created
+            # here showed "no activity recorded yet" on its own detail page forever.
+            invoice_dao.create_audit_log(
+                AuditLog(
+                    table_name="invoice",
+                    record_id=invoice.invoice_id,
+                    action="INVOICE_CREATED",
+                    changed_by=str(created_by) if created_by is not None else None,
+                    new_values={"invoice_number": invoice.invoice_number, "vendor_id": vendor_id},
+                )
+            )
 
             self.db.commit()
             self.db.refresh(invoice)

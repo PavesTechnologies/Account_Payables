@@ -23,21 +23,36 @@ from Backend.API_Layer.routes import (
 )
 
 
-class _FakeAuthAndDBMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        request.state.user = {"user_id": "test-user"}
-        request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
-        return await call_next(request)
+def _make_middleware(permissions):
+    class _FakeAuthAndDBMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user = {"user_id": "test-user", "permissions": permissions}
+            request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
+            return await call_next(request)
+
+    return _FakeAuthAndDBMiddleware
 
 
-@pytest.fixture
-def client():
+def _make_client(permissions):
     app = FastAPI()
-    app.add_middleware(_FakeAuthAndDBMiddleware)
+    app.add_middleware(_make_middleware(permissions))
     app.include_router(purchase_order_route.router, prefix="/po")
     app.include_router(goods_receipt_route.router, prefix="/grn")
     app.include_router(payment_route.router, prefix="/payment")
     return TestClient(app)
+
+
+@pytest.fixture
+def client():
+    """PO/GRN routes have no permission gate (pre-existing, unrelated to this feature) — an
+    empty permissions list is fine for those. Payment routes now do (PAYMENT_VIEW/
+    PAYMENT_PROCESS), so the payment tests below use payment_client instead."""
+    return _make_client([])
+
+
+@pytest.fixture
+def payment_client():
+    return _make_client(["PAYMENT_VIEW", "PAYMENT_PROCESS"])
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +110,7 @@ def _payment_payload(**overrides):
     return payload
 
 
-def test_create_payment_success(client, monkeypatch):
+def test_create_payment_success(payment_client, monkeypatch):
     from Backend.Business_Layer.services import payment_service
 
     def _create(self, request, user_id):
@@ -104,12 +119,12 @@ def test_create_payment_success(client, monkeypatch):
 
     monkeypatch.setattr(payment_service.PaymentService, "create_payment", _create)
 
-    response = client.post("/payment", json=_payment_payload())
+    response = payment_client.post("/payment", json=_payment_payload())
     assert response.status_code == 200
     assert response.json()["payment_id"] == 42
 
 
-def test_create_payment_over_allocation_returns_422(client, monkeypatch):
+def test_create_payment_over_allocation_returns_422(payment_client, monkeypatch):
     from Backend.Business_Layer.services import payment_service
 
     def _raise(self, request, user_id):
@@ -117,16 +132,16 @@ def test_create_payment_over_allocation_returns_422(client, monkeypatch):
 
     monkeypatch.setattr(payment_service.PaymentService, "create_payment", _raise)
 
-    response = client.post("/payment", json=_payment_payload())
+    response = payment_client.post("/payment", json=_payment_payload())
     assert response.status_code == 422
 
 
-def test_create_payment_requires_at_least_one_allocation(client):
-    response = client.post("/payment", json=_payment_payload(allocations=[]))
+def test_create_payment_requires_at_least_one_allocation(payment_client):
+    response = payment_client.post("/payment", json=_payment_payload(allocations=[]))
     assert response.status_code == 422
 
 
-def test_update_payment_status_invalid_transition_returns_422(client, monkeypatch):
+def test_update_payment_status_invalid_transition_returns_422(payment_client, monkeypatch):
     from Backend.Business_Layer.services import payment_service
 
     def _raise(self, payment_id, status_code, payment_date, reference_number, user_id):
@@ -134,11 +149,11 @@ def test_update_payment_status_invalid_transition_returns_422(client, monkeypatc
 
     monkeypatch.setattr(payment_service.PaymentService, "update_status", _raise)
 
-    response = client.patch("/payment/1/status", json={"status_code": "SENT"})
+    response = payment_client.patch("/payment/1/status", json={"status_code": "SENT"})
     assert response.status_code == 422
 
 
-def test_get_payment_not_found_returns_404(client, monkeypatch):
+def test_get_payment_not_found_returns_404(payment_client, monkeypatch):
     from Backend.Business_Layer.services import payment_service
 
     def _raise(self, payment_id):
@@ -146,5 +161,15 @@ def test_get_payment_not_found_returns_404(client, monkeypatch):
 
     monkeypatch.setattr(payment_service.PaymentService, "get_payment", _raise)
 
-    response = client.get("/payment/999")
+    response = payment_client.get("/payment/999")
     assert response.status_code == 404
+
+
+def test_create_payment_denied_without_permission():
+    response = _make_client([]).post("/payment", json=_payment_payload())
+    assert response.status_code == 403
+
+
+def test_get_payment_denied_without_permission():
+    response = _make_client([]).get("/payment/999")
+    assert response.status_code == 403

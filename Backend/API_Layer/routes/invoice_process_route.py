@@ -11,14 +11,27 @@ Endpoints:
     POST /validate-fields  - developer API: business validation
     POST /match-vendor     - developer API: vendor master matching (placeholder)
     POST /process-invoice  - production API: full pipeline, reusing every stage above
+
+NOT CALLED BY THE FRONTEND (confirmed by tracing every AP invoice service call in
+src/pages/accounts-payable/invoice/services/*.js, 2026-09): the frontend's real upload/intake
+pipeline is invoice_extraction_route.py's separate extract-fields -> validate-fields ->
+per-section corrections -> create-invoice flow, not this file's upload-document/extract-fields/
+validate-fields/match-vendor/process-invoice. Each of those five is annotated individually below.
+Kept live and tested (see test_process_invoice_route.py) rather than removed — this predates the
+other pipeline and may still serve a non-UI integration — but do not assume it's what Invoice
+Management actually runs today. inbound-documents/{id}/ocr-review and /review-queue below ARE
+live (the OCR Review Queue page), and {invoice_id}/matching is real, callable capability simply
+not yet wired into any frontend screen (see InvoicePaymentPanel's own gap note) — neither of
+those three is "unused" in the sense the five above are.
 """
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, Request
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Request
 from sqlalchemy.exc import IntegrityError
 
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 from Backend.Business_Layer.services import invoice_process_service as service
 from Backend.Business_Layer.utils.exceptions import (
     DuplicateInvoiceError,
@@ -49,6 +62,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Same intake capability as invoice_extraction_route.py's pipeline — one permission for the
+# whole extract/validate/match/persist chain, since only /process-invoice and /ocr-review
+# actually write to the Invoice DB.
+_INTAKE_PERMISSIONS = ["INVOICE_CREATE"]
+_OCR_REVIEW_PERMISSIONS = ["INVOICE_OCR_REVIEW"]
+_VIEW_PERMISSIONS = ["INVOICE_VIEW"]
+
 
 def _get_user_id(http_request: Request) -> str:
     """Extract the authenticated user id from the JWT payload set by JWTMiddleware.
@@ -69,9 +89,13 @@ def _get_user_id(http_request: Request) -> str:
 
 
 # ---------------------------------------------------------
-# 1. Upload Document (developer API)
+# 1. Upload Document (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
 # ---------------------------------------------------------
-@router.post("/upload-document", response_model=DocumentResult)
+@router.post(
+    "/upload-document",
+    response_model=DocumentResult,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+)
 async def upload_document(file: UploadFile = File(...)):
     """Upload a document and run technical classification + text extraction only.
 
@@ -97,9 +121,13 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------
-# 2. Extract Fields (developer API)
+# 2. Extract Fields (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
 # ---------------------------------------------------------
-@router.post("/extract-fields", response_model=ExtractedInvoice)
+@router.post(
+    "/extract-fields",
+    response_model=ExtractedInvoice,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+)
 def extract_fields(document: DocumentResult):
     """Extract invoice fields from a DocumentResult using anchors/regex/geometry only."""
     try:
@@ -114,9 +142,13 @@ def extract_fields(document: DocumentResult):
 
 
 # ---------------------------------------------------------
-# 3. Validate Fields (developer API)
+# 3. Validate Fields (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
 # ---------------------------------------------------------
-@router.post("/validate-fields", response_model=ValidationResult)
+@router.post(
+    "/validate-fields",
+    response_model=ValidationResult,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+)
 def validate_fields(extracted_invoice: ExtractedInvoice):
     """Validate GSTIN, invoice date, due date, totals, and invoice number."""
     try:
@@ -131,9 +163,13 @@ def validate_fields(extracted_invoice: ExtractedInvoice):
 
 
 # ---------------------------------------------------------
-# 4. Match Vendor (developer API)
+# 4. Match Vendor (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
 # ---------------------------------------------------------
-@router.post("/match-vendor", response_model=VendorMatch)
+@router.post(
+    "/match-vendor",
+    response_model=VendorMatch,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+)
 def match_vendor(
     extracted_invoice: ExtractedInvoice,
     http_request: Request,
@@ -163,9 +199,16 @@ def match_vendor(
 
 
 # ---------------------------------------------------------
-# 5. Process Invoice (production API)
+# 5. Process Invoice (production API) — NOT CALLED BY THE FRONTEND, see module docstring. Despite
+# the "production API" label this carries from its original design, Invoice Management today
+# runs entirely on invoice_extraction_route.py's extract-fields/validate-fields/create-invoice
+# instead — this full auto-pipeline (OCR -> vendor match -> persist) is not what's live in the UI.
 # ---------------------------------------------------------
-@router.post("/process-invoice", response_model=FinalResponse)
+@router.post(
+    "/process-invoice",
+    response_model=FinalResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+)
 async def process_invoice(http_request: Request, file: UploadFile = File(...)):
     """Full production pipeline: validate -> S3 upload -> InboundDocument ->
     OCR/extraction/validation/vendor-matching/confidence (service.process_invoice,
@@ -175,7 +218,7 @@ async def process_invoice(http_request: Request, file: UploadFile = File(...)):
     content = await file.read()
 
     try:
-        print("Validating upload file...")
+        logger.debug("Validating upload file '%s'", file.filename)
         validate_upload_file(file, content)
     except (UnsupportedFileType, InvalidUploadFile) as e:
         status_code = 415 if isinstance(e, UnsupportedFileType) else 400
@@ -228,7 +271,10 @@ async def process_invoice(http_request: Request, file: UploadFile = File(...)):
 # ---------------------------------------------------------
 # 6. Manual OCR Review (AP Executive correction/confirmation)
 # ---------------------------------------------------------
-@router.patch("/inbound-documents/{inbound_document_id}/ocr-review")
+@router.patch(
+    "/inbound-documents/{inbound_document_id}/ocr-review",
+    dependencies=[Depends(permission_based_access(_OCR_REVIEW_PERMISSIONS))],
+)
 def ocr_review(
     inbound_document_id: int,
     review: InvoiceOCRReviewRequest,
@@ -239,7 +285,8 @@ def ocr_review(
     Creates the Invoice for the first time when this document's vendor
     could not be auto-matched at /process-invoice time (``vendor_id`` is
     then required in the body), or updates the existing invoice
-    otherwise. Either way, ends at PENDING_APPROVAL.
+    otherwise. Either way, ends at OCR_REVIEWED — Send for Approval is
+    the separate, deliberate action that moves it on to PENDING_APPROVAL.
     """
     try:
         user_id = _get_user_id(http_request)
@@ -263,14 +310,18 @@ def ocr_review(
 
     return success_response(
         data={"invoice_id": invoice.invoice_id, "status_id": invoice.status_id},
-        message="Invoice review completed; moved to PENDING_APPROVAL.",
+        message="Invoice review completed; moved to OCR_REVIEWED.",
     )
 
 
 # ---------------------------------------------------------
 # 7. OCR Review Queue (derived from invoice/inbound_document — no queue table)
 # ---------------------------------------------------------
-@router.get("/review-queue", response_model=ReviewQueueResponse)
+@router.get(
+    "/review-queue",
+    response_model=ReviewQueueResponse,
+    dependencies=[Depends(permission_based_access(_OCR_REVIEW_PERMISSIONS))],
+)
 def get_review_queue(http_request: Request, skip: int = 0, limit: int = 50):
     db = http_request.state.db
 
@@ -289,9 +340,16 @@ def get_review_queue(http_request: Request, skip: int = 0, limit: int = 50):
 
 
 # ---------------------------------------------------------
-# 8. PO / GRN / Invoice Matching (2-way / 3-way, read-only)
+# 8. PO / GRN / Invoice Matching (2-way / 3-way, read-only) — real, working capability that is
+# simply not yet called by any frontend screen (InvoicePaymentPanel's payment-readiness view
+# doesn't surface PO/GRN matching today — a documented, deferred gap, not dead code like 1-5
+# above). Leave this wired and permission-gated as-is; it's a candidate for a future call site.
 # ---------------------------------------------------------
-@router.get("/{invoice_id}/matching", response_model=MatchResult)
+@router.get(
+    "/{invoice_id}/matching",
+    response_model=MatchResult,
+    dependencies=[Depends(permission_based_access(_VIEW_PERMISSIONS))],
+)
 def get_invoice_matching(invoice_id: int, http_request: Request):
     db = http_request.state.db
 

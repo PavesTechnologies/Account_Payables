@@ -36,7 +36,13 @@ from Backend.Business_Layer.utils.exceptions import DuplicateInvoiceError, OCRFa
 
 class _FakeAuthAndDBMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        request.state.user = {"user_id": "test-user"}
+        # /process-invoice needs INVOICE_CREATE, /ocr-review needs INVOICE_OCR_REVIEW (see
+        # invoice_process_route.py) — these tests are about route logic, not authorization, so
+        # the fake caller is simply granted both.
+        request.state.user = {
+            "user_id": "test-user",
+            "permissions": ["INVOICE_CREATE", "INVOICE_OCR_REVIEW"],
+        }
         request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
         return await call_next(request)
 

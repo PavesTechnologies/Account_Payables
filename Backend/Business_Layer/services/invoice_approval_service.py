@@ -30,9 +30,11 @@ from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Business_Layer.services.approval_policy_service import ApprovalPolicyService
 from Backend.Business_Layer.services.approver_resolver_service import ApproverResolverService
 
+STATUS_CODE_OCR_REVIEWED = "OCR_REVIEWED"
 STATUS_CODE_PENDING_APPROVAL = "PENDING_APPROVAL"
 STATUS_CODE_APPROVED = "APPROVED"
 STATUS_CODE_REJECTED = "REJECTED"
+STATUS_CODE_RETURNED_FOR_REVIEW = "RETURNED_FOR_REVIEW"
 
 
 class InvoiceApprovalService:
@@ -49,12 +51,15 @@ class InvoiceApprovalService:
     # =========================================================
 
     def send_for_approval(self, invoice_id: int, user_id) -> InvoiceApproval:
+        """Performs the real OCR_REVIEWED -> PENDING_APPROVAL transition (see apply_ocr_review's
+        docstring) — before this, PENDING_APPROVAL meant nothing more specific than "reviewed";
+        after it, PENDING_APPROVAL means "sent, awaiting a decision" and nothing else does."""
         invoice = self.invoice_dao.get_invoice_by_id_locked(invoice_id)
         if invoice is None:
             raise ValueError(f"Invoice {invoice_id} not found")
 
         current_code = invoice.status.status_code if invoice.status else None
-        if current_code != STATUS_CODE_PENDING_APPROVAL:
+        if current_code != STATUS_CODE_OCR_REVIEWED:
             raise ValueError(
                 f"Invoice {invoice_id} cannot be sent for approval while in status {current_code}"
             )
@@ -127,9 +132,17 @@ class InvoiceApprovalService:
                     )
                 )
 
+        pending_approval_status = self._require_invoice_status(STATUS_CODE_PENDING_APPROVAL)
+        invoice.status_id = pending_approval_status.status_id
+        invoice.updated_by = str(user_id) if user_id is not None else None
+
         self._record_audit(
             invoice.invoice_id, "INVOICE_SENT_FOR_APPROVAL", user_id,
-            {"invoice_approval_id": instance.invoice_approval_id, "approval_policy_id": policy.id},
+            {
+                "invoice_approval_id": instance.invoice_approval_id,
+                "approval_policy_id": policy.id,
+                "status_code": STATUS_CODE_PENDING_APPROVAL,
+            },
         )
 
         self.db.commit()
@@ -212,14 +225,86 @@ class InvoiceApprovalService:
         self.db.commit()
         return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
 
+    def send_back(self, invoice_id: int, user_id, comments: str) -> InvoiceApproval:
+        """An eligible approver returns the invoice to the AP Executive for correction instead
+        of approving/rejecting it outright (spec section 8-10: distinct from reject() — REJECTED
+        is a terminal outcome, RETURNED_FOR_REVIEW lets the AP Executive edit and resubmit).
+
+        Cancels this approval cycle (status="CANCELLED", a valid chk_invoice_approval_status
+        value — no schema change needed) rather than reusing or deleting it, so it stays in
+        history. Resubmission is just the existing apply_ocr_review flow (which already always
+        ends at OCR_REVIEWED) followed by calling send_for_approval again — that already creates
+        a brand new InvoiceApproval row for the same invoice_id once this one is no longer
+        "active" (get_active_invoice_approval_for_invoice filters to PENDING/IN_PROGRESS only),
+        so no separate resubmit method is needed here.
+
+        Neither InvoiceApprovalStep nor InvoiceApprovalStepApprover has a distinct
+        "returned"/"sent back" value in their CHECK constraints (step: WAITING/PENDING/APPROVED/
+        REJECTED/SKIPPED/CANCELLED; approver: WAITING/PENDING/APPROVED/REJECTED/SKIPPED) — adding
+        one would be a schema change beyond this task's scope. The step itself uses the existing
+        CANCELLED value (matching the instance); the acting approver's own decision row uses
+        REJECTED (closest existing semantic: this approver did not clear the invoice at this
+        step) — the real distinction from an outright reject lives in the AuditLog action
+        (INVOICE_SENT_BACK) and the instance/invoice status (CANCELLED / RETURNED_FOR_REVIEW),
+        not in this one row's status value.
+        """
+        if not comments or not comments.strip():
+            raise ValueError("A reason is required to send an invoice back for review")
+        comments = comments.strip()
+
+        instance = self._require_active_instance(invoice_id)
+        step = self.approval_dao.get_active_step_locked(instance.invoice_approval_id)
+        if step is None:
+            raise ValueError("There is no active approval step for this invoice")
+
+        step_approver = self._require_assigned_approver(step, user_id)
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        step_approver.status = "REJECTED"
+        step_approver.decided_at = now
+        step_approver.comments = comments
+
+        for other in self.approval_dao.get_approvers_for_step(step.id):
+            if other.id != step_approver.id and other.status == "PENDING":
+                other.status = "SKIPPED"
+
+        step.status = "CANCELLED"
+        step.completed_at = now
+
+        instance.status = "CANCELLED"
+        instance.completed_at = now
+
+        returned_status = self._require_invoice_status(STATUS_CODE_RETURNED_FOR_REVIEW)
+        invoice = self.invoice_dao.get_invoice_by_id_locked(instance.invoice_id)
+        invoice.status_id = returned_status.status_id
+        invoice.updated_by = str(user_id)
+
+        self._record_audit(
+            instance.invoice_id, "INVOICE_SENT_BACK", user_id,
+            {
+                "invoice_approval_id": instance.invoice_approval_id,
+                "level_number": step.level_number,
+                "comments": comments,
+            },
+        )
+
+        self.db.commit()
+        return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
+
     # =========================================================
     # Read
     # =========================================================
 
     def get_approval_detail(self, invoice_id: int) -> InvoiceApproval:
+        # Message must contain "not found" — invoice_approval_route.py's _status_code_for maps
+        # on that substring to decide 404 vs 422, and the frontend's useInvoiceApproval in turn
+        # treats a 404 here as "not sent for approval yet" (a normal, expected state for any
+        # invoice that hasn't been sent), not a real error. The previous wording ("has no
+        # approval history") didn't contain that substring, so this 422'd instead — surfacing as
+        # a scary red error banner on every invoice that simply hasn't been sent yet.
         instance = self.approval_dao.get_latest_invoice_approval_for_invoice(invoice_id)
         if instance is None:
-            raise ValueError(f"Invoice {invoice_id} has no approval history")
+            raise ValueError(f"Invoice {invoice_id} approval not found - it has not been sent for approval yet")
         return instance
 
     def get_steps(self, invoice_id: int) -> List[InvoiceApprovalStep]:

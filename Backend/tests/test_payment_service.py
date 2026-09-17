@@ -82,6 +82,7 @@ class _FakeVendorDAO:
 
 class _FakeInvoiceDAO:
     store: dict = {}
+    invoice_audits: List = []
 
     def __init__(self, db):
         self.db = db
@@ -91,9 +92,15 @@ class _FakeInvoiceDAO:
 
     def get_status_by_code(self, code):
         return {
+            "APPROVED": _Status(status_id=9, status_code="APPROVED"),
+            "READY_FOR_PAYMENT": _Status(status_id=13, status_code="READY_FOR_PAYMENT"),
             "PAID": _Status(status_id=12, status_code="PAID"),
             "PARTIALLY_PAID": _Status(status_id=11, status_code="PARTIALLY_PAID"),
         }.get(code)
+
+    def create_audit_log(self, audit_log):
+        _FakeInvoiceDAO.invoice_audits.append(audit_log)
+        return audit_log
 
 
 class _FakePaymentDAO:
@@ -144,6 +151,7 @@ class _FakePaymentDAO:
 def _patch_daos(monkeypatch):
     _FakeVendorDAO.vendors = {1}
     _FakeInvoiceDAO.store = {}
+    _FakeInvoiceDAO.invoice_audits = []
     _FakePaymentDAO.pending_committed = {}
     _FakePaymentDAO.payments = {}
     _FakePaymentDAO.audits = []
@@ -156,9 +164,13 @@ def _patch_daos(monkeypatch):
 
 
 def _payable_invoice(invoice_id=1, vendor_id=1, net=Decimal("1000.00"), paid=Decimal("0")):
+    # READY_FOR_PAYMENT, not APPROVED — an invoice must be explicitly marked ready by Finance
+    # (mark_ready_for_payment) before it's payable; see _INVOICE_PAYABLE_STATUSES and
+    # test_create_payment_rejects_merely_approved_invoice below, which locks in that a bare
+    # APPROVED invoice (this helper's old status) is no longer sufficient on its own.
     return _Invoice(
         invoice_id=invoice_id, vendor_id=vendor_id, net_amount=net, amount_paid=paid,
-        status=_Status(status_id=9, status_code="APPROVED"),
+        status=_Status(status_id=13, status_code="READY_FOR_PAYMENT"),
     )
 
 
@@ -188,6 +200,21 @@ def test_create_payment_invoice_not_payable_status_raises():
     db = _FakeDB()
     invoice = _payable_invoice()
     invoice.status = _Status(status_id=8, status_code="PENDING_APPROVAL")
+    _FakeInvoiceDAO.store[1] = invoice
+    request = PaymentCreateRequest(
+        vendor_id=1, scheduled_date="2026-08-20", currency_id=1, payment_method="NEFT",
+        allocations=[PaymentAllocationRequest(invoice_id=1, allocated_amount=Decimal("100"))],
+    )
+    with pytest.raises(ValueError, match="not payable"):
+        svc.PaymentService(db).create_payment(request, "user-1")
+
+
+def test_create_payment_rejects_merely_approved_invoice():
+    """APPROVED alone is not enough — Finance must explicitly mark_ready_for_payment first
+    (spec section 16/28: never automatically payable just because it's approved)."""
+    db = _FakeDB()
+    invoice = _payable_invoice()
+    invoice.status = _Status(status_id=9, status_code="APPROVED")
     _FakeInvoiceDAO.store[1] = invoice
     request = PaymentCreateRequest(
         vendor_id=1, scheduled_date="2026-08-20", currency_id=1, payment_method="NEFT",
@@ -242,6 +269,16 @@ def test_create_payment_success_multiple_invoices():
     assert db.committed == 1
     assert len(_FakePaymentDAO.audits) == 1
 
+    # One INVOICE_PAYMENT_SCHEDULED entry per allocated invoice, on top of the payment's own
+    # audit trail above — so each invoice's own Activity history shows a payment was scheduled
+    # against it (get_invoice_history filters by table_name="invoice", record_id=invoice_id).
+    assert len(_FakeInvoiceDAO.invoice_audits) == 2
+    assert {a.record_id for a in _FakeInvoiceDAO.invoice_audits} == {1, 2}
+    assert all(
+        a.action == "INVOICE_PAYMENT_SCHEDULED" and a.table_name == "invoice"
+        for a in _FakeInvoiceDAO.invoice_audits
+    )
+
 
 def test_update_status_invalid_transition_raises():
     db = _FakeDB()
@@ -264,6 +301,25 @@ def test_update_status_scheduled_to_sent_does_not_touch_invoice():
     assert db.committed == 1
 
 
+def test_update_status_sent_records_an_invoice_scoped_audit_event_per_allocation():
+    """SENT doesn't move money or change the invoice's own fields (see
+    test_update_status_scheduled_to_sent_does_not_touch_invoice above), but it's still real
+    invoice-relevant history — "this invoice's payment was sent to the bank" — so it gets its
+    own entry on the invoice's Activity view, distinct from the payment's own audit trail."""
+    db = _FakeDB()
+    payment = _Payment(
+        payment_id=1, vendor_id=1, status=_Status(20, "SCHEDULED"),
+        payment_invoice=[_PaymentInvoice(1, 1, Decimal("400.00")), _PaymentInvoice(2, 2, Decimal("600.00"))],
+    )
+    _FakePaymentDAO.payments[1] = payment
+
+    svc.PaymentService(db).update_status(1, "SENT", None, None, "user-1")
+
+    assert len(_FakeInvoiceDAO.invoice_audits) == 2
+    assert {a.record_id for a in _FakeInvoiceDAO.invoice_audits} == {1, 2}
+    assert all(a.action == "INVOICE_PAYMENT_SENT" for a in _FakeInvoiceDAO.invoice_audits)
+
+
 def test_update_status_cleared_applies_amount_paid_and_marks_partially_paid():
     db = _FakeDB()
     invoice = _payable_invoice(invoice_id=1, net=Decimal("1000.00"), paid=Decimal("0"))
@@ -280,6 +336,16 @@ def test_update_status_cleared_applies_amount_paid_and_marks_partially_paid():
     assert invoice.amount_paid == Decimal("400.00")
     assert invoice.status_id == 11  # PARTIALLY_PAID
     assert updated.payment_date is not None
+
+    # This is the one payment transition that actually changes the invoice itself — must land
+    # on the invoice's own Activity view (table_name="invoice"), not just the payment's.
+    assert len(_FakeInvoiceDAO.invoice_audits) == 1
+    cleared_audit = _FakeInvoiceDAO.invoice_audits[0]
+    assert cleared_audit.action == "INVOICE_PAYMENT_CLEARED"
+    assert cleared_audit.table_name == "invoice"
+    assert cleared_audit.record_id == 1
+    assert cleared_audit.old_values == {"status_code": "READY_FOR_PAYMENT"}
+    assert cleared_audit.new_values["status_code"] == "PARTIALLY_PAID"
 
 
 def test_update_status_cleared_marks_paid_when_fully_covered():
@@ -313,8 +379,68 @@ def test_update_status_failed_does_not_touch_invoice():
     assert invoice.amount_paid == Decimal("0")
     assert invoice.status_id is None
 
+    # No change to the invoice's own fields, but a failed payment attempt against it is still
+    # worth surfacing on its Activity view.
+    assert len(_FakeInvoiceDAO.invoice_audits) == 1
+    assert _FakeInvoiceDAO.invoice_audits[0].action == "INVOICE_PAYMENT_FAILED"
+    assert _FakeInvoiceDAO.invoice_audits[0].record_id == 1
+
 
 def test_get_payment_not_found_raises():
     db = _FakeDB()
     with pytest.raises(ValueError, match="not found"):
         svc.PaymentService(db).get_payment(999)
+
+
+# ---------------------------------------------------------------------------
+# mark_ready_for_payment (APPROVED -> READY_FOR_PAYMENT)
+# ---------------------------------------------------------------------------
+
+def test_mark_ready_for_payment_from_approved_succeeds():
+    db = _FakeDB()
+    invoice = _Invoice(
+        invoice_id=1, vendor_id=1, net_amount=Decimal("1000.00"), amount_paid=Decimal("0"),
+        status=_Status(status_id=9, status_code="APPROVED"),
+    )
+    _FakeInvoiceDAO.store[1] = invoice
+
+    updated = svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+
+    assert updated.status_id == 13  # READY_FOR_PAYMENT
+    assert updated.updated_by == "finance-1"
+    assert db.committed == 1
+    assert len(_FakeInvoiceDAO.invoice_audits) == 1
+    assert _FakeInvoiceDAO.invoice_audits[0].action == "INVOICE_READY_FOR_PAYMENT"
+
+
+def test_mark_ready_for_payment_requires_approved_status():
+    db = _FakeDB()
+    invoice = _Invoice(
+        invoice_id=1, vendor_id=1, net_amount=Decimal("1000.00"), amount_paid=Decimal("0"),
+        status=_Status(status_id=8, status_code="PENDING_APPROVAL"),
+    )
+    _FakeInvoiceDAO.store[1] = invoice
+
+    with pytest.raises(ValueError, match="cannot be marked ready for payment"):
+        svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+    assert db.rolled_back == 1
+
+
+def test_mark_ready_for_payment_already_ready_is_not_reapplied():
+    """Idempotency guard, not a transition table entry — calling this twice must fail loudly
+    rather than silently re-succeeding, since READY_FOR_PAYMENT is not itself APPROVED."""
+    db = _FakeDB()
+    invoice = _Invoice(
+        invoice_id=1, vendor_id=1, net_amount=Decimal("1000.00"), amount_paid=Decimal("0"),
+        status=_Status(status_id=13, status_code="READY_FOR_PAYMENT"),
+    )
+    _FakeInvoiceDAO.store[1] = invoice
+
+    with pytest.raises(ValueError, match="cannot be marked ready for payment"):
+        svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+
+
+def test_mark_ready_for_payment_not_found_raises():
+    db = _FakeDB()
+    with pytest.raises(ValueError, match="not found"):
+        svc.PaymentService(db).mark_ready_for_payment(999, "finance-1")

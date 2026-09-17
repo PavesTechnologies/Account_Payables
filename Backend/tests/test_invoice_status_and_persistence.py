@@ -152,6 +152,7 @@ class _FakeInvoiceDAO:
         self.created_lines: List = []
         self.created_attachment = None
         self.created_issues: List = []
+        self.created_audit_logs: List = []
         self.existing_invoice = None
         self.open_issues: List = []
         _FakeInvoiceDAO.instances.append(self)
@@ -159,8 +160,24 @@ class _FakeInvoiceDAO:
     def get_invoice_by_vendor_and_number(self, vendor_id, invoice_number):
         return self.existing_invoice
 
+    _STATUS_IDS_BY_CODE = {
+        "OCR_REVIEW_PENDING": 6, "OCR_FAILED": 7, "PENDING_APPROVAL": 8, "OCR_REVIEWED": 9,
+        "RETURNED_FOR_REVIEW": 10,
+    }
+
     def get_status_by_code(self, code):
-        return SimpleNamespace(status_id={"OCR_REVIEW_PENDING": 6, "OCR_FAILED": 7, "PENDING_APPROVAL": 8}.get(code, 1))
+        return SimpleNamespace(status_id=self._STATUS_IDS_BY_CODE.get(code, 1))
+
+    def get_status_details(self, status_id):
+        for code, sid in self._STATUS_IDS_BY_CODE.items():
+            if sid == status_id:
+                return SimpleNamespace(status_id=sid, status_code=code)
+        return None
+
+    def create_audit_log(self, audit_log):
+        audit_log.audit_log_id = len(self.created_audit_logs) + 1
+        self.created_audit_logs.append(audit_log)
+        return audit_log
 
     def create_invoice(self, invoice):
         invoice.invoice_id = 555
@@ -235,7 +252,6 @@ def _patch_daos(monkeypatch):
     monkeypatch.setattr(svc, "InvoiceDAO", _FakeInvoiceDAO)
     monkeypatch.setattr(svc, "MasterDAO", _FakeMasterDAO)
     monkeypatch.setattr(svc, "InboundDocumentDAO", _FakeInboundDocumentDAO)
-    monkeypatch.setattr(svc, "get_numeric_system_config", lambda db, key, default=None: default)
     monkeypatch.setattr(svc.notifications, "notify_vendor_not_found", lambda *a, **k: None)
     # Default: automatic vendor onboarding is not eligible, so a vendor-not-matched
     # FinalResponse exercises the existing manual-fallback path unless a test
@@ -282,6 +298,14 @@ def test_persist_processed_invoice_path_a_happy_path():
     assert inbound_document.extraction_status == "EXTRACTED"
     assert inbound_document.vendor_id == 42
     assert db.committed >= 1
+
+    # Mirrors apply_ocr_review's create-branch INVOICE_CREATED write — this is the other
+    # invoice-creation pathway (process_invoice -> persist_processed_invoice) and had no audit
+    # trail at all before this fix.
+    dao = _FakeInvoiceDAO.instances[-1]
+    assert len(dao.created_audit_logs) == 1
+    assert dao.created_audit_logs[0].action == "INVOICE_CREATED"
+    assert dao.created_audit_logs[0].record_id == 555
 
 
 def test_persist_processed_invoice_duplicate_raises_and_links_inbound_document():
@@ -416,7 +440,7 @@ def test_apply_ocr_review_create_branch_success():
     invoice = svc.apply_ocr_review(2, review, db, user_id="user-1")
 
     assert invoice.invoice_id == 555
-    assert invoice.status_id == 8  # PENDING_APPROVAL per _FakeInvoiceDAO
+    assert invoice.status_id == 9  # OCR_REVIEWED per _FakeInvoiceDAO
     assert inbound_document.invoice_id == 555
     assert inbound_document.vendor_id == 42
 
@@ -450,14 +474,13 @@ def test_apply_ocr_review_update_branch_resolves_open_issues():
         svc.InvoiceDAO = _FakeInvoiceDAO
 
     assert invoice.invoice_number == "INV-1-CORRECTED"
-    assert invoice.status_id == 8
+    assert invoice.status_id == 9  # OCR_REVIEWED
     assert invoice.updated_by == "reviewer-1"
 
 
 def test_apply_ocr_review_po_mandatory_flags_issue_without_blocking(monkeypatch):
     """PO_MANDATORY=true and no po_id on the invoice: a PO_REQUIRED issue is
-    raised (non-blocking — invoice still reaches PENDING_APPROVAL) and that
-    open issue then prevents AUTO_APPROVAL_LIMIT from auto-approving it."""
+    raised (non-blocking — invoice still reaches OCR_REVIEWED)."""
     db = _FakeDB()
     existing_invoice = SimpleNamespace(
         invoice_id=556, invoice_line=[], status_id=6, updated_by=None, vendor_id=42,
@@ -484,7 +507,6 @@ def test_apply_ocr_review_po_mandatory_flags_issue_without_blocking(monkeypatch)
             return self.created_issues
 
     monkeypatch.setattr(svc, "MasterDAO", POMandatoryMasterDAO)
-    monkeypatch.setattr(svc, "get_numeric_system_config", lambda db, key, default=None: Decimal("5000"))
     svc.InvoiceDAO = UpdateInvoiceDAO
     try:
         review = InvoiceOCRReviewRequest(invoice_number="INV-1-CORRECTED")
@@ -496,6 +518,114 @@ def test_apply_ocr_review_po_mandatory_flags_issue_without_blocking(monkeypatch)
     assert len(dao_instance.created_issues) == 1
     assert dao_instance.created_issues[0].issue_type == "PO_REQUIRED"
     assert dao_instance.created_issues[0].invoice_id == 556
-    # Even though net_amount (10.00) is well under the 5000 AUTO_APPROVAL_LIMIT,
-    # the open PO_REQUIRED issue must block auto-approval.
-    assert invoice.status_id == 8  # PENDING_APPROVAL, not auto-approved
+    assert invoice.status_id == 9  # OCR_REVIEWED — flagged, not auto-approved or blocked
+
+
+def test_apply_ocr_review_rejects_editing_an_invoice_already_in_approval():
+    """apply_ocr_review previously had no status guard at all — it would silently reset any
+    invoice, in any status, back to what is now OCR_REVIEWED. This is the new guard: an invoice
+    that has already moved into/through approval (PENDING_APPROVAL and beyond) can no longer be
+    edited via this endpoint."""
+    db = _FakeDB()
+    existing_invoice = SimpleNamespace(
+        invoice_id=557, invoice_line=[], status_id=8, updated_by=None, vendor_id=42,  # PENDING_APPROVAL
+        invoice_type="PO", po_id=None,
+    )
+    inbound_document = _inbound_document(invoice_id=557)
+    _FakeInboundDocumentDAO._store[5] = inbound_document
+
+    class UpdateInvoiceDAO(_FakeInvoiceDAO):
+        def get_invoice_by_id(self, invoice_id):
+            return existing_invoice
+
+    svc.InvoiceDAO = UpdateInvoiceDAO
+    try:
+        review = InvoiceOCRReviewRequest(invoice_number="INV-1-CORRECTED")
+        with pytest.raises(ValueError, match="cannot be edited while in status PENDING_APPROVAL"):
+            svc.apply_ocr_review(5, review, db, user_id="reviewer-1")
+    finally:
+        svc.InvoiceDAO = _FakeInvoiceDAO
+
+
+def test_apply_ocr_review_rejects_editing_an_already_reviewed_invoice():
+    """OCR_REVIEWED itself is also locked, not just PENDING_APPROVAL and later — once reviewed
+    and saved, the AP Executive can't silently re-edit it a second time before Send for Approval
+    without going through Send Back first."""
+    db = _FakeDB()
+    existing_invoice = SimpleNamespace(
+        invoice_id=560, invoice_line=[], status_id=9, updated_by=None, vendor_id=42,  # OCR_REVIEWED
+        invoice_type="PO", po_id=None,
+    )
+    inbound_document = _inbound_document(invoice_id=560)
+    _FakeInboundDocumentDAO._store[8] = inbound_document
+
+    class UpdateInvoiceDAO(_FakeInvoiceDAO):
+        def get_invoice_by_id(self, invoice_id):
+            return existing_invoice
+
+    svc.InvoiceDAO = UpdateInvoiceDAO
+    try:
+        review = InvoiceOCRReviewRequest(invoice_number="INV-1-CORRECTED")
+        with pytest.raises(ValueError, match="cannot be edited while in status OCR_REVIEWED"):
+            svc.apply_ocr_review(8, review, db, user_id="reviewer-1")
+    finally:
+        svc.InvoiceDAO = _FakeInvoiceDAO
+
+
+def test_apply_ocr_review_allows_editing_a_returned_invoice_and_records_resubmission():
+    """RETURNED_FOR_REVIEW is the one new editable status this guard adds — saving here is the
+    AP Executive's resubmission, always ending at OCR_REVIEWED exactly like any other successful
+    review (spec section 9: resubmit reuses this same endpoint, no separate one). Send for
+    Approval is the separate, deliberate action that moves it on to PENDING_APPROVAL again."""
+    db = _FakeDB()
+    existing_invoice = SimpleNamespace(
+        invoice_id=558, invoice_line=[], status_id=10, updated_by=None, vendor_id=42,  # RETURNED_FOR_REVIEW
+        invoice_type="PO", po_id=None,
+    )
+    inbound_document = _inbound_document(invoice_id=558)
+    _FakeInboundDocumentDAO._store[6] = inbound_document
+
+    class UpdateInvoiceDAO(_FakeInvoiceDAO):
+        def get_invoice_by_id(self, invoice_id):
+            return existing_invoice
+
+    svc.InvoiceDAO = UpdateInvoiceDAO
+    try:
+        review = InvoiceOCRReviewRequest(invoice_number="INV-1-CORRECTED-AGAIN")
+        invoice = svc.apply_ocr_review(6, review, db, user_id="reviewer-1")
+    finally:
+        svc.InvoiceDAO = _FakeInvoiceDAO
+
+    assert invoice.status_id == 9  # OCR_REVIEWED, not PENDING_APPROVAL directly
+    dao_instance = UpdateInvoiceDAO.instances[-1]
+    assert len(dao_instance.created_audit_logs) == 1
+    assert dao_instance.created_audit_logs[0].action == "INVOICE_RESUBMITTED"
+
+
+def test_apply_ocr_review_records_ocr_reviewed_not_resubmitted_for_a_normal_review():
+    """The same audit call, but from OCR_REVIEW_PENDING (not RETURNED_FOR_REVIEW) — must be
+    tagged INVOICE_OCR_REVIEWED, not INVOICE_RESUBMITTED, so the two are distinguishable in
+    history (spec section 14's timeline explicitly separates "OCR reviewed" from "resubmitted
+    after send back")."""
+    db = _FakeDB()
+    existing_invoice = SimpleNamespace(
+        invoice_id=559, invoice_line=[], status_id=6, updated_by=None, vendor_id=42,  # OCR_REVIEW_PENDING
+        invoice_type="PO", po_id=None,
+    )
+    inbound_document = _inbound_document(invoice_id=559)
+    _FakeInboundDocumentDAO._store[7] = inbound_document
+
+    class UpdateInvoiceDAO(_FakeInvoiceDAO):
+        def get_invoice_by_id(self, invoice_id):
+            return existing_invoice
+
+    svc.InvoiceDAO = UpdateInvoiceDAO
+    try:
+        review = InvoiceOCRReviewRequest(invoice_number="INV-1-CORRECTED")
+        svc.apply_ocr_review(7, review, db, user_id="reviewer-1")
+    finally:
+        svc.InvoiceDAO = _FakeInvoiceDAO
+
+    dao_instance = UpdateInvoiceDAO.instances[-1]
+    assert len(dao_instance.created_audit_logs) == 1
+    assert dao_instance.created_audit_logs[0].action == "INVOICE_OCR_REVIEWED"

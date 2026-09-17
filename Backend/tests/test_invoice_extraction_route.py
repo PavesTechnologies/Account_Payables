@@ -53,7 +53,10 @@ def fake_redis(monkeypatch):
 
 class _FakeAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        request.state.user = {"user_id": "test-user"}
+        # This whole pipeline is gated by INVOICE_CREATE (see invoice_extraction_route.py's
+        # _INTAKE_PERMISSIONS) — these tests are about route logic, not authorization, so the
+        # fake caller is simply granted it.
+        request.state.user = {"user_id": "test-user", "permissions": ["INVOICE_CREATE"]}
         return await call_next(request)
 
 

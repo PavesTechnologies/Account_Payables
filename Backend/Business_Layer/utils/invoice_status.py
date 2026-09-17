@@ -19,7 +19,29 @@ INVOICE_STATUS_MODULE = "INVOICE"
 
 STATUS_CODE_OCR_FAILED = "OCR_FAILED"
 STATUS_CODE_OCR_REVIEW_PENDING = "OCR_REVIEW_PENDING"
+# "Reviewed and saved, not yet sent" — apply_ocr_review always ends here now, distinct from
+# PENDING_APPROVAL ("sent, awaiting a decision"). InvoiceApprovalService.send_for_approval is
+# what performs OCR_REVIEWED -> PENDING_APPROVAL.
+STATUS_CODE_OCR_REVIEWED = "OCR_REVIEWED"
 STATUS_CODE_PENDING_APPROVAL = "PENDING_APPROVAL"
+STATUS_CODE_APPROVED = "APPROVED"
+STATUS_CODE_REJECTED = "REJECTED"
+STATUS_CODE_RETURNED_FOR_REVIEW = "RETURNED_FOR_REVIEW"
+STATUS_CODE_READY_FOR_PAYMENT = "READY_FOR_PAYMENT"
+STATUS_CODE_PARTIALLY_PAID = "PARTIALLY_PAID"
+STATUS_CODE_PAID = "PAID"
+STATUS_CODE_DISPUTED = "DISPUTED"
+
+# Statuses apply_ocr_review may run against for an already-created invoice (the "update" branch)
+# — editing is only allowed while the invoice hasn't progressed into/through approval. Includes
+# OCR_FAILED since that path predates this guard and was never previously blocked; excludes every
+# approval-stage-or-later status so an AP Executive can't silently re-edit and reset an invoice
+# that's mid-approval, already decided, or already in the payment lifecycle (spec section 4/13).
+EDITABLE_STATUSES_FOR_OCR_REVIEW = {
+    STATUS_CODE_OCR_REVIEW_PENDING,
+    STATUS_CODE_OCR_FAILED,
+    STATUS_CODE_RETURNED_FOR_REVIEW,
+}
 
 # Response-only marker for a document whose vendor could not be matched —
 # no Invoice row exists yet, so this is never a status_master row/status_id,

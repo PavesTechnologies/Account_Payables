@@ -293,7 +293,7 @@ def _level(number, approver_type, approval_rule="ANY_ONE", role_code=None, user_
 class Workflow:
     def __init__(self):
         self.registry = StatusRegistry()
-        for code in ("PENDING_APPROVAL", "APPROVED", "REJECTED"):
+        for code in ("OCR_REVIEWED", "PENDING_APPROVAL", "APPROVED", "REJECTED", "RETURNED_FOR_REVIEW"):
             self.registry.add("INVOICE", code)
 
         self.departments = {10: SimpleNamespace(id=10, is_active=True)}
@@ -339,7 +339,7 @@ class Workflow:
         self.department_approver_dao.add(10, APPROVER_A)
         self.department_approver_dao.add(10, APPROVER_B)
 
-    def add_invoice(self, *, net_amount, department_id=10, purchase_category_id=20, status_code="PENDING_APPROVAL"):
+    def add_invoice(self, *, net_amount, department_id=10, purchase_category_id=20, status_code="OCR_REVIEWED"):
         # A real mapped Invoice() instance, not a SimpleNamespace -
         # set_committed_value (used by StatusRegistry.attach) needs a real
         # ORM instance's _sa_instance_state, exactly like
@@ -499,6 +499,20 @@ def test_send_for_approval_creates_expected_levels_and_approvers(wf: Workflow):
     assert level3.status == "WAITING"
 
 
+def test_send_for_approval_moves_invoice_from_ocr_reviewed_to_pending_approval(wf: Workflow):
+    """The real, distinct status transition send_for_approval now performs — before this,
+    apply_ocr_review left the invoice at PENDING_APPROVAL directly and send_for_approval never
+    touched invoice.status_id at all, so "reviewed, never sent" and "sent, awaiting a decision"
+    were indistinguishable. OCR_REVIEWED is what apply_ocr_review actually leaves it at now."""
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "OCR_REVIEWED"
+
+    wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "PENDING_APPROVAL"
+
+
 def test_missing_department_or_category_on_invoice_blocks_send_for_approval(wf: Workflow):
     wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
     invoice = wf.add_invoice(net_amount=1000)
@@ -517,12 +531,35 @@ def test_invoice_not_pending_approval_cannot_be_sent(wf: Workflow):
 
 
 def test_cannot_send_for_approval_twice(wf: Workflow):
+    """Sending moves the invoice to PENDING_APPROVAL now (see
+    test_send_for_approval_moves_invoice_from_ocr_reviewed_to_pending_approval), so a second call
+    fails on the OCR_REVIEWED status guard before it would ever reach the (still-present, now
+    purely defensive) "already has an approval in progress" check."""
     wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
     invoice = wf.add_invoice(net_amount=1000)
     wf.service.send_for_approval(invoice.invoice_id, 5100010)
 
-    with pytest.raises(ValueError, match="already has an approval in progress"):
+    with pytest.raises(ValueError, match="cannot be sent for approval"):
         wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+
+# ---------------------------------------------------------------------------
+# get_approval_detail - reading approval status for an invoice never sent
+# ---------------------------------------------------------------------------
+
+def test_get_approval_detail_for_never_sent_invoice_raises_a_not_found_message(wf: Workflow):
+    """An invoice that has only ever been OCR-reviewed (status advanced to OCR_REVIEWED by
+    apply_ocr_review) but never actually sent has no InvoiceApproval row at all — this is a
+    normal, expected state, not a real error. The message must contain "not found" specifically:
+    invoice_approval_route.py's _status_code_for maps 404 vs 422 purely off that substring, and
+    the frontend's useInvoiceApproval in turn treats a 404 here as "not sent yet" (offering Send
+    for Approval) rather than a scary error banner. A prior wording ("has no approval history")
+    lacked that substring and 422'd instead, surfacing as an error on every unsent invoice.
+    """
+    invoice = wf.add_invoice(net_amount=1000)  # OCR_REVIEWED, never sent
+
+    with pytest.raises(ValueError, match="not found"):
+        wf.service.get_approval_detail(invoice.invoice_id)
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +725,123 @@ def test_cannot_decide_on_a_rejected_invoice(wf: Workflow):
 
     with pytest.raises(ValueError, match="no approval in progress"):
         wf.service.approve(invoice.invoice_id, 5100001, "changed my mind")
+
+
+# ---------------------------------------------------------------------------
+# Send Back / Return for Review (distinct from Reject)
+# ---------------------------------------------------------------------------
+
+def test_send_back_requires_a_reason(wf: Workflow):
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+    with pytest.raises(ValueError, match="reason is required"):
+        wf.service.send_back(invoice.invoice_id, 5100001, "   ")
+
+
+def test_send_back_requires_the_caller_to_be_an_assigned_approver(wf: Workflow):
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+    # 5100011 (APPROVER_B) is a real, active user but not assigned to this ROLE-based level.
+    with pytest.raises(ValueError, match="not an assigned approver"):
+        wf.service.send_back(invoice.invoice_id, 5100011, "please double check the GST amount")
+
+
+def test_send_back_cancels_the_cycle_and_returns_invoice_for_review(wf: Workflow):
+    wf.create_policy(levels=[
+        _level(1, "DEPARTMENT_APPROVER", approval_rule="ANY_ONE"),
+        _level(2, "ROLE", role_code="AP_EXECUTIVE"),
+    ])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+    instance = wf.service.send_back(invoice.invoice_id, 5100010, "Please correct the GST amount")
+    assert instance.status == "CANCELLED"
+
+    level1, level2 = sorted(instance.steps, key=lambda s: s.level_number)
+    assert level1.status == "CANCELLED"
+    statuses = {a.user_uuid: a.status for a in level1.approvers}
+    assert statuses[APPROVER_A] == "REJECTED"  # the acting approver's own decision row
+    assert statuses[APPROVER_B] == "SKIPPED"   # co-approver at the same ANY_ONE level
+    assert level2.status == "WAITING"  # never activated, untouched
+
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "RETURNED_FOR_REVIEW"
+
+    audit_actions = [a.action for a in wf.approval_dao.audit_logs]
+    assert "INVOICE_SENT_BACK" in audit_actions
+
+
+def test_send_back_is_distinct_from_reject(wf: Workflow):
+    """Same trigger point (an eligible approver on the active step), different outcome status —
+    spec section 10: Send Back must never reuse REJECTED, and vice versa."""
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+
+    rejected_invoice = wf.add_invoice(net_amount=1000)
+    wf.service.send_for_approval(rejected_invoice.invoice_id, 5100010)
+    wf.service.reject(rejected_invoice.invoice_id, 5100001, "wrong vendor entirely")
+    assert wf.invoice_after(rejected_invoice.invoice_id).status.status_code == "REJECTED"
+
+    returned_invoice = wf.add_invoice(net_amount=1000)
+    wf.service.send_for_approval(returned_invoice.invoice_id, 5100010)
+    wf.service.send_back(returned_invoice.invoice_id, 5100001, "fix the GST amount")
+    assert wf.invoice_after(returned_invoice.invoice_id).status.status_code == "RETURNED_FOR_REVIEW"
+
+
+def test_resubmission_after_send_back_creates_a_new_approval_cycle(wf: Workflow):
+    """The core new requirement: RETURNED_FOR_REVIEW -> (AP Executive edits, out of scope for
+    this service-level test) -> OCR_REVIEWED -> send_for_approval again must create a BRAND NEW
+    InvoiceApproval row, not reactivate or mutate the returned one — and the old cycle must stay
+    fully intact in history (spec section 9/14/26)."""
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+
+    first_instance = wf.service.send_for_approval(invoice.invoice_id, 5100010)
+    wf.service.send_back(invoice.invoice_id, 5100001, "fix the tax amount")
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "RETURNED_FOR_REVIEW"
+
+    # Stand-in for "AP Executive edited and saved via apply_ocr_review", which always ends at
+    # OCR_REVIEWED (invoice_process_service.py) — not re-testing that endpoint here, only the
+    # approval-engine side of resubmission. send_for_approval below performs the real
+    # OCR_REVIEWED -> PENDING_APPROVAL transition.
+    invoice.status_id = wf.registry.get_by_module_code("INVOICE", "OCR_REVIEWED").status_id
+    wf.registry.attach(invoice)
+
+    second_instance = wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+    assert second_instance.invoice_approval_id != first_instance.invoice_approval_id
+    assert second_instance.status == "IN_PROGRESS"
+
+    # The old cycle is untouched, still CANCELLED, still queryable — never deleted or reactivated.
+    old_instance = wf.approval_dao.get_invoice_approval_by_id(first_instance.invoice_approval_id)
+    assert old_instance.status == "CANCELLED"
+
+    # The active-instance lookup (what approve/reject/get-approval all use) now resolves to the
+    # new cycle, not the old cancelled one.
+    active = wf.approval_dao.get_active_invoice_approval_for_invoice(invoice.invoice_id)
+    assert active.invoice_approval_id == second_instance.invoice_approval_id
+
+    # approve() on the new cycle works normally and doesn't touch the old one.
+    completed = wf.service.approve(invoice.invoice_id, 5100001, None)
+    assert completed.invoice_approval_id == second_instance.invoice_approval_id
+    assert completed.status == "APPROVED"
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "APPROVED"
+    assert wf.approval_dao.get_invoice_approval_by_id(first_instance.invoice_approval_id).status == "CANCELLED"
+
+
+def test_cannot_send_for_approval_again_while_returned_cycle_is_still_active(wf: Workflow):
+    """A second send_for_approval call while one is already in progress is caught by the
+    OCR_REVIEWED status guard now (send_for_approval moved the invoice to PENDING_APPROVAL on the
+    first call) — the "already has an approval in progress" check is still present as a defensive
+    safety net but is not what fires in this normal-sequence case."""
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+    with pytest.raises(ValueError, match="cannot be sent for approval"):
+        wf.service.send_for_approval(invoice.invoice_id, 5100010)
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ STATUS_CODE_CLEARED = "CLEARED"
 STATUS_CODE_FAILED = "FAILED"
 
 STATUS_CODE_APPROVED = "APPROVED"
+STATUS_CODE_READY_FOR_PAYMENT = "READY_FOR_PAYMENT"
 STATUS_CODE_PARTIALLY_PAID = "PARTIALLY_PAID"
 STATUS_CODE_PAID = "PAID"
 
@@ -40,7 +41,11 @@ _ALLOWED_TRANSITIONS = {
     STATUS_CODE_FAILED: set(),
 }
 
-_INVOICE_PAYABLE_STATUSES = {STATUS_CODE_APPROVED, STATUS_CODE_PARTIALLY_PAID}
+# An invoice must be explicitly marked READY_FOR_PAYMENT by Finance (mark_ready_for_payment)
+# before it can receive a payment — a merely-APPROVED invoice is not yet payable. This was
+# previously {APPROVED, PARTIALLY_PAID}, which let a payment be created straight off approval
+# with no Finance readiness review step; READY_FOR_PAYMENT now sits between them.
+_INVOICE_PAYABLE_STATUSES = {STATUS_CODE_READY_FOR_PAYMENT, STATUS_CODE_PARTIALLY_PAID}
 
 
 class PaymentService:
@@ -131,9 +136,69 @@ class PaymentService:
                 )
             )
 
+            # A payment's own audit trail (table_name="payment" above) doesn't surface on the
+            # invoice's own Activity view (get_invoice_history filters by table_name="invoice") —
+            # without this, an invoice that received a payment showed no trace of it at all on
+            # its own history. One entry per allocated invoice, since one payment can cover several.
+            for allocation in request.allocations:
+                self.invoice_dao.create_audit_log(
+                    AuditLog(
+                        table_name="invoice",
+                        record_id=allocation.invoice_id,
+                        action="INVOICE_PAYMENT_SCHEDULED",
+                        changed_by=user_id,
+                        new_values={
+                            "payment_id": payment.payment_id,
+                            "allocated_amount": str(allocation.allocated_amount),
+                        },
+                    )
+                )
+
             self.db.commit()
             self.db.refresh(payment)
             return payment
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def mark_ready_for_payment(self, invoice_id: int, user_id: str) -> "Invoice":
+        """APPROVED -> READY_FOR_PAYMENT: the explicit Finance action that gates whether an
+        invoice can receive a payment at all (see _INVOICE_PAYABLE_STATUSES). Deliberately not
+        automatic on approval (spec section 16/28: "Do not automatically mark an invoice as paid
+        merely because it became approved") — this is the one manual step in between.
+        """
+        try:
+            invoice = self.invoice_dao.get_invoice_by_id_locked(invoice_id)
+            if invoice is None:
+                raise ValueError(f"Invoice {invoice_id} not found")
+
+            current_code = invoice.status.status_code if invoice.status else None
+            if current_code != STATUS_CODE_APPROVED:
+                raise ValueError(
+                    f"Invoice {invoice_id} cannot be marked ready for payment while in status {current_code}"
+                )
+
+            ready_status = self.invoice_dao.get_status_by_code(STATUS_CODE_READY_FOR_PAYMENT)
+            if ready_status is None:
+                raise ValueError(f"Status '{STATUS_CODE_READY_FOR_PAYMENT}' is not configured for the INVOICE module")
+
+            invoice.status_id = ready_status.status_id
+            invoice.updated_by = user_id
+
+            self.invoice_dao.create_audit_log(
+                AuditLog(
+                    table_name="invoice",
+                    record_id=invoice.invoice_id,
+                    action="INVOICE_READY_FOR_PAYMENT",
+                    changed_by=user_id,
+                    old_values={"status_code": current_code},
+                    new_values={"status_code": STATUS_CODE_READY_FOR_PAYMENT},
+                )
+            )
+
+            self.db.commit()
+            self.db.refresh(invoice)
+            return invoice
         except Exception:
             self.db.rollback()
             raise
@@ -183,17 +248,57 @@ class PaymentService:
                     invoice = self.invoice_dao.get_invoice_by_id_locked(allocation.invoice_id)
                     if invoice is None:
                         continue
+                    invoice_status_before = invoice.status.status_code if invoice.status else None
                     invoice.amount_paid = invoice.amount_paid + allocation.allocated_amount
 
                     if invoice.amount_paid >= invoice.net_amount:
-                        new_status = self.invoice_dao.get_status_by_code(STATUS_CODE_PAID)
+                        new_status_code = STATUS_CODE_PAID
                     else:
-                        new_status = self.invoice_dao.get_status_by_code(STATUS_CODE_PARTIALLY_PAID)
+                        new_status_code = STATUS_CODE_PARTIALLY_PAID
+                    new_status = self.invoice_dao.get_status_by_code(new_status_code)
                     if new_status is not None:
                         invoice.status_id = new_status.status_id
                     invoice.updated_by = user_id
 
+                    # Same reasoning as create_payment's per-invoice entry below — this is the
+                    # one event that actually changes the invoice itself (amount_paid/status),
+                    # so it belongs on that invoice's own Activity view, not just the payment's.
+                    self.invoice_dao.create_audit_log(
+                        AuditLog(
+                            table_name="invoice",
+                            record_id=allocation.invoice_id,
+                            action="INVOICE_PAYMENT_CLEARED",
+                            changed_by=user_id,
+                            old_values={"status_code": invoice_status_before},
+                            new_values={
+                                "status_code": new_status_code,
+                                "payment_id": payment.payment_id,
+                                "allocated_amount": str(allocation.allocated_amount),
+                                "amount_paid": str(invoice.amount_paid),
+                            },
+                        )
+                    )
+
                 payment.payment_date = payment_date or datetime.date.today()
+
+            elif status_code in (STATUS_CODE_SENT, STATUS_CODE_FAILED):
+                # Neither moves any money (see module docstring — SCHEDULED/SENT allocations are
+                # only reserved) or changes the invoice's own status/amount_paid, but "sent to
+                # the bank" and "this attempt failed" are still real invoice-relevant history.
+                action = "INVOICE_PAYMENT_SENT" if status_code == STATUS_CODE_SENT else "INVOICE_PAYMENT_FAILED"
+                for allocation in payment.payment_invoice:
+                    self.invoice_dao.create_audit_log(
+                        AuditLog(
+                            table_name="invoice",
+                            record_id=allocation.invoice_id,
+                            action=action,
+                            changed_by=user_id,
+                            new_values={
+                                "payment_id": payment.payment_id,
+                                "allocated_amount": str(allocation.allocated_amount),
+                            },
+                        )
+                    )
 
             if reference_number is not None:
                 payment.reference_number = reference_number

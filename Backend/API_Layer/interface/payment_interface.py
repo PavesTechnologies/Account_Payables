@@ -60,3 +60,9 @@ class PaymentDTO(BaseModel):
 class PaymentResponse(BaseModel):
     payment_id: int
     message: str
+
+
+class InvoiceReadyForPaymentResponse(BaseModel):
+    invoice_id: int
+    status_code: str
+    message: str

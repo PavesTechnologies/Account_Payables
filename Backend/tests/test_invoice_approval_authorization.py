@@ -104,6 +104,25 @@ def test_reject_requires_its_own_permission(monkeypatch):
     assert allowed.post("/1/reject", json={"comments": "no"}).status_code == 200
 
 
+def test_send_back_requires_its_own_permission(monkeypatch):
+    """Distinct permission from both INVOICE_APPROVE and INVOICE_REJECT (spec section 10/11:
+    Send Back is its own action, not a variant of either)."""
+    _stub_service(monkeypatch, "send_back")
+    for other in ("INVOICE_APPROVE", "INVOICE_REJECT"):
+        denied = _make_client(_user([other]))
+        assert denied.post("/1/send-back", json={"comments": "please fix the GST amount"}).status_code == 403
+
+    allowed = _make_client(_user(["INVOICE_SEND_BACK"]))
+    assert allowed.post("/1/send-back", json={"comments": "please fix the GST amount"}).status_code == 200
+
+
+def test_send_back_without_comment_is_a_validation_error(monkeypatch):
+    _stub_service(monkeypatch, "send_back")
+    client = _make_client(_user(["INVOICE_SEND_BACK"]))
+    response = client.post("/1/send-back", json={})
+    assert response.status_code == 422  # comments is a required field on the request body
+
+
 def test_reject_without_comment_is_a_validation_error(monkeypatch):
     _stub_service(monkeypatch, "reject")
     client = _make_client(_user(["INVOICE_REJECT"]))

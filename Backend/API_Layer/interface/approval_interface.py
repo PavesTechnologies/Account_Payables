@@ -14,6 +14,14 @@ class InvoiceRejectionRequest(BaseModel):
     comments: str
 
 
+class InvoiceSendBackRequest(BaseModel):
+    """Distinct from InvoiceRejectionRequest even though the shape is identical today (spec
+    section 10: Send Back and Reject are different actions and must remain separately
+    modelable) — comments here is the required return reason, not a rejection reason."""
+
+    comments: str
+
+
 class InvoiceApprovalStepApproverDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

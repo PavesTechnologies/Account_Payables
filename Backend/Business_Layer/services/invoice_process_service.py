@@ -56,7 +56,6 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     UploadDocumentResponse,
     UploadPageSummary,
 )
-from Backend.Business_Layer.utils.vendor_auto_onboarding import get_numeric_system_config
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor
 from Backend.Data_Access_Layer.dao.inbound_document_dao import InboundDocumentDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
@@ -66,13 +65,13 @@ from Backend.Data_Access_Layer.dao.purchase_order_dao import PurchaseOrderDAO
 from Backend.Data_Access_Layer.dao.vendor_dao import VendorDAO
 from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
 from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceAttachment, InvoiceLine
+from Backend.Data_Access_Layer.models.audit import AuditLog
 
 logger = logging.getLogger(__name__)
 
 _IMAGE_CONTAINERS = {"PNG", "JPEG", "TIFF"}
 
 PO_MANDATORY_CONFIG_KEY = "PO_MANDATORY"
-AUTO_APPROVAL_LIMIT_CONFIG_KEY = "AUTO_APPROVAL_LIMIT"
 ISSUE_TYPE_PO_REQUIRED = "PO_REQUIRED"
 
 
@@ -406,10 +405,13 @@ def persist_processed_invoice(
     see _handle_vendor_not_found.
     """
     extracted = final_response.extracted_invoice
-    print("Confidence Matrix:", final_response.confidence.overall_confidence)
-    print("ocr_confidence:", final_response.confidence.ocr_confidence)
-    print("extraction_confidence:", final_response.confidence.extraction_confidence)
-    print("validation_confidence:", final_response.confidence.validation_confidence)
+    logger.debug(
+        "Confidence matrix — overall=%.1f ocr=%.1f extraction=%.1f validation=%.1f",
+        final_response.confidence.overall_confidence,
+        final_response.confidence.ocr_confidence,
+        final_response.confidence.extraction_confidence,
+        final_response.confidence.validation_confidence,
+    )
     unusable_reason = invoice_status.is_extraction_unusable(extracted)
     if unusable_reason is not None:
         mark_inbound_document_failed(inbound_document, db, final_response)
@@ -556,6 +558,19 @@ def persist_processed_invoice(
         )
         inbound_document.raw_extracted_data = extracted.model_dump(mode="json")
 
+        # Mirrors apply_ocr_review's create-branch INVOICE_CREATED write below — this is the
+        # other invoice-creation pathway (the full auto-pipeline: process_invoice ->
+        # persist_processed_invoice), and had no audit trail at all before this.
+        invoice_dao.create_audit_log(
+            AuditLog(
+                table_name="invoice",
+                record_id=invoice.invoice_id,
+                action="INVOICE_CREATED",
+                changed_by=str(user_id) if user_id is not None else None,
+                new_values={"invoice_number": invoice.invoice_number, "vendor_id": vendor_id},
+            )
+        )
+
         db.commit()
         db.refresh(invoice)
 
@@ -572,23 +587,34 @@ def persist_processed_invoice(
 def apply_ocr_review(
     inbound_document_id: int, review: InvoiceOCRReviewRequest, db, user_id: str
 ) -> Invoice:
-    """Manual OCR review: create-or-update the invoice, always ending at PENDING_APPROVAL.
+    """Manual OCR review: create-or-update the invoice, always ending at OCR_REVIEWED.
 
     Create branch fires when the document's vendor could not be
     auto-matched at /process-invoice time (Path B) — this is the first
     time an Invoice row is created for it, and ``review.vendor_id`` is
     required. Update branch corrects/confirms an already-created invoice
     (Path A) and resolves any outstanding InvoiceIssue rows.
+
+    OCR_REVIEWED (not PENDING_APPROVAL directly) is deliberate: it's a genuine, distinct status
+    meaning "reviewed and saved, not yet sent" — InvoiceApprovalService.send_for_approval is what
+    actually performs the OCR_REVIEWED -> PENDING_APPROVAL transition, matching it against an
+    ApprovalPolicy (falling back to the active default policy if no department/category/amount-
+    scoped policy applies) before any InvoiceApproval/step is created. Collapsing that distinction
+    (an earlier revision left the invoice at PENDING_APPROVAL from this function directly) made
+    "reviewed, never sent" and "sent, awaiting a decision" the same status — see
+    has_active_approval's removal for what that ambiguity cost. There is no amount-based
+    auto-approval shortcut here (removed) — every invoice must go through send_for_approval,
+    never skipping the policy engine based on amount alone.
     """
     inbound_document = InboundDocumentDAO(db).get_by_id(inbound_document_id)
     if inbound_document is None:
         raise ValueError(f"InboundDocument {inbound_document_id} not found")
 
     invoice_dao = InvoiceDAO(db)
-    approval_status = invoice_dao.get_status_by_code(invoice_status.STATUS_CODE_PENDING_APPROVAL)
-    if approval_status is None:
+    reviewed_status = invoice_dao.get_status_by_code(invoice_status.STATUS_CODE_OCR_REVIEWED)
+    if reviewed_status is None:
         raise FieldExtractionError(
-            f"Status '{invoice_status.STATUS_CODE_PENDING_APPROVAL}' is not configured in status_master"
+            f"Status '{invoice_status.STATUS_CODE_OCR_REVIEWED}' is not configured in status_master"
         )
 
     try:
@@ -596,18 +622,47 @@ def apply_ocr_review(
             invoice = _create_invoice_from_review(inbound_document, review, invoice_dao, user_id)
             inbound_document.invoice_id = invoice.invoice_id
             inbound_document.vendor_id = invoice.vendor_id
+            invoice_dao.create_audit_log(
+                AuditLog(
+                    table_name="invoice",
+                    record_id=invoice.invoice_id,
+                    action="INVOICE_CREATED",
+                    changed_by=str(user_id) if user_id is not None else None,
+                    new_values={"invoice_number": invoice.invoice_number, "vendor_id": invoice.vendor_id},
+                )
+            )
         else:
             invoice = invoice_dao.get_invoice_by_id(inbound_document.invoice_id)
             if invoice is None:
                 raise ValueError(
                     f"Invoice {inbound_document.invoice_id} referenced by this document no longer exists"
                 )
+            # get_status_details (id -> StatusMaster, InvoiceDAO) rather than an invoice.status
+            # relationship read — nothing in this codepath (or its existing test fixtures) can
+            # rely on that relationship being eagerly loaded, since invoices here are sometimes
+            # plain SimpleNamespace stand-ins carrying only a bare status_id.
+            current_status = invoice_dao.get_status_details(invoice.status_id) if invoice.status_id else None
+            current_code = current_status.status_code if current_status else None
+            if current_code not in invoice_status.EDITABLE_STATUSES_FOR_OCR_REVIEW:
+                raise ValueError(
+                    f"Invoice {invoice.invoice_id} cannot be edited while in status {current_code}"
+                )
+            was_returned = current_code == invoice_status.STATUS_CODE_RETURNED_FOR_REVIEW
             _apply_review_updates(invoice, review, invoice_dao, user_id)
             for issue in invoice_dao.get_open_invoice_issues(invoice.invoice_id):
                 issue.resolved_by = user_id
                 issue.resolved_at = datetime.utcnow()
+            invoice_dao.create_audit_log(
+                AuditLog(
+                    table_name="invoice",
+                    record_id=invoice.invoice_id,
+                    action="INVOICE_RESUBMITTED" if was_returned else "INVOICE_OCR_REVIEWED",
+                    changed_by=str(user_id) if user_id is not None else None,
+                    new_values={"invoice_number": invoice.invoice_number},
+                )
+            )
 
-        invoice.status_id = approval_status.status_id
+        invoice.status_id = reviewed_status.status_id
         invoice.updated_by = user_id
 
         if _config_bool(db, PO_MANDATORY_CONFIG_KEY) and invoice.po_id is None:
@@ -621,8 +676,6 @@ def apply_ocr_review(
             invoice_dao.create_invoice_issue(po_required_issue)
 
         _resolve_approval_context(invoice, db)
-
-        _maybe_auto_approve(invoice, invoice_dao, db)
 
         db.commit()
         db.refresh(invoice)
@@ -675,31 +728,6 @@ def _resolve_approval_context(invoice: Invoice, db) -> None:
         raise ValueError("purchase_category_id does not match an active purchase category")
     if purchase_category.department_id != invoice.department_id:
         raise ValueError("purchase_category_id does not belong to the selected department")
-
-
-def _maybe_auto_approve(invoice: Invoice, invoice_dao: InvoiceDAO, db) -> None:
-    """AUTO_APPROVAL_LIMIT (system_configuration): invoices at or below this
-    amount skip manual approval entirely IF no open InvoiceIssue remains —
-    per Database/Database_README.md Module 6, the fully-automated path never
-    creates an InvoiceApproval row, it just moves straight to APPROVED.
-    Only applies while the invoice is currently PENDING_APPROVAL.
-    """
-    pending_status = invoice_dao.get_status_by_code(invoice_status.STATUS_CODE_PENDING_APPROVAL)
-    if pending_status is None or invoice.status_id != pending_status.status_id:
-        return
-
-    limit = get_numeric_system_config(db, AUTO_APPROVAL_LIMIT_CONFIG_KEY)
-    if limit is None or invoice.net_amount > limit:
-        return
-
-    if invoice_dao.get_open_invoice_issues(invoice.invoice_id):
-        return
-
-    approved_status = invoice_dao.get_status_by_code("APPROVED")
-    if approved_status is None:
-        return
-
-    invoice.status_id = approved_status.status_id
 
 
 def _create_invoice_from_review(

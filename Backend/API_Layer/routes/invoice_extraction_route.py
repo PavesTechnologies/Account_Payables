@@ -5,11 +5,14 @@ from typing import Optional
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Depends,
     File,
     HTTPException,
     Request,
     UploadFile,
 )
+
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 
 from Backend.API_Layer.interface.invoice_extraction_interface import (
     AmountsCorrectionRequest,
@@ -39,10 +42,7 @@ from Backend.API_Layer.utils.extraction_cache import (
     record_confirmation,
 )
 
-from Backend.API_Layer.utils.s3_utils import (
-    delete_from_s3,
-    upload_to_s3,
-)
+from Backend.API_Layer.utils.s3_utils import upload_to_s3
 
 from Backend.API_Layer.utils.validation_progress import (
     get_validation_status,
@@ -62,6 +62,11 @@ from Backend.Business_Layer.utils.exceptions import (
 
 router = APIRouter()
 
+# The whole pre-persistence intake pipeline (extract -> validate -> correct -> confirm ->
+# create-invoice) is one capability, "AP Invoice Intake" — gated by the single INVOICE_CREATE
+# permission rather than a different one per step, since none of these endpoints persist
+# anything to the Invoice DB except /create-invoice itself.
+_INTAKE_PERMISSIONS = ["INVOICE_CREATE"]
 
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
@@ -86,6 +91,7 @@ def _get_user_id(http_request: Request) -> str:
 @router.post(
     "/extract-fields",
     response_model=ExtractedInvoiceResult,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def extract_invoice_fields(
     file: UploadFile = File(...),
@@ -195,29 +201,20 @@ async def extract_invoice_fields(
             ),
         ) from exc
 
-    # finally:
-
-    #     # ====================================================
-    #     # Temporary S3 cleanup
-    #     # ====================================================
-
-    #     if s3_key:
-
-    #         try:
-
-    #             delete_from_s3(
-    #                 s3_key
-    #             )
-
-    #         except Exception:
-
-    #             # Do not hide extraction result because
-    #             # temporary cleanup failed.
-    #             pass
+    # Known gap, not a bug to silently "fix" here: s3_key is NOT temporary — /create-invoice
+    # later reuses this same path as InboundDocument.file_path (see create_invoice below and
+    # InvoiceExtractionService.create_invoice), which is how "View source document" keeps
+    # working after the invoice is created. Deleting it unconditionally after every extraction
+    # (as a `finally: delete_from_s3(s3_key)` here would do) would delete every successfully
+    # created invoice's own attachment along with it. The real gap is the opposite case: a user
+    # who extracts a file and never calls /create-invoice leaves an orphaned S3 object behind
+    # with nothing to reap it — that needs a separate scheduled cleanup job keyed off
+    # extraction_cache TTLs, not inline deletion in this request.
 
 @router.post(
     "/validate-fields",
     response_model=ValidationJobQueued,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def validate_fields(
     http_request: Request,
@@ -327,6 +324,7 @@ async def validate_fields(
 @router.get(
     "/validate-fields/{job_id}/status",
     response_model=ValidationJobStatus,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def get_validate_fields_status(job_id: str):
 
@@ -381,6 +379,7 @@ def _extraction_cache_response(cached: dict) -> ExtractionCacheResponse:
 @router.get(
     "/extract-fields/{extraction_id}",
     response_model=ExtractionCacheResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def get_extraction(extraction_id: str):
 
@@ -433,6 +432,7 @@ def _correct_section(
 @router.patch(
     "/extract-fields/{extraction_id}/vendor",
     response_model=CorrectionResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def correct_vendor(
     extraction_id: str,
@@ -450,6 +450,7 @@ async def correct_vendor(
 @router.patch(
     "/extract-fields/{extraction_id}/buyer",
     response_model=CorrectionResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def correct_buyer(
     extraction_id: str,
@@ -467,6 +468,7 @@ async def correct_buyer(
 @router.patch(
     "/extract-fields/{extraction_id}/tax",
     response_model=CorrectionResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def correct_tax(
     extraction_id: str,
@@ -484,6 +486,7 @@ async def correct_tax(
 @router.patch(
     "/extract-fields/{extraction_id}/amounts",
     response_model=CorrectionResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def correct_amounts(
     extraction_id: str,
@@ -501,6 +504,7 @@ async def correct_amounts(
 @router.post(
     "/extract-fields/{extraction_id}/confirm",
     response_model=ExtractionCacheResponse,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def confirm_section(
     extraction_id: str,
@@ -534,6 +538,7 @@ async def confirm_section(
 @router.post(
     "/create-invoice",
     response_model=InvoiceCreationResult,
+    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
 )
 async def create_invoice(
     extracted_data: ExtractedInvoiceResult,
