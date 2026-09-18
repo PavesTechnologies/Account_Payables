@@ -28,6 +28,21 @@ router = APIRouter()
 
 _POLICY_NOT_FOUND = "Approval policy not found"
 
+# Viewing which policy applied to a specific invoice (and its name/is_default flag) is basic
+# invoice visibility, not policy administration — anyone who can see an invoice's approval status
+# at all needs this to render "Applied Policy" on InvoiceApprovalPanel, not just someone who can
+# create/edit/delete policies. Mirrors invoice_approval_route.py's _APPROVAL_VIEW_PERMISSIONS.
+# APPROVAL_POLICY_MANAGE remains the sole gate on list/create/update/delete/status below.
+_POLICY_VIEW_PERMISSIONS = [
+    "APPROVAL_POLICY_MANAGE",
+    "INVOICE_VIEW",
+    "INVOICE_APPROVAL_VIEW",
+    "INVOICE_APPROVE",
+    "INVOICE_REJECT",
+    "INVOICE_SEND_BACK",
+    "PAYMENT_VIEW",
+]
+
 
 def _status_code_for(message: str, not_found_message: str) -> int:
     return 404 if message == not_found_message else 422
@@ -62,7 +77,7 @@ def list_approval_policies(
     "/approval-policies/{policy_id}",
     response_model=ApprovalPolicyDTO,
     dependencies=[
-        Depends(permission_based_access(["APPROVAL_POLICY_MANAGE"]))
+        Depends(permission_based_access(_POLICY_VIEW_PERMISSIONS))
     ],
 )
 def get_approval_policy(policy_id: int, http_request: Request):

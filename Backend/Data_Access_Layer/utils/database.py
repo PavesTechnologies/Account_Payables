@@ -8,7 +8,16 @@ from Backend.config.env_loader import get_env_var
 
 DATABASE_URL = get_env_var("DATABASE_URL")
 
-engine = create_engine(DATABASE_URL)
+# Enforce strict pool limits and pre-ping checks for low connection limits
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=3,             # Maximum persistent connections kept open
+    max_overflow=2,          # Additional temporary connections allowed during spikes (Total max = 5)
+    pool_timeout=10,         # Seconds to wait for an available connection before raising an error
+    pool_recycle=1800,       # Recycle connections older than 30 minutes
+    pool_pre_ping=True,      # Test connections before checkout to handle dropped sockets
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -40,4 +49,4 @@ def remove_db_session() -> None:
     db = _db_session_ctx.get()
     if db is not None:
         db.close()
-    _db_session_ctx.set(None)
+        _db_session_ctx.set(None)

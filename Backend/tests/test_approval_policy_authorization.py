@@ -132,6 +132,24 @@ def test_manager_can_get_policy(monkeypatch, manager_client):
     assert manager_client.get("/approval-policies/1").status_code == 200
 
 
+def test_a_plain_invoice_viewer_can_also_get_a_single_policy(monkeypatch):
+    """GET /approval-policies/{id} is the one endpoint InvoiceApprovalPanel calls just to show
+    "Applied Policy" (name, is_default) on an invoice any AP Executive/Approver/Finance user is
+    already looking at — that's invoice visibility, not policy administration, so it accepts any
+    of the invoice-viewing permissions too, not only APPROVAL_POLICY_MANAGE. list/create/update/
+    delete/status stay APPROVAL_POLICY_MANAGE-only (see test_manager_can_list_policies etc. and
+    test_missing_permission_returns_403)."""
+    _stub_service(monkeypatch, "get_policy")
+    client = _make_client(_user(["INVOICE_VIEW"]))
+    assert client.get("/approval-policies/1").status_code == 200
+
+
+def test_a_plain_invoice_viewer_still_cannot_list_or_manage_policies(monkeypatch):
+    _stub_service(monkeypatch, "list_policies", return_value=[])
+    client = _make_client(_user(["INVOICE_VIEW"]))
+    assert client.get("/approval-policies").status_code == 403
+
+
 def test_manager_can_create_policy(monkeypatch, manager_client):
     _stub_service(monkeypatch, "create_policy")
     response = manager_client.post(
