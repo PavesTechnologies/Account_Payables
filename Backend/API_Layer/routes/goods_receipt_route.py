@@ -14,7 +14,7 @@ from Backend.API_Layer.interface.goods_receipt_interface import (
     UploadGoodsReceiptDocumentResponse,
 )
 from Backend.API_Layer.utils.file_validation import validate_upload_file
-from Backend.API_Layer.utils.s3_utils import download_from_s3, view_from_s3
+from Backend.API_Layer.utils.s3_utils import download_from_s3
 from Backend.Business_Layer.services.goods_receipt_service import GoodsReceiptService
 from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
 
@@ -68,17 +68,9 @@ def create_goods_receipt(payload: GoodsReceiptCreateRequest, http_request: Reque
 # ---------------------------------------------------------
 # Get All Goods Receipts
 # ---------------------------------------------------------
-from typing import Optional
-
-from fastapi import APIRouter, HTTPException, Request
-
 from Backend.API_Layer.interface.goods_receipt_interface import (
-    GoodsReceiptDTO,
     GoodsReceiptLineDTO,
 )
-from Backend.Business_Layer.services.goods_receipt_service import GoodsReceiptService
-
-router = APIRouter()
 
 
 @router.get("", response_model=list[GoodsReceiptDTO])
@@ -227,17 +219,13 @@ async def upload_goods_receipt_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# @router.get("/{grn_id}/document/view")
-# def view_goods_receipt_document(grn_id: int, http_request: Request):
 @router.get("/{grn_id}/lines", response_model=list[GoodsReceiptLineDTO])
 def get_goods_receipt_lines(grn_id: int, http_request: Request):
     db = http_request.state.db
 
     try:
         service = GoodsReceiptService(db)
-        file_path = service.get_document_path(grn_id)
-
-        return view_from_s3(file_path)
+        return service.get_lines(grn_id)
 
     except ValueError as e:
         status_code = 404 if str(e) == _NOT_FOUND else 422

@@ -137,8 +137,6 @@ api_router.include_router(
 )
 api_router.include_router(invoice_approval_route.router, tags=["Invoice Approval"], prefix="/invoice")
 api_router.include_router(invoice_details_route.router, tags=["Invoice Details"], prefix="/invoice-details")
-api_router.include_router(purchase_order_route.router, tags=["Purchase Order"], prefix="/po")
-api_router.include_router(goods_receipt_route.router, tags=["Goods Receipt"], prefix="/grn")
 api_router.include_router(payment_route.router, tags=["Payment"], prefix="/payment")
 api_router.include_router(procurement_route.router, tags=["Procurement"], prefix="/procurement")
 api_router.include_router(rfq_route.router, tags=["RFQ"], prefix="/rfq")

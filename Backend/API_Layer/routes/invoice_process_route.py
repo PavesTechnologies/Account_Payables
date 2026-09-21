@@ -88,184 +88,184 @@ def _get_user_id(http_request: Request) -> str:
     return user_id
 
 
-# ---------------------------------------------------------
-# 1. Upload Document (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
-# ---------------------------------------------------------
-@router.post(
-    "/upload-document",
-    response_model=DocumentResult,
-    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
-)
-async def upload_document(file: UploadFile = File(...)):
-    """Upload a document and run technical classification + text extraction only.
+# # ---------------------------------------------------------
+# # 1. Upload Document (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
+# # ---------------------------------------------------------
+# @router.post(
+#     "/upload-document",
+#     response_model=DocumentResult,
+#     dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+# )
+# async def upload_document(file: UploadFile = File(...)):
+#     """Upload a document and run technical classification + text extraction only.
 
-    No field extraction happens here — use /extract-fields for that.
-    """
-    content = await file.read()
+#     No field extraction happens here — use /extract-fields for that.
+#     """
+#     content = await file.read()
 
-    try:
-        result = service.extract_document(file.filename, content)
+#     try:
+#         result = service.extract_document(file.filename, content)
 
-        # return service.to_upload_response(result)
-        return result
+#         # return service.to_upload_response(result)
+#         return result
 
-    except UnsupportedFileType as e:
-        raise HTTPException(status_code=415, detail=str(e))
+#     except UnsupportedFileType as e:
+#         raise HTTPException(status_code=415, detail=str(e))
 
-    except OCRFailure as e:
-        raise HTTPException(status_code=422, detail=str(e))
+#     except OCRFailure as e:
+#         raise HTTPException(status_code=422, detail=str(e))
 
-    except Exception as e:
-        logger.exception("upload-document failed for '%s'", file.filename)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------
-# 2. Extract Fields (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
-# ---------------------------------------------------------
-@router.post(
-    "/extract-fields",
-    response_model=ExtractedInvoice,
-    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
-)
-def extract_fields(document: DocumentResult):
-    """Extract invoice fields from a DocumentResult using anchors/regex/geometry only."""
-    try:
-        return service.extract_invoice_fields(document)
-
-    except FieldExtractionError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    except Exception as e:
-        logger.exception("extract-fields failed")
-        raise HTTPException(status_code=500, detail=str(e))
+#     except Exception as e:
+#         logger.exception("upload-document failed for '%s'", file.filename)
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ---------------------------------------------------------
-# 3. Validate Fields (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
-# ---------------------------------------------------------
-@router.post(
-    "/validate-fields",
-    response_model=ValidationResult,
-    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
-)
-def validate_fields(extracted_invoice: ExtractedInvoice):
-    """Validate GSTIN, invoice date, due date, totals, and invoice number."""
-    try:
-        return service.validate_invoice(extracted_invoice)
+# # ---------------------------------------------------------
+# # 2. Extract Fields (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
+# # ---------------------------------------------------------
+# @router.post(
+#     "/extract-fields",
+#     response_model=ExtractedInvoice,
+#     dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+# )
+# def extract_fields(document: DocumentResult):
+#     """Extract invoice fields from a DocumentResult using anchors/regex/geometry only."""
+#     try:
+#         return service.extract_invoice_fields(document)
 
-    except ValidationFailure as e:
-        raise HTTPException(status_code=422, detail=str(e))
+#     except FieldExtractionError as e:
+#         raise HTTPException(status_code=422, detail=str(e))
 
-    except Exception as e:
-        logger.exception("validate-fields failed")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------
-# 4. Match Vendor (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
-# ---------------------------------------------------------
-@router.post(
-    "/match-vendor",
-    response_model=VendorMatch,
-    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
-)
-def match_vendor(
-    extracted_invoice: ExtractedInvoice,
-    http_request: Request,
-):
-    """Match an ExtractedInvoice against the vendor master."""
-
-    try:
-        db = http_request.state.db
-
-        return vendor_matcher(
-            extracted=extracted_invoice,
-            db=db,
-        )
-
-    except VendorNotFound as e:
-        raise HTTPException(
-            status_code=404,
-            detail=str(e),
-        )
-
-    except Exception as e:
-        logger.exception("match-vendor failed")
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
+#     except Exception as e:
+#         logger.exception("extract-fields failed")
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ---------------------------------------------------------
-# 5. Process Invoice (production API) — NOT CALLED BY THE FRONTEND, see module docstring. Despite
-# the "production API" label this carries from its original design, Invoice Management today
-# runs entirely on invoice_extraction_route.py's extract-fields/validate-fields/create-invoice
-# instead — this full auto-pipeline (OCR -> vendor match -> persist) is not what's live in the UI.
-# ---------------------------------------------------------
-@router.post(
-    "/process-invoice",
-    response_model=FinalResponse,
-    dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
-)
-async def process_invoice(http_request: Request, file: UploadFile = File(...)):
-    """Full production pipeline: validate -> S3 upload -> InboundDocument ->
-    OCR/extraction/validation/vendor-matching/confidence (service.process_invoice,
-    unchanged) -> persist (Invoice/InvoiceLine/InvoiceAttachment/InvoiceIssue, or
-    just InboundDocument + notification if the vendor couldn't be matched).
-    """
-    content = await file.read()
+# # ---------------------------------------------------------
+# # 3. Validate Fields (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
+# # ---------------------------------------------------------
+# @router.post(
+#     "/validate-fields",
+#     response_model=ValidationResult,
+#     dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+# )
+# def validate_fields(extracted_invoice: ExtractedInvoice):
+#     """Validate GSTIN, invoice date, due date, totals, and invoice number."""
+#     try:
+#         return service.validate_invoice(extracted_invoice)
 
-    try:
-        logger.debug("Validating upload file '%s'", file.filename)
-        validate_upload_file(file, content)
-    except (UnsupportedFileType, InvalidUploadFile) as e:
-        status_code = 415 if isinstance(e, UnsupportedFileType) else 400
-        raise HTTPException(status_code=status_code, detail=str(e))
+#     except ValidationFailure as e:
+#         raise HTTPException(status_code=422, detail=str(e))
 
-    try:
-        user_id = _get_user_id(http_request)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+#     except Exception as e:
+#         logger.exception("validate-fields failed")
+#         raise HTTPException(status_code=500, detail=str(e))
 
-    db = http_request.state.db
 
-    upload_result = upload_to_s3(file.filename, content, file.content_type)
-    s3_key = upload_result["filepath"]
+# # ---------------------------------------------------------
+# # 4. Match Vendor (developer API) — NOT CALLED BY THE FRONTEND, see module docstring.
+# # ---------------------------------------------------------
+# @router.post(
+#     "/match-vendor",
+#     response_model=VendorMatch,
+#     dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+# )
+# def match_vendor(
+#     extracted_invoice: ExtractedInvoice,
+#     http_request: Request,
+# ):
+#     """Match an ExtractedInvoice against the vendor master."""
 
-    inbound_document = service.create_pending_inbound_document(file.filename, s3_key, db)
+#     try:
+#         db = http_request.state.db
 
-    try:
-        final_response = service.process_invoice(file.filename, content, db)
-    except (OCRFailure, FieldExtractionError) as e:
-        service.mark_inbound_document_failed(inbound_document, db)
-        raise HTTPException(status_code=422, detail=str(e))
-    except UnsupportedFileType as e:
-        service.mark_inbound_document_failed(inbound_document, db)
-        raise HTTPException(status_code=415, detail=str(e))
-    except Exception as e:
-        service.mark_inbound_document_failed(inbound_document, db)
-        logger.exception("process-invoice extraction failed for '%s'", file.filename)
-        raise HTTPException(status_code=500, detail="Invoice processing failed unexpectedly")
+#         return vendor_matcher(
+#             extracted=extracted_invoice,
+#             db=db,
+#         )
 
-    try:
-        outcome = service.persist_processed_invoice(final_response, inbound_document, db, user_id)
-    except FieldExtractionError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except DuplicateInvoiceError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="This invoice conflicts with an existing record")
-    except Exception as e:
-        logger.exception("process-invoice persistence failed for '%s'", file.filename)
-        raise HTTPException(status_code=500, detail="Invoice processing failed unexpectedly")
+#     except VendorNotFound as e:
+#         raise HTTPException(
+#             status_code=404,
+#             detail=str(e),
+#         )
 
-    final_response.inbound_document_id = outcome.inbound_document_id
-    final_response.invoice_id = outcome.invoice_id
-    final_response.invoice_status = outcome.invoice_status
-    return final_response
+#     except Exception as e:
+#         logger.exception("match-vendor failed")
+#         raise HTTPException(
+#             status_code=500,
+#             detail=str(e),
+#         )
+
+
+# # ---------------------------------------------------------
+# # 5. Process Invoice (production API) — NOT CALLED BY THE FRONTEND, see module docstring. Despite
+# # the "production API" label this carries from its original design, Invoice Management today
+# # runs entirely on invoice_extraction_route.py's extract-fields/validate-fields/create-invoice
+# # instead — this full auto-pipeline (OCR -> vendor match -> persist) is not what's live in the UI.
+# # ---------------------------------------------------------
+# @router.post(
+#     "/process-invoice",
+#     response_model=FinalResponse,
+#     dependencies=[Depends(permission_based_access(_INTAKE_PERMISSIONS))],
+# )
+# async def process_invoice(http_request: Request, file: UploadFile = File(...)):
+#     """Full production pipeline: validate -> S3 upload -> InboundDocument ->
+#     OCR/extraction/validation/vendor-matching/confidence (service.process_invoice,
+#     unchanged) -> persist (Invoice/InvoiceLine/InvoiceAttachment/InvoiceIssue, or
+#     just InboundDocument + notification if the vendor couldn't be matched).
+#     """
+#     content = await file.read()
+
+#     try:
+#         logger.debug("Validating upload file '%s'", file.filename)
+#         validate_upload_file(file, content)
+#     except (UnsupportedFileType, InvalidUploadFile) as e:
+#         status_code = 415 if isinstance(e, UnsupportedFileType) else 400
+#         raise HTTPException(status_code=status_code, detail=str(e))
+
+#     try:
+#         user_id = _get_user_id(http_request)
+#     except ValueError as e:
+#         raise HTTPException(status_code=422, detail=str(e))
+
+#     db = http_request.state.db
+
+#     upload_result = upload_to_s3(file.filename, content, file.content_type)
+#     s3_key = upload_result["filepath"]
+
+#     inbound_document = service.create_pending_inbound_document(file.filename, s3_key, db)
+
+#     try:
+#         final_response = service.process_invoice(file.filename, content, db)
+#     except (OCRFailure, FieldExtractionError) as e:
+#         service.mark_inbound_document_failed(inbound_document, db)
+#         raise HTTPException(status_code=422, detail=str(e))
+#     except UnsupportedFileType as e:
+#         service.mark_inbound_document_failed(inbound_document, db)
+#         raise HTTPException(status_code=415, detail=str(e))
+#     except Exception as e:
+#         service.mark_inbound_document_failed(inbound_document, db)
+#         logger.exception("process-invoice extraction failed for '%s'", file.filename)
+#         raise HTTPException(status_code=500, detail="Invoice processing failed unexpectedly")
+
+#     try:
+#         outcome = service.persist_processed_invoice(final_response, inbound_document, db, user_id)
+#     except FieldExtractionError as e:
+#         raise HTTPException(status_code=422, detail=str(e))
+#     except DuplicateInvoiceError as e:
+#         raise HTTPException(status_code=409, detail=str(e))
+#     except IntegrityError as e:
+#         db.rollback()
+#         raise HTTPException(status_code=409, detail="This invoice conflicts with an existing record")
+#     except Exception as e:
+#         logger.exception("process-invoice persistence failed for '%s'", file.filename)
+#         raise HTTPException(status_code=500, detail="Invoice processing failed unexpectedly")
+
+#     final_response.inbound_document_id = outcome.inbound_document_id
+#     final_response.invoice_id = outcome.invoice_id
+#     final_response.invoice_status = outcome.invoice_status
+#     return final_response
 
 
 # ---------------------------------------------------------
