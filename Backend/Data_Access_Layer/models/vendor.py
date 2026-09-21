@@ -1,6 +1,6 @@
 from typing import Optional, TYPE_CHECKING
 import datetime
-from sqlalchemy import Boolean, Date, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
  
 from Backend.Data_Access_Layer.models.base import Base
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, GoodsReceipt
     from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
     from Backend.Data_Access_Layer.models.invoice import Invoice
-    from Backend.Data_Access_Layer.models.purchase import PurchaseRequisition, Quotation
+    from Backend.Data_Access_Layer.models.purchase import PurchaseRequisition, Quotation, Department, PurchaseCategory
     from Backend.Data_Access_Layer.models.master import (
         Country,
         Currency,
@@ -61,7 +61,7 @@ class Vendor(Base):
     payment: Mapped[list['Payment']] = relationship('Payment', back_populates='vendor')
     purchase_requisition: Mapped[list['PurchaseRequisition']] = relationship('PurchaseRequisition', back_populates='selected_vendor')
     quotation: Mapped[list['Quotation']] = relationship('Quotation', back_populates='vendor')
-    vendor_category_mapping: Mapped[list['VendorCategoryMapping']] = relationship('VendorCategoryMapping', back_populates='vendor')
+    vendor_engagement: Mapped[list['VendorEngagement']] = relationship('VendorEngagement', back_populates='vendor')
  
  
 class VendorAddress(Base):
@@ -168,31 +168,62 @@ class VendorCategory(Base):
 
     parent_category: Mapped[Optional['VendorCategory']] = relationship('VendorCategory', remote_side=[vendor_category_id], back_populates='child_categories')
     child_categories: Mapped[list['VendorCategory']] = relationship('VendorCategory', back_populates='parent_category')
-    vendor_category_mapping: Mapped[list['VendorCategoryMapping']] = relationship('VendorCategoryMapping', back_populates='vendor_category')
 
 
-class VendorCategoryMapping(Base):
-    """Not currently queried anywhere in the app (no ORM or raw-SQL
-    usage found) - mapped here to match the live table, not because
-    anything depends on it yet."""
+class VendorEngagement(Base):
+    """A vendor's engagement with a specific Department + Purchase Category
+    (Vendor Intake + Pre-Screen). The Vendor Master (``Vendor``) represents
+    the company; this row represents one department/category relationship
+    for that company, so the same vendor can have multiple engagements
+    without duplicating the Vendor Master.
+
+    This repurposes the table that used to be ``vendor_category_mapping``
+    (linked to the still-unused ``vendor_category`` master) - that table had
+    no ORM/raw-SQL usage anywhere, so its FK was repointed at the real,
+    live ``purchase_category``/``department`` masters instead of adding a
+    brand-new table. See ``migration_vendor_intake_engagement.sql``.
+    """
 
     __tablename__ = 'vendor_category_mapping'
     __table_args__ = (
-        ForeignKeyConstraint(['vendor_category_id'], ['ap.vendor_category.vendor_category_id'], name='vendor_category_mapping_category_fk'),
+        ForeignKeyConstraint(['purchase_category_id'], ['ap.purchase_category.id'], name='vendor_engagement_purchase_category_fk'),
+        ForeignKeyConstraint(['department_id'], ['ap.department.id'], name='vendor_engagement_department_fk'),
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='vendor_category_mapping_vendor_fk'),
         PrimaryKeyConstraint('vendor_category_mapping_id', name='vendor_category_mapping_pkey'),
-        UniqueConstraint('vendor_id', 'vendor_category_id', name='vendor_category_mapping_unique'),
+        UniqueConstraint('vendor_id', 'department_id', 'purchase_category_id', name='vendor_engagement_unique'),
+        CheckConstraint(
+            "pre_screen_status IN ('PENDING', 'PASS', 'NEED_INFORMATION', 'FAIL')",
+            name='chk_vendor_engagement_pre_screen_status',
+        ),
+        Index('idx_vendor_engagement_department', 'department_id'),
+        Index('idx_vendor_engagement_category', 'purchase_category_id'),
         {'schema': 'ap'}
     )
 
     vendor_category_mapping_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     vendor_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    vendor_category_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    department_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    purchase_category_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    pre_screen_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PENDING'::character varying"))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('now()'))
+    # business_requirement (what the vendor is needed for) and
+    # purpose_of_onboarding (why this vendor specifically) are deliberately
+    # separate free-text fields captured at intake, not two names for one thing.
+    business_requirement: Mapped[Optional[str]] = mapped_column(Text)
+    purpose_of_onboarding: Mapped[Optional[str]] = mapped_column(Text)
+    pre_screen_result_reason: Mapped[Optional[str]] = mapped_column(Text)
+    pre_screen_checked_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    nda_recommended: Mapped[Optional[bool]] = mapped_column(Boolean)
+    nda_override: Mapped[Optional[bool]] = mapped_column(Boolean)
+    nda_override_reason: Mapped[Optional[str]] = mapped_column(Text)
+    nda_final_required: Mapped[Optional[bool]] = mapped_column(Boolean)
+    nda_decided_by: Mapped[Optional[str]] = mapped_column(String(100))
+    nda_decided_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))
 
-    vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='vendor_category_mapping')
-    vendor_category: Mapped['VendorCategory'] = relationship('VendorCategory', back_populates='vendor_category_mapping')
+    vendor: Mapped['Vendor'] = relationship('Vendor', back_populates='vendor_engagement')
+    department: Mapped['Department'] = relationship('Department')
+    purchase_category: Mapped['PurchaseCategory'] = relationship('PurchaseCategory')

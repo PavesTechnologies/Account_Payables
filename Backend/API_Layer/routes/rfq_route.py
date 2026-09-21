@@ -17,7 +17,33 @@ from Backend.API_Layer.interface.rfq_interface import (
     RFQVendorSendResultDTO,
     SendRFQResponse,
 )
+from Backend.API_Layer.interface.vendor_onboarding_interface import (
+    EligibilityCheckDTO,
+    RFQEligibilityBatchResponse,
+    RFQEligibilityCheckRequest,
+    RFQEligibilityResponse,
+)
+from Backend.Business_Layer.services.rfq_eligibility_service import (
+    EligibilityResult,
+    RFQEligibilityService,
+)
 from Backend.Business_Layer.services.rfq_service import RFQService
+
+
+def _to_eligibility_response(result: EligibilityResult) -> RFQEligibilityResponse:
+    def _to_dto(check):
+        return EligibilityCheckDTO(
+            check=check.check, status=check.status, passed=check.passed, message=check.message
+        )
+
+    return RFQEligibilityResponse(
+        pr_id=result.pr_id,
+        vendor_id=result.vendor_id,
+        eligible=result.eligible,
+        reason=result.reason,
+        checks=[_to_dto(check) for check in result.checks],
+        failed_checks=[_to_dto(check) for check in result.failed_checks],
+    )
 
 router = APIRouter()
 
@@ -92,6 +118,49 @@ def get_all_rfqs(
     try:
         service = RFQService(db)
         return service.list_rfqs(pr_id, status_id, skip, limit)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------
+# RFQ Eligibility (read-only view of the backend-enforced gate).
+#
+# Declared BEFORE /{rfq_id} - otherwise "eligibility" is captured by the
+# dynamic rfq_id path and fails as a non-integer. The authoritative
+# enforcement lives in RFQService.invite_vendors / send_rfq; these endpoints
+# only let the UI show why a vendor is blocked.
+# ---------------------------------------------------------
+@router.get(
+    "/eligibility",
+    response_model=RFQEligibilityResponse,
+    dependencies=[Depends(permission_based_access(["QUOTATION_VIEW"]))],
+)
+def get_rfq_eligibility(http_request: Request, pr_id: int, vendor_id: int):
+    db = http_request.state.db
+
+    try:
+        result = RFQEligibilityService(db).check(pr_id, vendor_id)
+        return _to_eligibility_response(result)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/eligibility/check",
+    response_model=RFQEligibilityBatchResponse,
+    dependencies=[Depends(permission_based_access(["QUOTATION_VIEW"]))],
+)
+def check_rfq_eligibility(payload: RFQEligibilityCheckRequest, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        results = RFQEligibilityService(db).check_many(payload.pr_id, payload.vendor_ids)
+        return RFQEligibilityBatchResponse(
+            pr_id=payload.pr_id,
+            results=[_to_eligibility_response(result) for result in results],
+        )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

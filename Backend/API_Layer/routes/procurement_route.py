@@ -33,7 +33,12 @@ from Backend.API_Layer.interface.quotation_extraction_interface import (
 )
 from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.s3_utils import download_from_s3, upload_to_s3, view_from_s3
+from Backend.API_Layer.interface.vendor_onboarding_interface import (
+    AvailableVendorDTO,
+    VendorAvailabilityResponse,
+)
 from Backend.Business_Layer.services.procurement_service import ProcurementService
+from Backend.Business_Layer.services.vendor_onboarding_service import VendorOnboardingService
 from Backend.Business_Layer.services.quotation_extraction_service import (
     QuotationExtractionService,
 )
@@ -164,6 +169,56 @@ def get_pending_approval_purchase_requisitions(
         return service.list_pending_approval(department_id)
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------
+# Vendor Availability (PR Officer step)
+#
+# Answers "is there an active, Pre-Screen-passed vendor already engaged for
+# this PR's department + category?". AVAILABLE -> continue to RFQ eligibility;
+# NOT AVAILABLE -> raise a vendor onboarding request
+# (POST /apm/vendor-onboarding-requests). Department and category are read
+# from the PR itself, never supplied by the caller.
+# ---------------------------------------------------------
+@router.get(
+    "/purchase-requisitions/{pr_id}/vendor-availability",
+    response_model=VendorAvailabilityResponse,
+    dependencies=[
+        Depends(permission_based_access(["VENDOR_AVAILABILITY_CHECK", "VENDOR_SELECT", "QUOTATION_VIEW"]))
+    ],
+)
+def check_vendor_availability(pr_id: int, http_request: Request):
+    db = http_request.state.db
+
+    try:
+        user_id = _get_user_id(http_request)
+
+        service = VendorOnboardingService(db)
+        result = service.check_vendor_availability(pr_id, user_id)
+
+        return VendorAvailabilityResponse(
+            pr_id=result.pr_id,
+            department_id=result.department_id,
+            purchase_category_id=result.purchase_category_id,
+            available=result.available,
+            vendors=[
+                AvailableVendorDTO(
+                    vendor_id=vendor.vendor_id,
+                    vendor_name=vendor.vendor_name,
+                    vendor_code=vendor.vendor_code,
+                    email=vendor.email,
+                )
+                for vendor in result.vendors
+            ],
+        )
+
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 

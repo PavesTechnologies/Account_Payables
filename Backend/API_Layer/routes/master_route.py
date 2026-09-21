@@ -342,12 +342,12 @@ def update_system_config(
 
 # department details apis
 @router.get("/departments", response_model=list[DepartmentDetails])
-def get_all_departments(http_request: Request):
+def get_all_departments(http_request: Request, active_only: bool = False):
     db = http_request.state.db
 
     try:
         service = MasterService(db)
-        return service.get_all_departments()
+        return service.get_all_departments(active_only)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -450,12 +450,16 @@ def delete_department(id: int, http_request: Request):
 
 # purchase category details apis
 @router.get("/purchase-categories", response_model=list[PurchaseCategoryDetails])
-def get_all_purchase_categories(http_request: Request, department_id: Optional[int] = None):
+def get_all_purchase_categories(
+    http_request: Request,
+    department_id: Optional[int] = None,
+    active_only: bool = False,
+):
     db = http_request.state.db
 
     try:
         service = MasterService(db)
-        return service.get_all_purchase_categories(department_id)
+        return service.get_all_purchase_categories(department_id, active_only)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -23,18 +23,39 @@ _ALLOWED_CONTENT_TYPES = {
 }
 
 
+_PDF_EXTENSIONS = {".pdf"}
+_PDF_CONTENT_TYPES = {"application/pdf"}
+
+
 def validate_upload_file(file: UploadFile, content: bytes) -> None:
     """Raise UnsupportedFileType (415) or InvalidUploadFile (400) if the upload is unusable."""
+    _validate(file, content, _ALLOWED_EXTENSIONS, _ALLOWED_CONTENT_TYPES)
+
+
+def validate_pdf_upload(file: UploadFile, content: bytes) -> None:
+    """PDF-only variant, for documents that must be a real PDF rather than a
+    scan/photo - e.g. a vendor-signed NDA. Same size/empty/filename rules and
+    the same MAX_UPLOAD_SIZE_BYTES limit as every other upload in the app."""
+    _validate(file, content, _PDF_EXTENSIONS, _PDF_CONTENT_TYPES)
+
+
+def _validate(
+    file: UploadFile,
+    content: bytes,
+    allowed_extensions: set,
+    allowed_content_types: set,
+) -> None:
+
     if not file.filename or not file.filename.strip():
         raise InvalidUploadFile("Uploaded file must have a filename")
 
     extension = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-    if extension not in _ALLOWED_EXTENSIONS:
+    if extension not in allowed_extensions:
         raise UnsupportedFileType(
             f"Unsupported file extension '{extension}' for '{file.filename}'"
         )
 
-    if file.content_type and file.content_type.lower() not in _ALLOWED_CONTENT_TYPES:
+    if file.content_type and file.content_type.lower() not in allowed_content_types:
         raise UnsupportedFileType(
             f"Unsupported content type '{file.content_type}' for '{file.filename}'"
         )

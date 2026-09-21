@@ -108,7 +108,21 @@ def upload_to_s3(
     filename: str,
     content: bytes,
     content_type: Optional[str] = None,
+    prefix: str = "invoices/",
+    key: Optional[str] = None,
 ) -> dict:
+    """Upload bytes to the private bucket and return the stored object key.
+
+    ``prefix`` and ``key`` are additive and both default to the original
+    behaviour, so every existing invoice/quotation/GRN/PO caller is unaffected:
+    omitting them still produces ``invoices/{year}/{month}/{uuid}_{filename}``.
+
+    ``key``, when given, is used verbatim as the object key. NDA documents need
+    a fully deterministic, human-traceable key
+    (``ap/nda/generated/{year}/{pr}/{vendor}/NDA-...-v{version}.pdf``), which a
+    prefix alone cannot express because the default layout injects a random
+    uuid segment.
+    """
 
     if not content:
 
@@ -132,13 +146,16 @@ def upload_to_s3(
         timezone.utc
     )
 
-    s3_key = (
-        "invoices/"
-        f"{now.year}/"
-        f"{now.month:02d}/"
-        f"{uuid.uuid4().hex}_"
-        f"{safe_filename}"
-    )
+    if key:
+        s3_key = key
+    else:
+        s3_key = (
+            f"{prefix}"
+            f"{now.year}/"
+            f"{now.month:02d}/"
+            f"{uuid.uuid4().hex}_"
+            f"{safe_filename}"
+        )
 
     try:
 
@@ -171,6 +188,118 @@ def upload_to_s3(
         raise HTTPException(
             status_code=502,
             detail="S3 upload failed.",
+        ) from exc
+
+
+# ============================================================
+# Raw bytes (server-side use, e.g. email attachments)
+# ============================================================
+
+def get_object_bytes(
+    key: str,
+) -> bytes:
+    """Fetch one private object's bytes for server-side use.
+
+    Used to attach the exact stored NDA PDF to an email - re-generating the
+    document instead would risk sending something that differs from the
+    archived copy. Bytes are never persisted to Postgres or logged.
+    """
+
+    try:
+
+        response = s3_client.get_object(
+            Bucket=BUCKET_NAME,
+            Key=key,
+        )
+
+        return response["Body"].read()
+
+    except ClientError as exc:
+
+        error_code = (
+            exc.response
+            .get("Error", {})
+            .get("Code")
+        )
+
+        if error_code in {
+            "NoSuchKey",
+            "404",
+        }:
+
+            raise HTTPException(
+                status_code=404,
+                detail="File not found.",
+            ) from exc
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve file.",
+        ) from exc
+
+    except BotoCoreError as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to retrieve file.",
+        ) from exc
+
+
+# ============================================================
+# Presigned URL
+# ============================================================
+
+DEFAULT_PRESIGNED_URL_TTL_SECONDS = 300
+
+MAX_PRESIGNED_URL_TTL_SECONDS = 3600
+
+
+def generate_presigned_url(
+    key: str,
+    expires_in: int = DEFAULT_PRESIGNED_URL_TTL_SECONDS,
+) -> str:
+    """Short-lived, authenticated URL for one private object.
+
+    The bucket stays private - this grants temporary read access to a single
+    key and nothing else. Callers MUST authorize the user before calling;
+    this function performs no permission checks of its own. TTL is clamped so
+    a caller cannot mint a long-lived link.
+    """
+
+    if not key:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Document key is required.",
+        )
+
+    ttl = max(
+        1,
+        min(
+            int(expires_in),
+            MAX_PRESIGNED_URL_TTL_SECONDS,
+        ),
+    )
+
+    try:
+
+        return s3_client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": BUCKET_NAME,
+                "Key": key,
+            },
+            ExpiresIn=ttl,
+        )
+
+    except (
+        ClientError,
+        BotoCoreError,
+    ) as exc:
+
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to generate document access URL.",
         ) from exc
 
 

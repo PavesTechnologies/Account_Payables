@@ -42,10 +42,12 @@ class FakeMasterDAO:
     def get_department_by_id(self, department_id):
         return self.departments.get(department_id)
 
-    def get_all_purchase_categories(self, department_id=None):
+    def get_all_purchase_categories(self, department_id=None, active_only=False):
         rows = list(self.categories.values())
         if department_id is not None:
             rows = [c for c in rows if c.department_id == department_id]
+        if active_only:
+            rows = [c for c in rows if c.is_active]
         return sorted(rows, key=lambda c: c.name)
 
     def get_purchase_category_by_id(self, purchase_category_id):

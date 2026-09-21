@@ -86,7 +86,7 @@ def get_numeric_system_config(db, key: str, default: Optional[Decimal] = None) -
         return None
 
 
-def _normalize_and_validate_gstin(raw: Optional[str]) -> Optional[str]:
+def normalize_and_validate_gstin(raw: Optional[str]) -> Optional[str]:
     if not raw or not raw.strip():
         return None
     candidate = raw.strip().upper()
@@ -95,7 +95,7 @@ def _normalize_and_validate_gstin(raw: Optional[str]) -> Optional[str]:
     return candidate
 
 
-def _call_gst_search(gstin: str) -> GSTVerificationResult:
+def call_gst_search(gstin: str) -> GSTVerificationResult:
     try:
         response = search_gstin(gstin)
 
@@ -274,7 +274,7 @@ def auto_create_vendor_from_extraction(
     outer transaction rolls back cleanly.
     """
     gstin = extracted.gstin or extracted.buyer_gstin
-    gstin = _normalize_and_validate_gstin(gstin)
+    gstin = normalize_and_validate_gstin(gstin)
     if gstin is None:
         logger.info("Automatic vendor onboarding skipped: GSTIN missing or invalid format")
         return None
@@ -302,7 +302,7 @@ def auto_create_vendor_from_extraction(
         )
         return existing_vendor.vendor_id
 
-    gst_result = _call_gst_search(gstin)
+    gst_result = call_gst_search(gstin)
 
     if not gst_result.verified:
         logger.warning(

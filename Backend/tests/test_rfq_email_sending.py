@@ -295,6 +295,10 @@ def rfq_env():
     service = RFQService(db=FakeDB(registry))
     service.procurement_dao = procurement_dao
     service.rfq_dao = rfq_dao
+    # These tests cover RFQ email delivery, not eligibility (see
+    # test_rfq_eligibility.py). Stub the gate so the real service does not
+    # issue DB queries against FakeDB.
+    service.eligibility_service = SimpleNamespace(require_eligible=lambda pr_id, vendor_id: None)
 
     return SimpleNamespace(
         service=service, registry=registry, pr=pr, rfq=rfq, vendors=vendors,

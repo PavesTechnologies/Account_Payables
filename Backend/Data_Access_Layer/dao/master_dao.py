@@ -140,12 +140,11 @@ class MasterDAO:
             .filter(SystemConfiguration.config_key == config_key)
             .first()
         )
-    def get_all_departments(self):
-        return (
-            self.db.query(Department)
-            .order_by(Department.name.asc())
-            .all()
-        )
+    def get_all_departments(self, active_only: bool = False):
+        query = self.db.query(Department)
+        if active_only:
+            query = query.filter(Department.is_active.is_(True))
+        return query.order_by(Department.name.asc()).all()
     def get_department_by_id(self, department_id: int) -> Optional[Department]:
         return (
             self.db.query(Department)
@@ -174,10 +173,12 @@ class MasterDAO:
     # Purchase Category
     # =====================================================
 
-    def get_all_purchase_categories(self, department_id: Optional[int] = None):
+    def get_all_purchase_categories(self, department_id: Optional[int] = None, active_only: bool = False):
         query = self.db.query(PurchaseCategory)
         if department_id is not None:
             query = query.filter(PurchaseCategory.department_id == department_id)
+        if active_only:
+            query = query.filter(PurchaseCategory.is_active.is_(True))
         return query.order_by(PurchaseCategory.name.asc()).all()
     def get_purchase_category_by_id(self, purchase_category_id: int) -> Optional[PurchaseCategory]:
         return (

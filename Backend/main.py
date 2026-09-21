@@ -21,6 +21,9 @@ from Backend.API_Layer.routes import (
     rfq_route,
     system_route,
     vendor_route,
+    vendor_intake_route,
+    vendor_onboarding_route,
+    nda_route,
     invoice_details_route,
 )
 from Backend.Data_Access_Layer import models  # noqa: F401 - registers all model classes with SQLAlchemy before metadata/mapper use
@@ -114,6 +117,13 @@ api_router = APIRouter(prefix="/apm")
 api_router.include_router(system_route.router, tags=["System Defaults"], prefix="/system")
 api_router.include_router(master_route.router, tags=["Master Configuration"], prefix="/master")
 api_router.include_router(vendor_route.router, tags=["Vendor Management"], prefix="/vendor")
+api_router.include_router(vendor_intake_route.router, tags=["Vendor Intake"], prefix="/vendor-intake")
+api_router.include_router(
+    vendor_onboarding_route.router,
+    tags=["Vendor Onboarding"],
+    prefix="/vendor-onboarding-requests",
+)
+api_router.include_router(nda_route.router, tags=["NDA"], prefix="/nda")
 api_router.include_router(
     purchase_order_route.router, tags=["Purchase Orders"], prefix="/purchase-order"
 )

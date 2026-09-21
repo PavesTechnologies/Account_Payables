@@ -283,8 +283,8 @@ class MasterService:
         self.db.refresh(config)
 
         return config
-    def get_all_departments(self):
-        return self.master_dao.get_all_departments()
+    def get_all_departments(self, active_only: bool = False):
+        return self.master_dao.get_all_departments(active_only)
 
     def get_department_by_id(self, department_id: int) -> Department:
         
@@ -354,8 +354,8 @@ class MasterService:
     # Purchase Category
     # =========================================================
 
-    def get_all_purchase_categories(self, department_id: int = None):
-        return self.master_dao.get_all_purchase_categories(department_id)
+    def get_all_purchase_categories(self, department_id: int = None, active_only: bool = False):
+        return self.master_dao.get_all_purchase_categories(department_id, active_only)
 
     def get_purchase_category_by_id(self, purchase_category_id: int) -> PurchaseCategory:
 

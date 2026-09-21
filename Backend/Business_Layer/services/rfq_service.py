@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import List, Optional
 
+from Backend.Business_Layer.services.rfq_eligibility_service import RFQEligibilityService
 from Backend.Business_Layer.utils.email_service import EmailSendResult, send_email
 from Backend.Business_Layer.utils import pr_workflow_events as events
 from Backend.Data_Access_Layer.dao.procurement_dao import ProcurementDAO
@@ -39,6 +40,7 @@ class RFQService:
         self.db = db
         self.rfq_dao = RFQDAO(db)
         self.procurement_dao = ProcurementDAO(db)
+        self.eligibility_service = RFQEligibilityService(db)
 
     # =========================================================
     # RFQ
@@ -98,6 +100,11 @@ class RFQService:
         newly_invited: List[int] = []
         for vendor_id in vendor_ids:
             self._require_active_vendor(vendor_id)
+            # Backend-enforced RFQ eligibility (Pre-Screen passed, onboarding
+            # complete, mandatory NDA satisfied). Gating only send_rfq would
+            # leave a hole: create_quotation admits any *invited* vendor, so
+            # invite -> quotation -> select_vendor -> PO would bypass it.
+            self.eligibility_service.require_eligible(rfq.pr_id, vendor_id)
             if not self.rfq_dao.is_vendor_invited(rfq_id, vendor_id):
                 self.rfq_dao.create_rfq_vendor(
                     RFQVendor(rfq_id=rfq_id, vendor_id=vendor_id, invited_by=user_id)
@@ -172,6 +179,12 @@ class RFQService:
             raise ValueError(
                 "One or more selected vendors are not invited to this RFQ"
             )
+
+        # Re-check eligibility at send time: a vendor can become ineligible
+        # between invitation and send (deactivated, NDA expired, Pre-Screen
+        # re-run), and invite-time approval must not grant permanent access.
+        for vendor_id in selected_vendor_ids:
+            self.eligibility_service.require_eligible(rfq.pr_id, vendor_id)
 
         # Only process the vendors selected by the user.
         selected_invitations = [

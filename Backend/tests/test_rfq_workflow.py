@@ -269,6 +269,20 @@ class FakePurchaseOrderDAO:
 # ---------------------------------------------------------------------------
 
 
+class AllowAllEligibility:
+    """Permissive stand-in for RFQEligibilityService.
+
+    These tests predate the backend RFQ eligibility gate and cover RFQ
+    mechanics (invite/send/close/quotation), not eligibility - which has its
+    own suite in test_rfq_eligibility.py, plus a wiring test proving
+    RFQService actually calls the real gate. Without this stub the real
+    service would issue DB queries against FakeDB.
+    """
+
+    def require_eligible(self, pr_id, vendor_id):
+        return None
+
+
 class Workflow:
     def __init__(self):
         self.registry = StatusRegistry()
@@ -303,6 +317,7 @@ class Workflow:
         self.rfq_service = RFQService(db=FakeDB(self.registry))
         self.rfq_service.procurement_dao = self.procurement_dao
         self.rfq_service.rfq_dao = self.rfq_dao
+        self.rfq_service.eligibility_service = AllowAllEligibility()
 
     def create_approved_pr(self) -> FakePR:
         payload = SimpleNamespace(
