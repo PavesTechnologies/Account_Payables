@@ -181,6 +181,14 @@ class TaxRule(Base):
             'effective_to IS NULL OR effective_to >= effective_from',
             name='tax_rule_effective_dates_chk'
         ),
+        CheckConstraint(
+            "threshold_type IS NULL OR threshold_type IN ('PER_TRANSACTION', 'AGGREGATE_PERIOD')",
+            name='tax_rule_threshold_type_chk'
+        ),
+        CheckConstraint(
+            'threshold_amount IS NULL OR threshold_amount >= 0',
+            name='tax_rule_threshold_amount_chk'
+        ),
         {'schema': 'ap'}
     )
 
@@ -254,6 +262,22 @@ class TaxRule(Base):
         nullable=False,
         server_default=text('now()')
     )
+
+    # TDS-specific extension (kept on the generic tax_rule table rather than a
+    # bespoke TDS-rule schema - see migration_tds_foundation.sql). Nullable and
+    # meaningless for non-TDS rule_category rows (GST_RATE/TAX_COMPONENT).
+    #
+    # legal_reference is deliberately separate from rule_code/rule_name so the
+    # old Income-tax Act, 1961 section numbers (TDS_194C etc.) baked into
+    # rule_code today are not treated as the permanent legal identifier for
+    # new transactions under a later legal framework (spec section 4) - only
+    # this column needs to change, not rule_code or any FK pointing at it.
+    legal_reference: Mapped[Optional[str]] = mapped_column(String(50))
+    threshold_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+    # PER_TRANSACTION: compare a single invoice's taxable base against threshold_amount.
+    # AGGREGATE_PERIOD: compare the vendor+payment-nature cumulative financial-year total
+    # (see TDSDeterminationService._financial_year_bounds) against threshold_amount.
+    threshold_type: Mapped[Optional[str]] = mapped_column(String(20))
 
     tax_type: Mapped['TaxType'] = relationship(
         'TaxType',
