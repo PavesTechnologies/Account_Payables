@@ -4,6 +4,14 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+# Reused verbatim by the vendor-scoped collection responses at the bottom of
+# this module, so /apm/vendor/{id}/ndas and /apm/vendor/{id}/grns return the
+# exact same item shape as the NDA and goods-receipt endpoints. These three
+# interface modules import nothing local, so there is no import cycle.
+from Backend.API_Layer.interface.goods_receipt_interface import GoodsReceiptDTO
+from Backend.API_Layer.interface.nda_interface import VendorNdaDTO
+from Backend.API_Layer.interface.purchase_order_interface import PurchaseOrderDTO
+
 # =====================================================
 # Vendor Tax (scoped to a single vendor address — e.g. a GST
 # registration tied to the address in that state)
@@ -207,3 +215,68 @@ class VendorDTO(BaseModel):
     # Vendor directly.
     vendor_address: List[VendorAddressDTO] = Field(default_factory=list)
     vendor_bank: List[VendorBankDTO] = Field(default_factory=list)
+
+
+# =====================================================
+# Vendor-scoped collections
+#
+# Each of these wraps an existing per-resource DTO rather than redefining
+# one, and carries a `count` so the caller does not have to len() the array.
+# `count` is the number of items in `items` for this response.
+# =====================================================
+
+
+class VendorPurchaseOrderListResponse(BaseModel):
+    vendor_id: int
+    count: int
+    items: List[PurchaseOrderDTO] = Field(default_factory=list)
+
+
+class VendorNdaListResponse(BaseModel):
+    vendor_id: int
+    count: int
+    items: List[VendorNdaDTO] = Field(default_factory=list)
+
+
+class VendorGoodsReceiptListResponse(BaseModel):
+    vendor_id: int
+    count: int
+    items: List[GoodsReceiptDTO] = Field(default_factory=list)
+
+
+class VendorDocumentDTO(BaseModel):
+    """One general (non-NDA) document attached to a vendor's records.
+
+    There is no vendor_document table - these are the file references the
+    quotation/purchase order, goods receipt and invoice-attachment records
+    already carry, presented in one list.
+
+    NDA and signed-NDA files are NOT part of this list. They belong to the NDA
+    workflow and are served, with their status and dates, by
+    GET /apm/vendor/{vendor_id}/ndas and GET /apm/nda/{nda_id}/document.
+    """
+
+    # QUOTATION | GOODS_RECEIPT | INVOICE_ATTACHMENT
+    document_type: str
+    # Primary key of the record the document hangs off (quotation id, grn_id,
+    # invoice_id) - so the caller can deep-link to the record.
+    source_id: int
+    # Human reference on that record (po_number, grn_number, invoice_number);
+    # None where the record has none.
+    reference: Optional[str] = None
+    file_name: Optional[str] = None
+    # Short-lived presigned GET URL for the private S3 object. None when a URL
+    # could not be minted. The object key itself is never returned.
+    url: Optional[str] = None
+    url_expires_in_seconds: Optional[int] = None
+    document_date: Optional[datetime.datetime] = None
+
+
+class VendorDocumentListResponse(BaseModel):
+    vendor_id: int
+    count: int
+    # Per-type counts, e.g. {"QUOTATION": 2, "GOODS_RECEIPT": 1}. Types with no
+    # documents are omitted. NDA types never appear - NDA files are served by
+    # the NDA endpoints, not here.
+    counts_by_type: dict = Field(default_factory=dict)
+    items: List[VendorDocumentDTO] = Field(default_factory=list)

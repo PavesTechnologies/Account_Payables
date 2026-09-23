@@ -144,6 +144,31 @@ class NdaDAO:
             .first()
         )
 
+    def update_nda_content(
+        self,
+        nda: VendorNda,
+        content: str,
+        content_version: int,
+        user_id: Optional[str],
+        updated_at: datetime.datetime,
+    ) -> VendorNda:
+        """Persist the editable NDA wording and its revision metadata.
+
+        Only the four content columns and ``updated_by``/``updated_at`` are
+        touched - document_key, signed_document_key and the status FK are
+        never written here. Callers own the transaction (same as create_nda).
+        """
+
+        nda.content = content
+        nda.content_version = content_version
+        nda.content_updated_at = updated_at
+        nda.content_updated_by = user_id
+        nda.updated_by = user_id
+        nda.updated_at = updated_at
+
+        self.db.flush()
+        return nda
+
     def get_ndas_by_vendor(self, vendor_id: int) -> List[VendorNda]:
         return (
             self.db.query(VendorNda)

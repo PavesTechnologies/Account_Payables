@@ -28,6 +28,7 @@ from typing import List, Optional
 
 from Backend.API_Layer.interface.vendor_intake_interface import (
     PreScreenCheckResult,
+    VendorEngagementUpdateRequest,
     VendorIntakeCreateRequest,
     VendorScreeningRuleRequest,
 )
@@ -292,6 +293,112 @@ class VendorIntakeService:
             )
 
         return vendor, True
+
+    # =========================================================
+    # Vendor Engagement (Edit)
+    # =========================================================
+
+    def update_engagement(
+        self,
+        engagement_id: int,
+        payload: VendorEngagementUpdateRequest,
+        user_id: str,
+    ) -> VendorEngagement:
+        """Edit an engagement's department, category and onboarding purpose.
+
+        Partial by design: a field the caller did not send keeps its current
+        value (see VendorEngagementUpdateRequest). The scope validation is the
+        SAME code create_intake uses - active department, active category, and
+        the category actually belonging to that department - so an engagement
+        can never be edited into a combination intake would have refused.
+
+        The department/category pair is re-validated whenever EITHER side
+        changes: moving the department alone can orphan a category that was
+        valid before, which is why this does not short-circuit on
+        "category unchanged".
+
+        NDA fields are deliberately untouched here. The NDA decision has its
+        own endpoint (PATCH /{engagement_id}/nda-decision) with its own
+        override rules, and this method never writes nda_* columns - including
+        after a scope change, where the recorded decision stands until
+        Pre-Screen is re-run.
+        """
+
+        engagement = self._require_engagement(engagement_id)
+        supplied = payload.model_fields_set
+        before = self._engagement_snapshot(engagement)
+
+        if "department_id" in supplied and payload.department_id is None:
+            raise ValueError("department_id cannot be null")
+        if "category_id" in supplied and payload.category_id is None:
+            raise ValueError("category_id cannot be null")
+
+        department_id = (
+            payload.department_id if "department_id" in supplied else engagement.department_id
+        )
+        category_id = (
+            payload.category_id if "category_id" in supplied else engagement.purchase_category_id
+        )
+
+        scope_changed = (
+            department_id != engagement.department_id
+            or category_id != engagement.purchase_category_id
+        )
+
+        if scope_changed:
+            department = self._require_active_department(department_id)
+            category = self._require_active_category_in_department(category_id, department_id)
+
+            duplicate = self.intake_dao.get_other_engagement(
+                engagement.vendor_category_mapping_id,
+                engagement.vendor_id,
+                department.id,
+                category.id,
+            )
+            if duplicate is not None:
+                raise ValueError(
+                    "An engagement already exists for this vendor in the selected "
+                    "department and category"
+                )
+
+            engagement.department_id = department.id
+            engagement.purchase_category_id = category.id
+
+        if "purpose_of_onboarding" in supplied:
+            purpose = payload.purpose_of_onboarding
+            engagement.purpose_of_onboarding = purpose.strip() if purpose else None
+
+        engagement.updated_by = user_id
+
+        after = self._engagement_snapshot(engagement)
+        changed = {key: value for key, value in after.items() if before.get(key) != value}
+
+        # Same audit shape as VendorService.update_vendor: only the fields that
+        # actually moved, with their previous values alongside.
+        if changed:
+            self.vendor_dao.create_audit_log(
+                AuditLog(
+                    table_name="vendor_category_mapping",
+                    record_id=engagement.vendor_category_mapping_id,
+                    action="UPDATE",
+                    changed_by=user_id,
+                    old_values={key: before.get(key) for key in changed},
+                    new_values=changed,
+                )
+            )
+
+        self.db.commit()
+        self.db.refresh(engagement)
+
+        return engagement
+
+    @staticmethod
+    def _engagement_snapshot(engagement: VendorEngagement) -> dict:
+        return {
+            "department_id": engagement.department_id,
+            "purchase_category_id": engagement.purchase_category_id,
+            "purpose_of_onboarding": engagement.purpose_of_onboarding,
+        }
 
     # =========================================================
     # Pre-Screen

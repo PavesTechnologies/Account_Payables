@@ -6,6 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 
 from Backend.Data_Access_Layer.models.audit import AuditLog
+from Backend.Data_Access_Layer.models.invoice import Invoice, InvoiceAttachment
 from Backend.Data_Access_Layer.models.master import (
     Country,
     Currency,
@@ -13,6 +14,9 @@ from Backend.Data_Access_Layer.models.master import (
     StatusMaster,
     SystemConfiguration,
 )
+from Backend.Data_Access_Layer.models.nda import VendorNda
+from Backend.Data_Access_Layer.models.purchase import Quotation
+from Backend.Data_Access_Layer.models.purchase_order import GoodsReceipt, PurchaseOrder
 from Backend.Data_Access_Layer.models.vendor import (
     Vendor,
     VendorAddress,
@@ -24,6 +28,129 @@ from Backend.Data_Access_Layer.models.vendor import (
 class VendorDAO:
     def __init__(self, db):
         self.db = db
+
+    # =====================================================
+    # Vendor documents
+    #
+    # There is no vendor_document table and this deliberately does not add
+    # one: a vendor's documents already exist as file references on the
+    # records they belong to. These four queries read exactly those columns -
+    # one flat query per source, no ORM relationship walking - so building
+    # the combined list costs 4 queries regardless of how many rows come back.
+    #
+    # The complete set of file references in this schema is:
+    #     ap.quotation.file_url          -> procurement document
+    #     ap.goods_receipt.file_path     -> GRN document
+    #     ap.invoice_attachment.file_path-> invoice attachment
+    #     ap.vendor_nda.document_key
+    #     ap.vendor_nda.signed_document_key
+    #     ap.inbound_document.file_path  -> invoice ingestion, reached through
+    #                                       the invoice, not the vendor
+    # ap.purchase_order has NO file column - see get_quotation_documents.
+    # =====================================================
+
+    def get_quotation_documents(self, vendor_id: int) -> List[tuple]:
+        """(quotation_id, quotation_number, po_number, file_url, quotation_date).
+
+        ap.purchase_order has NO file column and there is no
+        purchase_order_attachment table - the only file a purchase order can
+        reach in this schema is the quotation it was raised from
+        (purchase_order.quotation_id -> quotation.file_url). So the
+        procurement-side document on file for a vendor is the quotation
+        document, and ``po_number`` is carried along (NULL when no PO was
+        raised yet) so the caller can still show which PO it backs.
+
+        One LEFT JOIN, grouped so a quotation with several POs still yields a
+        single row - never one row per PO. ``file_url`` is NOT NULL in the
+        schema but is still checked for emptiness, so a blank reference is
+        skipped rather than producing a document entry that points nowhere.
+        """
+
+        return (
+            self.db.query(
+                Quotation.id,
+                Quotation.quotation_number,
+                func.min(PurchaseOrder.po_number).label("po_number"),
+                Quotation.file_url,
+                Quotation.quotation_date,
+            )
+            .outerjoin(PurchaseOrder, PurchaseOrder.quotation_id == Quotation.id)
+            .filter(
+                Quotation.vendor_id == vendor_id,
+                Quotation.file_url.isnot(None),
+                Quotation.file_url != "",
+            )
+            .group_by(
+                Quotation.id,
+                Quotation.quotation_number,
+                Quotation.file_url,
+                Quotation.quotation_date,
+            )
+            .order_by(Quotation.id.desc())
+            .all()
+        )
+
+    def get_goods_receipt_documents(self, vendor_id: int) -> List[tuple]:
+        """(grn_id, grn_number, file_path, receipt_date) for this vendor's
+        GRNs that actually have a document."""
+
+        return (
+            self.db.query(
+                GoodsReceipt.grn_id,
+                GoodsReceipt.grn_number,
+                GoodsReceipt.file_path,
+                GoodsReceipt.receipt_date,
+            )
+            .filter(
+                GoodsReceipt.vendor_id == vendor_id,
+                GoodsReceipt.file_path.isnot(None),
+                GoodsReceipt.file_path != "",
+            )
+            .order_by(GoodsReceipt.grn_id.desc())
+            .all()
+        )
+
+    def get_invoice_attachment_documents(self, vendor_id: int) -> List[tuple]:
+        """(invoice_id, invoice_number, file_name, file_path, uploaded_at).
+
+        A single join from attachment to invoice filtered by vendor - not a
+        per-invoice lookup of its attachments.
+        """
+
+        return (
+            self.db.query(
+                Invoice.invoice_id,
+                Invoice.invoice_number,
+                InvoiceAttachment.file_name,
+                InvoiceAttachment.file_path,
+                InvoiceAttachment.uploaded_at,
+            )
+            .join(Invoice, InvoiceAttachment.invoice_id == Invoice.invoice_id)
+            .filter(
+                Invoice.vendor_id == vendor_id,
+                InvoiceAttachment.file_path.isnot(None),
+                InvoiceAttachment.file_path != "",
+            )
+            .order_by(InvoiceAttachment.invoice_attachment_id.desc())
+            .all()
+        )
+
+    def get_nda_documents(self, vendor_id: int) -> List[tuple]:
+        """(nda_id, document_key, signed_document_key, created_at) for this
+        vendor's NDAs. Both keys come back in one row; the caller splits them
+        into the generated and signed entries."""
+
+        return (
+            self.db.query(
+                VendorNda.nda_id,
+                VendorNda.document_key,
+                VendorNda.signed_document_key,
+                VendorNda.created_at,
+            )
+            .filter(VendorNda.vendor_id == vendor_id)
+            .order_by(VendorNda.nda_id.desc())
+            .all()
+        )
 
     # =====================================================
     # Vendor

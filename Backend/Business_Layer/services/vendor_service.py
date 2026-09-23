@@ -1,5 +1,6 @@
 # Backend/Business_Layer/services/vendor_service.py
 import datetime
+import logging
 from typing import List, Optional
 
 import requests
@@ -32,6 +33,8 @@ VENDOR_STATUS_MODULE = "VENDOR"
 DEFAULT_VENDOR_STATUS_CODE = "PENDING"
 VENDOR_CODE_GENERATION_ATTEMPTS = 5
 BANK_DUPLICATE_ACROSS_VENDORS_CONFIG_KEY = "VENDOR_BANK_DUPLICATE_ACROSS_VENDORS"
+
+logger = logging.getLogger(__name__)
 
 
 class VendorService:
@@ -164,6 +167,232 @@ class VendorService:
     ) -> List[Vendor]:
 
         return self.vendor_dao.get_all_vendors(status_id, country_id, search, skip, limit)
+
+    # =========================================================
+    # Vendor-scoped collections
+    #
+    # These do not re-implement NDA, goods-receipt or purchase-order logic -
+    # each one delegates to that module's existing service, so the items
+    # returned here are the same objects (and the same eager-loading) as the
+    # module's own endpoint returns. The services are imported inside the
+    # methods because nda_service reaches s3_utils, which imports boto3 and
+    # reads AWS_* at module scope - the same lazy-import rule nda_service
+    # itself follows.
+    # =========================================================
+
+    def list_ndas(self, vendor_id: int) -> List[object]:
+        """Every NDA on file for this vendor, newest first. Empty list when
+        the vendor has none."""
+
+        self._require_vendor(vendor_id)
+
+        from Backend.Business_Layer.services.nda_service import NdaService
+
+        return NdaService(self.db).list_for_vendor(vendor_id)
+
+    def list_goods_receipts(
+        self,
+        vendor_id: int,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[object]:
+        """Goods receipts recorded against this vendor. Empty list when the
+        vendor has none."""
+
+        self._require_vendor(vendor_id)
+
+        from Backend.Business_Layer.services.goods_receipt_service import GoodsReceiptService
+
+        return GoodsReceiptService(self.db).list_goods_receipts(
+            vendor_id=vendor_id, po_id=None, skip=skip, limit=limit
+        )
+
+    def list_purchase_orders_for_vendor(
+        self,
+        vendor_id: int,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[object]:
+        """Purchase orders raised on this vendor, via the existing
+        PurchaseOrderService filter that GET /apm/purchase-order?vendor_id=
+        also uses."""
+
+        self._require_vendor(vendor_id)
+
+        from Backend.Business_Layer.services.purchase_order_service import PurchaseOrderService
+
+        return PurchaseOrderService(self.db).list_purchase_orders(
+            vendor_id=vendor_id, skip=skip, limit=limit
+        )
+
+    def list_documents(self, vendor_id: int, expires_in: Optional[int] = None) -> List[dict]:
+        """This vendor's general (non-NDA) documents.
+
+        No vendor_document table is involved: this reads the file references
+        that quotations/POs, goods receipts and invoice attachments already
+        carry. Four flat queries total, whatever the row count.
+
+        NDA DOCUMENTS ARE DELIBERATELY EXCLUDED. The NDA workflow owns its own
+        files and exposes them through GET /apm/vendor/{vendor_id}/ndas and
+        GET /apm/nda/{nda_id}/document, which carry the NDA's status, scope,
+        validity and sent/signed dates alongside the file. Listing the same
+        PDFs here as well only duplicated that tab with none of its context.
+        Nothing is deleted or altered - ap.vendor_nda and its objects are read
+        here purely to know which keys to leave out.
+
+        The exclusion is driven by the NDA records themselves
+        (``vendor_nda.document_key`` / ``signed_document_key``), never by
+        guessing at a filename or a path prefix. That also means an NDA object
+        referenced from some OTHER file-bearing row - a generic document or
+        file-reference table now or later - is still recognised as an NDA file
+        and dropped, because every candidate is matched against the vendor's
+        own NDA keys before it is added.
+
+        Each entry carries a short-lived presigned GET URL rather than the S3
+        object key, so the bucket stays private and no key is handed to the
+        client. Minting a URL is a local signing operation, not a network
+        call, so doing it per row costs nothing. If S3 is not configured the
+        documents are still listed, with ``url`` left None, because the
+        inventory is useful even when a link cannot be handed out.
+        """
+
+        self._require_vendor(vendor_id)
+
+        sign, ttl = self._presigner(expires_in)
+
+        documents: List[dict] = []
+
+        # Every object key the NDA workflow owns for this vendor, taken from
+        # the NDA records themselves. Built once, then consulted for every
+        # candidate below - so an NDA file is excluded no matter which table
+        # happens to reference it.
+        nda_keys = self._nda_document_keys(vendor_id)
+
+        def add(document_type, source_id, reference, file_reference, document_date, file_name=None):
+            """Append one entry, skipping anything that has no usable file
+            reference, anything owned by the NDA workflow, and swallowing a
+            single malformed row.
+
+            One bad record must never turn the whole inventory into a 500 -
+            the other documents are still worth returning.
+            """
+
+            if not file_reference:
+                return
+            if self._is_nda_document(file_reference, nda_keys):
+                return
+            try:
+                entry = self._document_entry(
+                    document_type, source_id, reference, file_reference, document_date, sign, ttl
+                )
+            except Exception:
+                logger.warning(
+                    "Skipping unreadable %s document for vendor %s", document_type, vendor_id,
+                    exc_info=True,
+                )
+                return
+            if file_name:
+                entry["file_name"] = file_name
+            documents.append(entry)
+
+        # Procurement-side document. ap.purchase_order carries no file column
+        # and there is no purchase_order_attachment table, so the document a
+        # PO can actually reach is the quotation it was raised from; the PO
+        # number rides along as the reference when one exists.
+        for quotation_id, quotation_number, po_number, file_url, quotation_date in self.vendor_dao.get_quotation_documents(vendor_id):
+            add("QUOTATION", quotation_id, po_number or quotation_number, file_url, quotation_date)
+
+        for grn_id, grn_number, file_path, receipt_date in self.vendor_dao.get_goods_receipt_documents(vendor_id):
+            add("GOODS_RECEIPT", grn_id, grn_number, file_path, receipt_date)
+
+        # No NDA loop here on purpose: the NDA tab (list_ndas) is the single
+        # source for NDA records and their generated/signed documents.
+
+        for invoice_id, invoice_number, file_name, file_path, uploaded_at in self.vendor_dao.get_invoice_attachment_documents(vendor_id):
+            # The attachment record stores its own original filename; prefer
+            # it over the one derived from the object key.
+            add(
+                "INVOICE_ATTACHMENT", invoice_id, invoice_number, file_path, uploaded_at,
+                file_name=file_name,
+            )
+
+        return documents
+
+    def _nda_document_keys(self, vendor_id: int) -> set:
+        """The S3 object keys of every generated and signed NDA this vendor
+        has, from ap.vendor_nda - the NDA module's own record of what it owns.
+
+        Keys are normalised (stripped, leading "/" removed) so a reference
+        stored with different surrounding whitespace or a leading slash still
+        matches. Comparison stays exact-key based: no filename or path-prefix
+        heuristic decides whether a document belongs to the NDA workflow.
+        """
+
+        keys = set()
+
+        for _nda_id, document_key, signed_key, _created_at in self.vendor_dao.get_nda_documents(vendor_id):
+            for key in (document_key, signed_key):
+                normalised = self._normalise_key(key)
+                if normalised:
+                    keys.add(normalised)
+
+        return keys
+
+    @staticmethod
+    def _normalise_key(file_reference) -> Optional[str]:
+        if not file_reference or not isinstance(file_reference, str):
+            return None
+        return file_reference.strip().lstrip("/") or None
+
+    @classmethod
+    def _is_nda_document(cls, file_reference, nda_keys: set) -> bool:
+        """True when this file reference is one the NDA workflow owns."""
+
+        if not nda_keys:
+            return False
+        return cls._normalise_key(file_reference) in nda_keys
+
+    @staticmethod
+    def _document_entry(document_type, source_id, reference, file_path, document_date, sign, ttl) -> dict:
+        url = sign(file_path)
+        return {
+            "document_type": document_type,
+            "source_id": source_id,
+            "reference": reference,
+            # Derived from the key's last segment - the key itself is never
+            # returned to the client.
+            "file_name": file_path.split("/")[-1] if file_path else None,
+            "url": url,
+            "url_expires_in_seconds": ttl if url else None,
+            "document_date": document_date,
+        }
+
+    @staticmethod
+    def _presigner(expires_in: Optional[int]):
+        """Returns (sign, ttl). ``sign`` maps an object key to a short-lived
+        URL, or to None when S3 is unavailable or the key is unusable."""
+
+        try:
+            from Backend.API_Layer.utils.s3_utils import (
+                DEFAULT_PRESIGNED_URL_TTL_SECONDS,
+                generate_presigned_url,
+            )
+        except Exception:
+            # No boto3 / no AWS configuration: list the documents without URLs
+            # rather than failing the whole request.
+            return (lambda key: None), None
+
+        ttl = int(expires_in or DEFAULT_PRESIGNED_URL_TTL_SECONDS)
+
+        def sign(key: Optional[str]) -> Optional[str]:
+            if not key:
+                return None
+            try:
+                return generate_presigned_url(key, expires_in=ttl)
+            except Exception:
+                return None
+
+        return sign, ttl
 
     def update_vendor(
         self,

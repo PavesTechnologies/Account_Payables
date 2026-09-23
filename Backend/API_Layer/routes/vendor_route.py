@@ -18,7 +18,12 @@ from Backend.API_Layer.interface.vendor_interface import (
     VendorBankResponse,
     VendorBankUpdateRequest,
     VendorCreateRequest,
+    VendorDocumentDTO,
+    VendorDocumentListResponse,
     VendorDTO,
+    VendorGoodsReceiptListResponse,
+    VendorNdaListResponse,
+    VendorPurchaseOrderListResponse,
     VendorResponse,
     VendorStatusUpdateRequest,
     VendorTaxCreateRequest,
@@ -27,6 +32,9 @@ from Backend.API_Layer.interface.vendor_interface import (
     VendorTaxUpdateRequest,
     VendorUpdateRequest,
 )
+# Reused verbatim so /{vendor_id}/ndas serializes NDAs exactly as the NDA
+# module does - no second NDA DTO mapping.
+from Backend.API_Layer.routes.nda_route import _to_dto as _nda_to_dto
 from Backend.Business_Layer.services.vendor_service import VendorService
 
 router = APIRouter()
@@ -110,6 +118,146 @@ def get_vendor_by_id(vendor_id: int, http_request: Request):
     try:
         service = VendorService(db)
         return service.get_vendor(vendor_id)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===========================================================
+# Vendor-scoped collections
+#
+# Each returns {vendor_id, count, items} with an EMPTY items array (and
+# count 0) when the vendor has no such records - never 404. 404 is reserved
+# for the vendor itself not existing.
+#
+# Items reuse the owning module's DTO, and the data comes from that module's
+# own service, so these are vendor-filtered views of existing endpoints
+# rather than second implementations.
+# ===========================================================
+
+
+@router.get("/{vendor_id}/purchase-orders", response_model=VendorPurchaseOrderListResponse)
+def list_vendor_purchase_orders(
+    vendor_id: int,
+    http_request: Request,
+    skip: int = 0,
+    limit: int = 100,
+):
+    """Convenience alias for GET /apm/purchase-order?vendor_id={vendor_id},
+    which keeps working unchanged - both go through
+    PurchaseOrderService.list_purchase_orders."""
+
+    db = http_request.state.db
+
+    try:
+        service = VendorService(db)
+        items = service.list_purchase_orders_for_vendor(vendor_id, skip=skip, limit=limit)
+
+        return VendorPurchaseOrderListResponse(
+            vendor_id=vendor_id, count=len(items), items=items
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{vendor_id}/ndas", response_model=VendorNdaListResponse)
+def list_vendor_ndas(vendor_id: int, http_request: Request):
+    """Every NDA on file for this vendor, newest first.
+
+    Item shape is the NDA module's own VendorNdaDTO. The editable NDA content
+    body is omitted here (as it is in GET /apm/nda/vendor/{vendor_id}) to keep
+    the list small - fetch a single NDA for its content.
+    """
+
+    db = http_request.state.db
+
+    try:
+        service = VendorService(db)
+        items = [
+            _nda_to_dto(nda, include_content=False) for nda in service.list_ndas(vendor_id)
+        ]
+
+        return VendorNdaListResponse(vendor_id=vendor_id, count=len(items), items=items)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{vendor_id}/grns", response_model=VendorGoodsReceiptListResponse)
+def list_vendor_goods_receipts(
+    vendor_id: int,
+    http_request: Request,
+    skip: int = 0,
+    limit: int = 100,
+):
+    """Goods receipts recorded against this vendor, with their PO, invoices
+    and lines - the same GoodsReceiptDTO the goods-receipt endpoints return."""
+
+    db = http_request.state.db
+
+    try:
+        service = VendorService(db)
+        items = service.list_goods_receipts(vendor_id, skip=skip, limit=limit)
+
+        return VendorGoodsReceiptListResponse(
+            vendor_id=vendor_id, count=len(items), items=items
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{vendor_id}/documents", response_model=VendorDocumentListResponse)
+def list_vendor_documents(
+    vendor_id: int,
+    http_request: Request,
+    expires_in: Optional[int] = None,
+):
+    """This vendor's general documents - quotation/purchase order and goods
+    receipt files and invoice attachments - in one list.
+
+    NDA documents are deliberately NOT included. The generated and signed NDAs
+    belong to the NDA workflow and are served by
+    GET /apm/vendor/{vendor_id}/ndas (with each NDA's status, scope, validity
+    and sent/signed dates) and GET /apm/nda/{nda_id}/document, which remain the
+    single source for them. Nothing is deleted: the NDA records and their files
+    are untouched, only left out of this inventory.
+
+    Each entry carries a short-lived presigned URL, never the S3 object key;
+    the bucket stays private. ``counts_by_type`` breaks the total down by
+    source so the UI can render per-section counts without a second pass.
+    """
+
+    db = http_request.state.db
+
+    try:
+        service = VendorService(db)
+        documents = service.list_documents(vendor_id, expires_in=expires_in)
+
+        counts_by_type: dict = {}
+        for document in documents:
+            document_type = document["document_type"]
+            counts_by_type[document_type] = counts_by_type.get(document_type, 0) + 1
+
+        return VendorDocumentListResponse(
+            vendor_id=vendor_id,
+            count=len(documents),
+            counts_by_type=counts_by_type,
+            items=[VendorDocumentDTO(**document) for document in documents],
+        )
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

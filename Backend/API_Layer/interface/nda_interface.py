@@ -22,6 +22,24 @@ class NdaStatusUpdateRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class NdaContentUpdateRequest(BaseModel):
+    """Body of PUT /apm/nda/{nda_id}/content (the editor's Save Draft).
+
+    ``content`` is the full replacement wording, not a patch.
+
+    ``version`` is the ``content_version`` the client loaded. Supplying it
+    turns the save into an optimistic-concurrency check: if someone else has
+    saved since, the request is refused with 409 instead of overwriting them.
+    Omitting it is a deliberate last-write-wins save.
+
+    The S3 keys are intentionally absent: the client never names an object
+    key, the server derives it.
+    """
+
+    content: str = Field(min_length=1)
+    version: Optional[int] = Field(default=None, ge=1)
+
+
 class VendorNdaDTO(BaseModel):
     nda_id: int
     vendor_id: int
@@ -44,6 +62,13 @@ class VendorNdaDTO(BaseModel):
     completed_at: Optional[datetime.datetime]
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    # Latest persisted editable wording. Omitted (None) from the list in
+    # ExistingNdaResponse.ndas to keep that payload small - fetch a single NDA
+    # to get its content. Never the signed document.
+    content: Optional[str] = None
+    content_version: int = 1
+    content_updated_at: Optional[datetime.datetime] = None
+    content_updated_by: Optional[str] = None
 
 
 class NdaGenerateResponse(BaseModel):
@@ -66,6 +91,15 @@ class NdaSendResponse(BaseModel):
 
 class NdaStatusUpdateResponse(BaseModel):
     nda_id: int
+    status_code: Optional[str]
+    message: str
+
+
+class NdaContentUpdateResponse(BaseModel):
+    nda_id: int
+    content_version: int
+    content_updated_at: Optional[datetime.datetime]
+    updated_by: Optional[str]
     status_code: Optional[str]
     message: str
 
