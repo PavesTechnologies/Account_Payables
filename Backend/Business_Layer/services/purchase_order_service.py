@@ -95,7 +95,19 @@ class PurchaseOrderService:
         limit: int = 100,
     ) -> List[PurchaseOrder]:
 
-        return self.po_dao.get_all_purchase_orders(vendor_id, status_id, search, skip, limit)
+        # Keyword arguments, not positional: the DAO takes `po_number` between
+        # `search` and `skip`, so passing these five positionally silently fed
+        # `skip` into `po_number` and `limit` into `skip`. A default call
+        # (skip=0, limit=100) therefore skipped the first 100 rows, and
+        # GET /apm/purchase-order?vendor_id=X returned [] for every vendor
+        # with fewer than 100 purchase orders.
+        return self.po_dao.get_all_purchase_orders(
+            vendor_id=vendor_id,
+            status_id=status_id,
+            search=search,
+            skip=skip,
+            limit=limit,
+        )
 
     def update_purchase_order(
         self,

@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
 from Backend.API_Layer.interface.nda_interface import (
     ExistingNdaResponse,
+    NdaContentUpdateRequest,
+    NdaContentUpdateResponse,
     NdaDocumentUrlResponse,
     NdaGenerateRequest,
     NdaGenerateResponse,
@@ -28,7 +30,7 @@ from Backend.API_Layer.interface.nda_interface import (
 )
 from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 from Backend.API_Layer.utils.file_validation import validate_pdf_upload
-from Backend.Business_Layer.services.nda_service import NdaService
+from Backend.Business_Layer.services.nda_service import NdaContentConflict, NdaService
 from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
 from Backend.Data_Access_Layer.models.nda import VendorNda
 
@@ -54,7 +56,11 @@ def _get_user_id(http_request: Request) -> str:
     return user_id
 
 
-def _to_dto(nda: VendorNda) -> VendorNdaDTO:
+def _to_dto(nda: VendorNda, include_content: bool = True) -> VendorNdaDTO:
+    """``include_content=False`` is used for the per-vendor NDA list, where
+    returning the full wording of every historical NDA would bloat the
+    response for no benefit - the editor always loads a single NDA."""
+
     return VendorNdaDTO(
         nda_id=nda.nda_id,
         vendor_id=nda.vendor_id,
@@ -76,6 +82,10 @@ def _to_dto(nda: VendorNda) -> VendorNdaDTO:
         completed_at=nda.completed_at,
         created_at=nda.created_at,
         updated_at=nda.updated_at,
+        content=nda.content if include_content else None,
+        content_version=nda.content_version or 1,
+        content_updated_at=nda.content_updated_at,
+        content_updated_by=nda.content_updated_by,
     )
 
 
@@ -164,7 +174,10 @@ def get_vendor_nda(
             outcome=lookup.outcome,
             reason=lookup.reason,
             nda=_to_dto(lookup.nda) if lookup.nda is not None else None,
-            ndas=[_to_dto(nda) for nda in service.list_for_vendor(vendor_id)],
+            ndas=[
+                _to_dto(nda, include_content=False)
+                for nda in service.list_for_vendor(vendor_id)
+            ],
         )
 
     except ValueError as e:
@@ -220,6 +233,74 @@ def get_nda_document_url(
         )
 
         return NdaDocumentUrlResponse(nda_id=nda_id, url=url, expires_in_seconds=ttl)
+
+    except ValueError as e:
+        db.rollback()
+        _raise_for_value_error(e)
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put(
+    "/{nda_id}/content",
+    response_model=NdaContentUpdateResponse,
+    dependencies=[Depends(permission_based_access(NDA_GENERATE))],
+)
+def update_nda_content(
+    nda_id: int,
+    payload: NdaContentUpdateRequest,
+    http_request: Request,
+):
+    """Persist the latest editable NDA wording (the editor's Save Draft).
+
+    Gated by the same permission bundle as generation - authoring the NDA
+    wording and generating it are the same responsibility, so no new
+    permission string is introduced.
+
+    Responses:
+      * 200 - saved; ``content_version`` is the new revision
+      * 404 - no such NDA
+      * 409 - ``version`` is stale; reload and re-apply the edit
+      * 422 - empty/oversized content, or the NDA is in a state that no
+              longer accepts edits (NOT_REQUIRED / SIGNED / COMPLETED /
+              EXPIRED)
+
+    No status transition, no S3 write and no email happen here. The saved
+    content is what POST /{nda_id}/send builds the vendor's document from.
+    """
+
+    db = http_request.state.db
+
+    try:
+        user_id = _get_user_id(http_request)
+
+        nda = NdaService(db).update_content(
+            nda_id=nda_id,
+            content=payload.content,
+            user_id=user_id,
+            version=payload.version,
+        )
+
+        return NdaContentUpdateResponse(
+            nda_id=nda.nda_id,
+            content_version=nda.content_version,
+            content_updated_at=nda.content_updated_at,
+            updated_by=nda.content_updated_by,
+            status_code=_status_code(nda),
+            message="NDA content saved successfully",
+        )
+
+    except NdaContentConflict as e:
+        # Declared before ValueError on purpose - NdaContentConflict subclasses
+        # it so that a stale save is a 409, not a generic 422.
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
 
     except ValueError as e:
         db.rollback()

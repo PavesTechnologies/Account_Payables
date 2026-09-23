@@ -23,6 +23,7 @@ from Backend.Business_Layer.utils.vendor_auto_onboarding import GSTVerificationR
 from Backend.Business_Layer.services.vendor_intake_service import VendorIntakeService
 from Backend.API_Layer.interface.vendor_intake_interface import (
     NdaDecisionRequest,
+    VendorEngagementUpdateRequest,
     VendorIntakeCreateRequest,
     VendorScreeningRuleRequest,
 )
@@ -736,6 +737,387 @@ def test_engagement_route_still_resolves():
     assert matched[0].name == "get_engagement"
 
 
+# ---------------------------------------------------------------------------
+# Edit Engagement (PUT /apm/vendor-intake/{engagement_id})
+# ---------------------------------------------------------------------------
+
+
+def _saved_engagement(env, department_id=1, category_id=10, purpose="Original purpose"):
+    """An engagement created through the real intake path, so it is registered
+    in the fake DAO under its scope key exactly as a saved row would be."""
+
+    env.service.create_intake(
+        _manual_payload(
+            department_id=department_id, category_id=category_id,
+            purpose_of_onboarding=purpose,
+        ),
+        "officer-1",
+    )
+    return list(env.intake_dao.engagements_by_id.values())[-1]
+
+
+def _update(**fields):
+    return VendorEngagementUpdateRequest(**fields)
+
+
+def test_update_engagement_changes_department_and_category(env):
+    engagement = _saved_engagement(env)
+
+    updated = env.service.update_engagement(
+        engagement.vendor_category_mapping_id,
+        _update(department_id=3, category_id=14),
+        "officer-2",
+    )
+
+    assert updated.department_id == 3
+    assert updated.purchase_category_id == 14
+    assert updated.updated_by == "officer-2"
+
+
+def test_update_engagement_changes_purpose_of_onboarding(env):
+    engagement = _saved_engagement(env)
+
+    updated = env.service.update_engagement(
+        engagement.vendor_category_mapping_id,
+        _update(purpose_of_onboarding="  Revised onboarding purpose  "),
+        "officer-2",
+    )
+
+    assert updated.purpose_of_onboarding == "Revised onboarding purpose"
+    # Scope untouched.
+    assert updated.department_id == 1
+    assert updated.purchase_category_id == 10
+
+
+def test_update_engagement_preserves_omitted_values(env):
+    engagement = _saved_engagement(env)
+    business_requirement = engagement.business_requirement
+
+    updated = env.service.update_engagement(
+        engagement.vendor_category_mapping_id, _update(category_id=11), "officer-2"
+    )
+
+    # Only category moved; everything else is exactly as it was.
+    assert updated.purchase_category_id == 11
+    assert updated.department_id == 1
+    assert updated.purpose_of_onboarding == "Original purpose"
+    assert updated.business_requirement == business_requirement
+
+
+def test_update_engagement_with_an_empty_body_changes_nothing(env):
+    engagement = _saved_engagement(env)
+    audit_count = len(env.vendor_dao.audit_logs)
+
+    updated = env.service.update_engagement(
+        engagement.vendor_category_mapping_id, _update(), "officer-2"
+    )
+
+    assert updated.department_id == 1
+    assert updated.purchase_category_id == 10
+    assert updated.purpose_of_onboarding == "Original purpose"
+    # Nothing changed, so nothing is audited.
+    assert len(env.vendor_dao.audit_logs) == audit_count
+
+
+def test_explicit_null_clears_purpose_but_omission_does_not(env):
+    engagement = _saved_engagement(env)
+    engagement_id = engagement.vendor_category_mapping_id
+
+    env.service.update_engagement(engagement_id, _update(category_id=11), "officer-2")
+    assert env.intake_dao.engagements_by_id[engagement_id].purpose_of_onboarding == "Original purpose"
+
+    env.service.update_engagement(
+        engagement_id, _update(purpose_of_onboarding=None), "officer-2"
+    )
+    assert env.intake_dao.engagements_by_id[engagement_id].purpose_of_onboarding is None
+
+
+def test_update_engagement_rejects_null_department_or_category(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="department_id cannot be null"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id, _update(department_id=None), "officer-2"
+        )
+
+    with pytest.raises(ValueError, match="category_id cannot be null"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id, _update(category_id=None), "officer-2"
+        )
+
+
+def test_update_engagement_for_missing_engagement_is_rejected(env):
+    with pytest.raises(ValueError, match="Vendor engagement not found"):
+        env.service.update_engagement(9999, _update(category_id=11), "officer-2")
+
+
+# --- Department / category validation (same rules as intake) ---------------
+
+
+def test_update_to_an_inactive_department_is_rejected(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="Department is not active"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id,
+            _update(department_id=2, category_id=13),
+            "officer-2",
+        )
+
+
+def test_update_to_an_inactive_category_is_rejected(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="Purchase category is not active"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id, _update(category_id=12), "officer-2"
+        )
+
+
+def test_update_to_an_unknown_department_is_rejected(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="Department not found"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id,
+            _update(department_id=999, category_id=10),
+            "officer-2",
+        )
+
+
+def test_update_to_an_unknown_category_is_rejected(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="Purchase category not found"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id, _update(category_id=999), "officer-2"
+        )
+
+
+def test_category_must_belong_to_the_selected_department(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="does not belong to the selected department"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id,
+            _update(department_id=3, category_id=10),
+            "officer-2",
+        )
+
+
+def test_changing_department_alone_revalidates_the_existing_category(env):
+    """Moving the department can orphan a category that was valid before, so
+    the pair is re-checked even though category_id was not sent."""
+
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="does not belong to the selected department"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id, _update(department_id=3), "officer-2"
+        )
+
+
+def test_changing_category_alone_revalidates_against_the_existing_department(env):
+    engagement = _saved_engagement(env)
+
+    with pytest.raises(ValueError, match="does not belong to the selected department"):
+        env.service.update_engagement(
+            engagement.vendor_category_mapping_id, _update(category_id=14), "officer-2"
+        )
+
+
+def test_a_failed_update_leaves_the_engagement_untouched(env):
+    engagement = _saved_engagement(env)
+    engagement_id = engagement.vendor_category_mapping_id
+
+    with pytest.raises(ValueError):
+        env.service.update_engagement(
+            engagement_id,
+            _update(department_id=3, category_id=10, purpose_of_onboarding="Should not stick"),
+            "officer-2",
+        )
+
+    stored = env.intake_dao.engagements_by_id[engagement_id]
+    assert stored.department_id == 1
+    assert stored.purchase_category_id == 10
+    assert stored.purpose_of_onboarding == "Original purpose"
+
+
+# --- Duplicate prevention --------------------------------------------------
+
+
+def test_update_into_an_existing_scope_is_rejected_as_duplicate(env):
+    first = _saved_engagement(env, department_id=1, category_id=10)
+    env.service.create_intake(
+        _manual_payload(department_id=1, category_id=11), "officer-1"
+    )
+
+    with pytest.raises(ValueError, match="An engagement already exists for this vendor"):
+        env.service.update_engagement(
+            first.vendor_category_mapping_id, _update(category_id=11), "officer-2"
+        )
+
+    assert env.intake_dao.engagements_by_id[first.vendor_category_mapping_id].purchase_category_id == 10
+
+
+def test_saving_an_engagement_onto_its_own_scope_is_not_a_duplicate(env):
+    """Re-sending the current department/category must not collide with the
+    row being edited."""
+
+    engagement = _saved_engagement(env)
+
+    updated = env.service.update_engagement(
+        engagement.vendor_category_mapping_id,
+        _update(department_id=1, category_id=10, purpose_of_onboarding="Same scope, new note"),
+        "officer-2",
+    )
+
+    assert updated.purchase_category_id == 10
+    assert updated.purpose_of_onboarding == "Same scope, new note"
+
+
+def test_another_vendors_engagement_in_the_same_scope_is_not_a_duplicate(env):
+    first = _saved_engagement(env, department_id=1, category_id=10)
+    # A different vendor holding (department 1, category 11).
+    env.service.create_intake(
+        _manual_payload(department_id=1, category_id=11, vendor_name="Other Vendor Ltd"),
+        "officer-1",
+    )
+
+    updated = env.service.update_engagement(
+        first.vendor_category_mapping_id, _update(category_id=11), "officer-2"
+    )
+
+    assert updated.purchase_category_id == 11
+
+
+# --- Audit -----------------------------------------------------------------
+
+
+def test_update_engagement_writes_an_audit_row_with_old_and_new_values(env):
+    engagement = _saved_engagement(env)
+
+    env.service.update_engagement(
+        engagement.vendor_category_mapping_id,
+        _update(category_id=11, purpose_of_onboarding="Revised"),
+        "officer-2",
+    )
+
+    audit = env.vendor_dao.audit_logs[-1]
+    assert audit.table_name == "vendor_category_mapping"
+    assert audit.action == "UPDATE"
+    assert audit.record_id == engagement.vendor_category_mapping_id
+    assert audit.changed_by == "officer-2"
+    assert audit.old_values == {"purchase_category_id": 10, "purpose_of_onboarding": "Original purpose"}
+    assert audit.new_values == {"purchase_category_id": 11, "purpose_of_onboarding": "Revised"}
+    # Unchanged fields are not recorded.
+    assert "department_id" not in audit.new_values
+
+
+def test_update_engagement_does_not_touch_the_nda_decision(env):
+    """The NDA decision has its own endpoint; editing scope must not silently
+    reset or re-derive it."""
+
+    engagement = _saved_engagement(env)
+    engagement_id = engagement.vendor_category_mapping_id
+    env.intake_dao.rules[1] = _rule(1, "IT NDA", department_id=1, purchase_category_id=10,
+                                    requires_nda=True)
+    env.service.run_pre_screen(engagement_id, "officer-1")
+    env.service.set_nda_decision(engagement_id, False, "Legal waived it", "officer-1")
+
+    env.service.update_engagement(engagement_id, _update(category_id=11), "officer-2")
+
+    stored = env.intake_dao.engagements_by_id[engagement_id]
+    assert stored.nda_final_required is False
+    assert stored.nda_override is False
+    assert stored.nda_override_reason == "Legal waived it"
+    assert stored.nda_recommended is True
+
+
+# ---------------------------------------------------------------------------
+# NDA decision (existing endpoint - reused, not duplicated)
+# ---------------------------------------------------------------------------
+
+
+def test_nda_decision_endpoint_is_the_only_nda_write_path():
+    """Guards requirement "reuse the existing nda-decision endpoint": the
+    intake router must not grow a second NDA yes/no route."""
+
+    from Backend.API_Layer.routes.vendor_intake_route import router
+
+    nda_routes = [r for r in router.routes if "nda" in r.path.lower()]
+
+    assert len(nda_routes) == 1
+    assert nda_routes[0].path == "/{engagement_id}/nda-decision"
+    assert sorted(nda_routes[0].methods) == ["PATCH"]
+
+
+def test_nda_override_to_required_records_reason_and_flags(env):
+    engagement = _saved_engagement(env)
+    engagement_id = engagement.vendor_category_mapping_id
+    env.service.run_pre_screen(engagement_id, "officer-1")
+
+    updated = env.service.set_nda_decision(engagement_id, True, "High-risk data access", "officer-2")
+
+    assert updated.nda_final_required is True
+    assert updated.nda_override is True
+    assert updated.nda_override_reason == "High-risk data access"
+    assert updated.nda_decided_by == "officer-2"
+    assert vis.nda_document_status(updated.nda_final_required) == "PENDING"
+
+
+@pytest.mark.parametrize("blank_reason", [None, "", "   "])
+def test_nda_override_requires_a_reason(env, blank_reason):
+    engagement = _saved_engagement(env)
+    engagement_id = engagement.vendor_category_mapping_id
+    env.service.run_pre_screen(engagement_id, "officer-1")
+
+    with pytest.raises(ValueError, match="A reason is required when overriding"):
+        env.service.set_nda_decision(engagement_id, True, blank_reason, "officer-2")
+
+    stored = env.intake_dao.engagements_by_id[engagement_id]
+    assert stored.nda_override is None
+    assert stored.nda_final_required is None
+
+
+def test_accepting_the_recommendation_needs_no_reason_and_clears_any_override(env):
+    engagement = _saved_engagement(env)
+    engagement_id = engagement.vendor_category_mapping_id
+    env.intake_dao.rules[1] = _rule(1, "IT NDA", department_id=1, purchase_category_id=10,
+                                    requires_nda=True)
+    env.service.run_pre_screen(engagement_id, "officer-1")
+    env.service.set_nda_decision(engagement_id, False, "Waived", "officer-2")
+
+    reverted = env.service.set_nda_decision(engagement_id, None, None, "officer-3")
+
+    assert reverted.nda_override is None
+    assert reverted.nda_override_reason is None
+    assert reverted.nda_final_required is True
+
+
+# ---------------------------------------------------------------------------
+# Add Engagement (existing API - verified, not re-created)
+# ---------------------------------------------------------------------------
+
+
+def test_add_engagement_for_an_existing_vendor_reuses_the_create_intake_api(env):
+    """"Add Engagement" is POST /apm/vendor-intake: it resolves the existing
+    vendor rather than creating a second one, and adds the new scope."""
+
+    env.service.create_intake(_manual_payload(department_id=1, category_id=10), "officer-1")
+    vendor_count = len(env.vendor_dao.vendors_by_id)
+
+    result = env.service.create_intake(
+        _manual_payload(department_id=3, category_id=14), "officer-1"
+    )
+
+    assert result.vendor_created is False
+    assert len(env.vendor_dao.vendors_by_id) == vendor_count
+    assert len(env.intake_dao.engagements_by_id) == 2
+    assert result.engagement.department_id == 3
+    assert result.engagement.purchase_category_id == 14
+
+
 def test_all_documented_vendor_intake_routes_exist():
     from Backend.API_Layer.routes.vendor_intake_route import router
 
@@ -743,6 +1125,7 @@ def test_all_documented_vendor_intake_routes_exist():
 
     assert (("POST",), "") in declared
     assert (("GET",), "/{engagement_id}") in declared
+    assert (("PUT",), "/{engagement_id}") in declared
     assert (("GET",), "/vendor/{vendor_id}") in declared
     assert (("POST",), "/{engagement_id}/pre-screen") in declared
     assert (("PATCH",), "/{engagement_id}/nda-decision") in declared
@@ -836,3 +1219,163 @@ def test_model_matches_engagement_table_keys():
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
     assert ("department_id", "purchase_category_id", "vendor_id") in unique_columns
+
+
+# ---------------------------------------------------------------------------
+# PUT /{engagement_id} - HTTP contract
+#
+# Route-level only, following the existing convention in
+# test_rfq_authorization.py / test_new_routes.py: a minimal app with fake
+# auth/db middleware and VendorIntakeService stubbed, so these assert
+# status-code mapping rather than business logic (covered above).
+# ---------------------------------------------------------------------------
+
+
+def _engagement_client(monkeypatch, handler):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    from Backend.API_Layer.routes import vendor_intake_route
+
+    class _FakeAuthAndDBMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user = {"user_id": "officer-1"}
+            request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
+            return await call_next(request)
+
+    class _FakeService:
+        def __init__(self, db):
+            pass
+
+        def update_engagement(self, engagement_id, payload, user_id):
+            return handler(engagement_id, payload, user_id)
+
+    monkeypatch.setattr(vendor_intake_route, "VendorIntakeService", _FakeService)
+
+    app = FastAPI()
+    app.add_middleware(_FakeAuthAndDBMiddleware)
+    # A prefix is required: create_intake is declared at path "" and FastAPI
+    # refuses a route whose prefix and path are both empty.
+    app.include_router(vendor_intake_route.router, prefix="/vendor-intake")
+    return TestClient(app)
+
+
+def _dto_source(**overrides):
+    import datetime as _dt
+
+    defaults = dict(
+        vendor_category_mapping_id=1, vendor_id=100, department_id=1,
+        purchase_category_id=11, business_requirement="Laptops",
+        purpose_of_onboarding="Revised", pre_screen_status="PENDING",
+        pre_screen_result_reason=None, pre_screen_checked_at=None,
+        nda_recommended=None, nda_override=None, nda_override_reason=None,
+        nda_final_required=None,
+        created_at=_dt.datetime(2026, 9, 22), updated_at=_dt.datetime(2026, 9, 22),
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_put_engagement_returns_the_updated_dto(monkeypatch):
+    captured = {}
+
+    def _handler(engagement_id, payload, user_id):
+        captured.update(
+            engagement_id=engagement_id, user_id=user_id,
+            supplied=sorted(payload.model_fields_set),
+            category_id=payload.category_id,
+        )
+        return _dto_source()
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    response = client.put("/vendor-intake/1", json={"category_id": 11, "purpose_of_onboarding": "Revised"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["engagement_id"] == 1
+    assert body["category_id"] == 11
+    assert body["purpose_of_onboarding"] == "Revised"
+    assert captured["engagement_id"] == 1
+    assert captured["user_id"] == "officer-1"
+    # Only the fields actually sent are marked as supplied.
+    assert captured["supplied"] == ["category_id", "purpose_of_onboarding"]
+
+
+def test_put_engagement_distinguishes_omitted_from_explicit_null(monkeypatch):
+    captured = {}
+
+    def _handler(engagement_id, payload, user_id):
+        captured["supplied"] = sorted(payload.model_fields_set)
+        return _dto_source()
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    client.put("/vendor-intake/1", json={"purpose_of_onboarding": None})
+    assert captured["supplied"] == ["purpose_of_onboarding"]
+
+    client.put("/vendor-intake/1", json={})
+    assert captured["supplied"] == []
+
+
+def test_put_engagement_for_unknown_engagement_is_404(monkeypatch):
+    def _handler(*args):
+        raise ValueError("Vendor engagement not found")
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    assert client.put("/vendor-intake/999", json={"category_id": 11}).status_code == 404
+
+
+def test_put_engagement_duplicate_scope_is_409(monkeypatch):
+    def _handler(*args):
+        raise ValueError(
+            "An engagement already exists for this vendor in the selected "
+            "department and category"
+        )
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    assert client.put("/vendor-intake/1", json={"category_id": 11}).status_code == 409
+
+
+def test_put_engagement_integrity_error_is_also_409(monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    def _handler(*args):
+        raise IntegrityError("stmt", {}, Exception("unique violation"))
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    assert client.put("/vendor-intake/1", json={"category_id": 11}).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Department is not active",
+        "Purchase category is not active",
+        "Purchase category does not belong to the selected department",
+        "department_id cannot be null",
+    ],
+)
+def test_put_engagement_validation_failures_are_422(monkeypatch, message):
+    def _handler(*args):
+        raise ValueError(message)
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    response = client.put("/vendor-intake/1", json={"department_id": 3})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == message
+
+
+def test_put_engagement_rejects_a_malformed_body(monkeypatch):
+    def _handler(*args):  # pragma: no cover - must never be reached
+        raise AssertionError("service should not be called for an invalid payload")
+
+    client = _engagement_client(monkeypatch, _handler)
+
+    assert client.put("/vendor-intake/1", json={"category_id": "not-an-int"}).status_code == 422

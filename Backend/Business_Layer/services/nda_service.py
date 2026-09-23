@@ -18,6 +18,15 @@ Send semantics mirror RFQService.send_rfq exactly: the attempt is audited
 whether it succeeds or fails, and the NDA only moves to SENT after the email
 actually succeeds - a failed send leaves the NDA in its prior state with an
 NDA_SEND_FAILED audit row.
+
+EDITABLE CONTENT
+----------------
+``vendor_nda.content`` holds the internal working copy of the NDA wording.
+Generation seeds it with the rendered template body at revision 1; the editor
+saves over it through ``update_content``; and ``send_nda`` builds the document
+the vendor actually receives FROM IT, so a saved edit can never be silently
+dropped in favour of the original generated PDF. It is never the
+vendor-signed document - that stays in S3 behind ``signed_document_key``.
 """
 from __future__ import annotations
 
@@ -29,8 +38,10 @@ from typing import List, Optional
 from Backend.Business_Layer.utils.email_service import EmailAttachment, EmailSendResult, send_email
 from Backend.Business_Layer.utils.nda_document import (
     build_nda_context,
+    build_nda_document_title,
     build_nda_object_key,
     build_nda_pdf,
+    normalize_nda_content,
     render_template_body,
 )
 from Backend.Data_Access_Layer.dao.nda_dao import NdaDAO
@@ -68,6 +79,27 @@ NDA_TRANSITIONS = {
 # States from which a vendor-signed document may be uploaded.
 SIGNED_UPLOAD_ALLOWED_FROM = {STATUS_SENT, STATUS_SIGNED, STATUS_REJECTED}
 
+# States in which the editable NDA wording may still be changed.
+#
+# PENDING is the normal editing window (generate -> edit -> save -> send).
+# SENT is included so a draft can keep being corrected while the vendor's
+# response is outstanding. REJECTED is included because the existing workflow
+# treats it as "requires correction/resubmission".
+#
+# Everything else is deliberately closed: NOT_REQUIRED has no document to
+# edit, SIGNED and COMPLETED have a countersigned document whose wording must
+# not be rewritten after the fact, and EXPIRED follows the existing
+# "generate a new NDA" route rather than being edited back to life. No
+# reopening rule exists anywhere in this workflow, so COMPLETED stays closed.
+CONTENT_EDIT_ALLOWED_FROM = {STATUS_PENDING, STATUS_SENT, STATUS_REJECTED}
+
+_CONTENT_EDIT_REJECTION_REASONS = {
+    STATUS_NOT_REQUIRED: "An NDA is not required for this vendor engagement",
+    STATUS_SIGNED: "This NDA has already been signed and its content can no longer be edited",
+    STATUS_COMPLETED: "This NDA is already completed and its content can no longer be edited",
+    STATUS_EXPIRED: "This NDA has expired; generate a new NDA instead of editing it",
+}
+
 _SIGNED_UPLOAD_REJECTION_REASONS = {
     STATUS_NOT_REQUIRED: "An NDA is not required for this vendor engagement",
     STATUS_PENDING: "The NDA has not been sent to the vendor yet",
@@ -102,6 +134,7 @@ ACTION_COMPLETED = "NDA_COMPLETED"
 ACTION_REJECTED = "NDA_REJECTED"
 ACTION_EXPIRED = "NDA_EXPIRED"
 ACTION_DOCUMENT_ACCESSED = "NDA_DOCUMENT_ACCESSED"
+ACTION_CONTENT_UPDATED = "NDA_CONTENT_UPDATED"
 
 _STATUS_ACTIONS = {
     STATUS_SIGNED: ACTION_SIGNED,
@@ -124,6 +157,19 @@ def _add_months(start: datetime.date, months: int) -> datetime.date:
     day = min(start.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
                           31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
     return datetime.date(year, month, day)
+
+
+class NdaContentConflict(ValueError):
+    """Raised when a content save carries a stale ``content_version``.
+
+    Subclasses ValueError so the existing ``except ValueError`` handlers in
+    the routes still degrade safely if one is ever reached first; the content
+    route catches this type explicitly and answers 409 instead of 422.
+    """
+
+    def __init__(self, message: str, current_version: int):
+        super().__init__(message)
+        self.current_version = current_version
 
 
 @dataclass
@@ -304,27 +350,18 @@ class NdaService:
             effective_date=datetime.date.today(),
         )
 
+        # The rendered template body is the INITIAL revision of the editable
+        # content. The user may edit it before the NDA is sent; send_nda
+        # rebuilds the vendor's document from whatever is persisted then.
         body = render_template_body(template.body, context)
-        pdf_bytes = build_nda_pdf(
-            title=f"Non-Disclosure Agreement - {vendor.vendor_name}", body=body
-        )
 
-        object_key = build_nda_object_key(
-            pr_number=getattr(pr, "pr_number", None),
+        stored_key, _pdf_bytes = self._render_and_store_document(
+            content=body,
+            vendor_name=vendor.vendor_name,
             vendor_code=vendor.vendor_code,
+            pr_number=getattr(pr, "pr_number", None),
             version=template.version,
         )
-
-        # Lazy: s3_utils imports boto3 and reads AWS_* at module scope.
-        from Backend.API_Layer.utils.s3_utils import upload_to_s3
-
-        upload_result = upload_to_s3(
-            filename=object_key.split("/")[-1],
-            content=pdf_bytes,
-            content_type="application/pdf",
-            key=object_key,
-        )
-        stored_key = upload_result.get("filepath", object_key)
 
         nda = self._create_nda_row(
             vendor_id=vendor.vendor_id,
@@ -337,6 +374,7 @@ class NdaService:
             recipient_email=recipient_email or vendor.email,
             template=template,
             document_key=stored_key,
+            content=body,
         )
 
         self._record_history(
@@ -344,10 +382,140 @@ class NdaService:
             {
                 "vendor_id": vendor.vendor_id, "template_code": template.code,
                 "template_version": template.version,
+                "content_version": nda.content_version,
             },
         )
         self._record_history(
             nda.nda_id, ACTION_UPLOADED, user_id, {"document_key": stored_key}
+        )
+
+        self.db.commit()
+        self.db.refresh(nda)
+        return nda
+
+    # =========================================================
+    # Document generation (shared by generate and send)
+    # =========================================================
+
+    def build_final_document(
+        self,
+        content: str,
+        vendor_name: Optional[str],
+        vendor_code: Optional[str],
+        pr_number: Optional[str],
+        version: Optional[str],
+    ) -> tuple[str, bytes]:
+        """Render NDA wording into the final document. -> (object_key, bytes)
+
+        The single document-generation entry point for this module: initial
+        generation renders the template body through it, and send renders the
+        user's persisted edits through it. Same renderer, same S3 key
+        convention, so the sent document is laid out exactly like the one
+        reviewed on screen. Nothing is uploaded here.
+        """
+
+        clean_content = normalize_nda_content(content)
+
+        pdf_bytes = build_nda_pdf(
+            title=build_nda_document_title(vendor_name), body=clean_content
+        )
+        object_key = build_nda_object_key(
+            pr_number=pr_number, vendor_code=vendor_code, version=version
+        )
+
+        return object_key, pdf_bytes
+
+    def _render_and_store_document(
+        self,
+        content: str,
+        vendor_name: Optional[str],
+        vendor_code: Optional[str],
+        pr_number: Optional[str],
+        version: Optional[str],
+    ) -> tuple[str, bytes]:
+        """build_final_document + upload to the private bucket.
+
+        Returns the STORED key (what S3 reports, not what we asked for) and
+        the exact bytes that were archived, so the caller can attach the very
+        same object it just stored rather than a second render of it.
+        """
+
+        object_key, pdf_bytes = self.build_final_document(
+            content=content, vendor_name=vendor_name, vendor_code=vendor_code,
+            pr_number=pr_number, version=version,
+        )
+
+        # Lazy: s3_utils imports boto3 and reads AWS_* at module scope.
+        from Backend.API_Layer.utils.s3_utils import upload_to_s3
+
+        upload_result = upload_to_s3(
+            filename=object_key.split("/")[-1],
+            content=pdf_bytes,
+            content_type="application/pdf",
+            key=object_key,
+        )
+
+        return upload_result.get("filepath", object_key), pdf_bytes
+
+    # =========================================================
+    # Editable content
+    # =========================================================
+
+    def update_content(
+        self,
+        nda_id: int,
+        content: str,
+        user_id: str,
+        version: Optional[int] = None,
+    ) -> VendorNda:
+        """Persist the latest editable NDA wording (the editor's Save Draft).
+
+        Only the content columns change - no status transition, no S3 write,
+        no email. The document the vendor receives is built from whatever is
+        stored here at send time.
+
+        ``version``, when supplied, is the revision the client believes it is
+        editing. A mismatch means someone else saved in the meantime, so the
+        save is refused rather than silently discarding their work.
+        """
+
+        nda = self._require_nda(nda_id)
+
+        current_status = self._status_code(nda)
+        if current_status not in CONTENT_EDIT_ALLOWED_FROM:
+            raise ValueError(
+                _CONTENT_EDIT_REJECTION_REASONS.get(
+                    current_status,
+                    f"NDA content cannot be edited while the NDA is {current_status}",
+                )
+            )
+
+        clean_content = normalize_nda_content(content)
+
+        current_version = int(nda.content_version or 1)
+        if version is not None and int(version) != current_version:
+            raise NdaContentConflict(
+                f"NDA content has changed since version {version} was loaded "
+                f"(current version is {current_version}); reload before saving",
+                current_version=current_version,
+            )
+
+        self.nda_dao.update_nda_content(
+            nda=nda,
+            content=clean_content,
+            content_version=current_version + 1,
+            user_id=user_id,
+            updated_at=_utcnow(),
+        )
+
+        self._record_history(
+            nda.nda_id, ACTION_CONTENT_UPDATED, user_id,
+            {
+                "from_version": current_version,
+                "to_version": nda.content_version,
+                "content_length": len(clean_content),
+                "status": current_status,
+            },
         )
 
         self.db.commit()
@@ -363,21 +531,35 @@ class NdaService:
 
         if self._status_code(nda) == STATUS_NOT_REQUIRED:
             raise ValueError("This NDA is not required and cannot be sent")
-        if not nda.document_key:
+        if not nda.document_key and not nda.content:
             raise ValueError("NDA document has not been generated yet")
         if not nda.recipient_email:
             raise ValueError("Vendor has no email address on file for the NDA")
 
-        from Backend.API_Layer.utils.s3_utils import get_object_bytes
-
-        pdf_bytes = get_object_bytes(nda.document_key)
         vendor = self.nda_dao.get_vendor_by_id(nda.vendor_id)
         vendor_name = vendor.vendor_name if vendor is not None else "Vendor"
+
+        # The document the vendor receives is built from the PERSISTED
+        # content, so a saved edit is never silently replaced by the original
+        # generated PDF. Generating and archiving both happen BEFORE the
+        # email and before any status change: if S3 fails the exception
+        # propagates, the route rolls back and the NDA stays exactly as it
+        # was - the same rule upload_signed_document follows.
+        #
+        # NDAs generated before editable content existed have no content to
+        # render, so they fall back to attaching the archived object as
+        # before. Nothing about their behaviour changes.
+        attachment_name, pdf_bytes = self._build_send_attachment(nda, vendor, user_id)
 
         subject, html_body, text_body = self._build_email_content(vendor_name)
 
         self._record_history(
-            nda.nda_id, ACTION_SEND_ATTEMPTED, user_id, {"recipient_email": nda.recipient_email}
+            nda.nda_id, ACTION_SEND_ATTEMPTED, user_id,
+            {
+                "recipient_email": nda.recipient_email,
+                "content_version": nda.content_version if nda.content else None,
+                "document_key": nda.document_key,
+            },
         )
 
         result = send_email(
@@ -387,7 +569,7 @@ class NdaService:
             text_body=text_body,
             attachments=[
                 EmailAttachment(
-                    filename=nda.document_key.split("/")[-1],
+                    filename=attachment_name,
                     content=pdf_bytes,
                     content_type="application/pdf",
                 )
@@ -415,6 +597,59 @@ class NdaService:
         self.db.commit()
         self.db.refresh(nda)
         return nda, result
+
+    def _build_send_attachment(
+        self, nda: VendorNda, vendor, user_id: str
+    ) -> tuple[str, bytes]:
+        """The exact document the vendor will receive, already archived in S3.
+
+        With persisted content: re-render it, store it under the existing NDA
+        key convention, point ``document_key`` at the stored object and return
+        those same bytes - so the archived copy and the emailed copy are
+        byte-identical and both reflect the user's edits.
+
+        Without persisted content (an NDA generated before this feature):
+        attach the archived object unchanged.
+
+        ``signed_document_key`` is never read or written here - the signed
+        document is a separate workflow.
+        """
+
+        if not nda.content:
+            from Backend.API_Layer.utils.s3_utils import get_object_bytes
+
+            return nda.document_key.split("/")[-1], get_object_bytes(nda.document_key)
+
+        previous_key = nda.document_key
+
+        stored_key, pdf_bytes = self._render_and_store_document(
+            content=nda.content,
+            vendor_name=getattr(vendor, "vendor_name", None),
+            vendor_code=getattr(vendor, "vendor_code", None),
+            pr_number=getattr(
+                self.nda_dao.get_pr_by_id(nda.pr_id) if nda.pr_id is not None else None,
+                "pr_number",
+                None,
+            ),
+            version=nda.template_version,
+        )
+
+        # This IS the version being sent, so it becomes the generated document
+        # of record. The key convention is deterministic, so a re-render
+        # normally overwrites the same object rather than orphaning one.
+        nda.document_key = stored_key
+
+        self._record_history(
+            nda.nda_id, ACTION_UPLOADED, user_id,
+            {
+                "document_key": stored_key,
+                "previous_document_key": previous_key if previous_key != stored_key else None,
+                "content_version": nda.content_version,
+                "final": True,
+            },
+        )
+
+        return stored_key.split("/")[-1], pdf_bytes
 
     # =========================================================
     # Manual signed-document upload
@@ -620,6 +855,7 @@ class NdaService:
     def _create_nda_row(
         self, vendor_id, pr_id, department_id, purchase_category_id, required,
         status_code, user_id, recipient_email=None, template=None, document_key=None,
+        content=None,
     ) -> VendorNda:
 
         status = self._require_status(status_code)
@@ -634,6 +870,12 @@ class NdaService:
             template_version=getattr(template, "version", None),
             document_key=document_key,
             recipient_email=recipient_email,
+            # Revision 1 is the generated wording, before any user edit. A
+            # NOT_REQUIRED NDA has no document and therefore no content.
+            content=content,
+            content_version=1,
+            content_updated_at=_utcnow() if content else None,
+            content_updated_by=user_id if content else None,
             created_by=user_id,
             updated_by=user_id,
         )

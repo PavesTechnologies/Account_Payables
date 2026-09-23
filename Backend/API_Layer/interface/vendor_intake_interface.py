@@ -54,6 +54,25 @@ class VendorIntakeResponse(BaseModel):
     message: str
 
 
+class VendorEngagementUpdateRequest(BaseModel):
+    """Body of PUT /apm/vendor-intake/{engagement_id}.
+
+    Every field is optional and an OMITTED field is left exactly as it is -
+    this is a partial update, not a replacement. "Omitted" is read from
+    pydantic's ``model_fields_set`` rather than from a None value, so
+    ``{"purpose_of_onboarding": null}`` deliberately CLEARS the note while
+    leaving it out preserves it. ``department_id``/``category_id`` are NOT
+    NULL on the engagement, so sending null for them is rejected.
+
+    ``business_requirement`` is intentionally absent: it belongs to the
+    intake record and is not part of this screen's editable set.
+    """
+
+    department_id: Optional[int] = None
+    category_id: Optional[int] = None
+    purpose_of_onboarding: Optional[str] = None
+
+
 class VendorEngagementDTO(BaseModel):
     engagement_id: int
     vendor_id: int

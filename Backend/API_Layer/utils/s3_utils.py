@@ -7,6 +7,8 @@ from typing import Optional
 
 import boto3
 
+from botocore.config import Config
+
 from botocore.exceptions import (
     BotoCoreError,
     ClientError,
@@ -69,11 +71,32 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 # Client
 # ============================================================
 
+# One client for every S3 operation in the app - uploads, downloads and
+# presigned URLs all sign with the same region and the same host.
+#
+# addressing_style="virtual" is what makes presigned URLs work outside
+# us-east-1 and is NOT optional here. With botocore's default ("auto"),
+# generate_presigned_url() signs against the REGIONLESS global host
+# ``{bucket}.s3.amazonaws.com`` while scoping the signature to
+# ``{region}/s3/aws4_request``. AWS receives that request at the regional
+# host ``{bucket}.s3.{region}.amazonaws.com``, and because ``host`` is a
+# signed header (X-Amz-SignedHeaders=host) it recomputes a different
+# signature and rejects the URL with SignatureDoesNotMatch. Pinning virtual
+# addressing makes boto3 bake the regional host into the URL, so the host it
+# signs is the host AWS receives.
+#
+# signature_version is pinned to SigV4 explicitly: ap-south-1 (like every
+# region launched after 2014) accepts nothing else, and pinning it means a
+# future botocore default cannot silently downgrade it.
 s3_client = boto3.client(
     "s3",
     aws_access_key_id=AWS_ACCESS_KEY,
     aws_secret_access_key=AWS_SECRET_KEY,
     region_name=AWS_REGION,
+    config=Config(
+        signature_version="s3v4",
+        s3={"addressing_style": "virtual"},
+    ),
 )
 
 

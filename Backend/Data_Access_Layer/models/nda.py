@@ -11,6 +11,10 @@ Only the S3 object KEY is stored here (``document_key`` /
 ``signed_document_key``). The PDF bytes live in the private S3 bucket and are
 never persisted to Postgres, and no public URL is ever stored or returned -
 access goes through a short-lived presigned URL issued to an authorized user.
+
+``vendor_nda.content`` is the one exception and holds TEXT, not a document:
+it is the editable NDA wording (the internal working copy) that the final
+vendor document is rendered from at send time. It never holds signed content.
 """
 from typing import Optional, TYPE_CHECKING
 import datetime
@@ -90,6 +94,20 @@ class VendorNda(Base):
     # S3 object keys only - never a URL, never the PDF bytes.
     document_key: Mapped[Optional[str]] = mapped_column(String(500))
     signed_document_key: Mapped[Optional[str]] = mapped_column(String(500))
+    # Latest editable NDA text. This is the INTERNAL working copy the user
+    # edits before the NDA is sent - it is deliberately NOT the vendor-signed
+    # document, which lives in S3 behind signed_document_key and is never
+    # written here. ``content`` is seeded at generation time with the rendered
+    # template body and is the source of truth the final document is built
+    # from when the NDA is sent.
+    content: Mapped[Optional[str]] = mapped_column(Text)
+    # Revision counter for optimistic concurrency: a client that supplies a
+    # stale version is rejected instead of silently overwriting a newer edit.
+    content_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text('1')
+    )
+    content_updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    content_updated_by: Mapped[Optional[str]] = mapped_column(String(100))
     recipient_email: Mapped[Optional[str]] = mapped_column(String(150))
     valid_from: Mapped[Optional[datetime.date]] = mapped_column(Date)
     valid_until: Mapped[Optional[datetime.date]] = mapped_column(Date)

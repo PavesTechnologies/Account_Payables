@@ -17,6 +17,7 @@ from Backend.API_Layer.interface.vendor_intake_interface import (
     NdaDecisionResponse,
     PreScreenResultResponse,
     VendorEngagementDTO,
+    VendorEngagementUpdateRequest,
     VendorIntakeCreateRequest,
     VendorIntakeResponse,
     VendorScreeningRuleDTO,
@@ -90,6 +91,12 @@ _NOT_FOUND_MESSAGES = {
     "Vendor engagement not found",
     "Vendor not found",
     "Screening rule not found",
+}
+
+# Duplicate-scope collisions are a conflict (409), not a validation error -
+# matching POST "" which already answers 409 for the same situation.
+_CONFLICT_MESSAGES = {
+    "An engagement already exists for this vendor in the selected department and category",
 }
 
 
@@ -236,6 +243,64 @@ def get_engagement(engagement_id: int, http_request: Request):
         raise HTTPException(status_code=404, detail=str(e))
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------
+# Edit Engagement
+# ---------------------------------------------------------
+@router.put("/{engagement_id}", response_model=VendorEngagementDTO)
+def update_engagement(
+    engagement_id: int,
+    payload: VendorEngagementUpdateRequest,
+    http_request: Request,
+):
+    """Edit an engagement's department, category and onboarding purpose.
+
+    Partial update - any field left out of the body keeps its current value.
+
+    Responses:
+      * 200 - updated engagement (same DTO as GET /{engagement_id})
+      * 404 - no such engagement
+      * 409 - the vendor already has an engagement in the target
+              department/category
+      * 422 - inactive department, inactive category, or a category that does
+              not belong to the selected department
+
+    The NDA decision is not editable here; it has its own endpoint
+    (PATCH /{engagement_id}/nda-decision).
+    """
+
+    db = http_request.state.db
+
+    try:
+        user_id = _get_user_id(http_request)
+
+        service = VendorIntakeService(db)
+        return _to_engagement_dto(service.update_engagement(engagement_id, payload, user_id))
+
+    except ValueError as e:
+        db.rollback()
+        message = str(e)
+        if message in _NOT_FOUND_MESSAGES:
+            status_code = 404
+        elif message in _CONFLICT_MESSAGES:
+            status_code = 409
+        else:
+            status_code = 422
+        raise HTTPException(status_code=status_code, detail=message)
+
+    except IntegrityError:
+        # Backstop for the DB unique constraint, in case two edits race past
+        # the service-level duplicate check.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="An engagement already exists for this vendor, department and category",
+        )
+
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 

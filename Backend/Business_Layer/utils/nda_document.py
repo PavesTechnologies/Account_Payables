@@ -12,6 +12,11 @@ Business_Layer/utils/notifications.py.
 Only the placeholders listed in SUPPORTED_PLACEHOLDERS are substituted. The
 template body is otherwise reproduced verbatim - no legal clause is ever
 generated, reworded or inferred here.
+
+``build_nda_pdf`` already takes finished text rather than template data, so
+the same renderer produces both the initial generated NDA and the final
+document built from the user's persisted edits - there is deliberately no
+second document-generation path.
 """
 from __future__ import annotations
 
@@ -31,6 +36,16 @@ SUPPORTED_PLACEHOLDERS = (
 )
 
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([A-Z_]+)\s*\}\}")
+
+# Upper bound on the editable NDA wording accepted from the client. Generous
+# enough for any realistic agreement (~40 A4 pages of text) while keeping a
+# single row - and the PDF rendered from it - bounded.
+MAX_NDA_CONTENT_CHARS = 200_000
+
+# Control characters that must never reach Postgres (NUL is rejected outright
+# by TEXT) or the PDF renderer. Tab, newline and carriage return are kept -
+# they are legitimate layout in an agreement body.
+_DISALLOWED_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 # Page geometry (A4 at 72dpi) and typography for the generated document.
 _PAGE_WIDTH = 595
@@ -60,6 +75,45 @@ def render_template_body(body: str, context: Dict[str, Optional[str]]) -> str:
         return "" if value is None else str(value)
 
     return _PLACEHOLDER_PATTERN.sub(_replace, body)
+
+
+def normalize_nda_content(content) -> str:
+    """Validate and clean editable NDA wording supplied by the client.
+
+    The NDA is rendered as plain text into a PDF - there is no markup layer
+    and no template re-evaluation of user input, so nothing here is
+    interpreted as code. What this guards against is unusable input reaching
+    storage or the renderer: a non-string payload, a blank document, one large
+    enough to be abusive, and control characters that Postgres TEXT (NUL) or
+    the PDF renderer cannot represent.
+
+    Returns the cleaned content. Raises ValueError with a caller-safe message.
+    """
+    if not isinstance(content, str):
+        raise ValueError("NDA content must be text")
+
+    # Normalize line endings first so a CRLF document is not counted or
+    # rendered differently from the same document with LF endings.
+    cleaned = content.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _DISALLOWED_CONTROL_CHARS.sub("", cleaned)
+
+    if not cleaned.strip():
+        raise ValueError("NDA content cannot be empty")
+
+    if len(cleaned) > MAX_NDA_CONTENT_CHARS:
+        raise ValueError(
+            "NDA content exceeds the maximum allowed length of "
+            f"{MAX_NDA_CONTENT_CHARS} characters"
+        )
+
+    return cleaned
+
+
+def build_nda_document_title(vendor_name: Optional[str]) -> str:
+    """Title line printed on the generated PDF. Shared by initial generation
+    and the final send-time document so both produce an identical heading."""
+
+    return f"Non-Disclosure Agreement - {vendor_name or 'Vendor'}"
 
 
 def build_nda_context(
