@@ -69,6 +69,20 @@ class FakeOnboardingDAO:
             for index, code in enumerate(ONBOARDING_STATUS_CODES)
         }
         self._next_id = 1
+        # Vendor-side lookups used when completion activates the vendor.
+        self.vendor_statuses = {
+            "PENDING": _status("PENDING", 900),
+            "ACTIVE": _status("ACTIVE", 901),
+        }
+        self.vendors_by_id: Dict[int, object] = {}
+
+    def register_vendor(self, vendor_id, status_code="PENDING"):
+        vendor = SimpleNamespace(
+            vendor_id=vendor_id,
+            status_id=self.vendor_statuses[status_code].status_id,
+        )
+        self.vendors_by_id[vendor_id] = vendor
+        return vendor
 
     # masters / lookups
     def get_pr_by_id(self, pr_id):
@@ -83,6 +97,15 @@ class FakeOnboardingDAO:
     def get_status_by_module_code(self, module_name, status_code):
         assert module_name == "VENDOR_ONBOARDING"
         return self.statuses.get(status_code)
+
+    def get_vendor_by_id(self, vendor_id):
+        return self.vendors_by_id.get(vendor_id)
+
+    def get_status_by_id(self, status_id):
+        for status in list(self.statuses.values()) + list(self.vendor_statuses.values()):
+            if status.status_id == status_id:
+                return status
+        return None
 
     # requests
     def create_request(self, request):
@@ -152,18 +175,40 @@ class FakeIntakeService:
         )
 
 
+class FakeVendorService:
+    """Stands in for the real VendorService(db) that completion calls to
+    activate the vendor. Records the activation and mirrors the real
+    service's single-commit behaviour, so the atomicity ordering in
+    ``complete`` is exercised rather than bypassed."""
+
+    activations: List[tuple] = []
+
+    def __init__(self, db):
+        self.db = db
+
+    def change_status(self, vendor_id, is_active, user_id):
+        FakeVendorService.activations.append((vendor_id, is_active, user_id))
+        self.db.commit()
+        return SimpleNamespace(vendor_id=vendor_id)
+
+
 @pytest.fixture
 def env(monkeypatch):
     FakeIntakeService.calls = []
     FakeIntakeService.pre_screen_result = "PASS"
     FakeIntakeService.pre_screen_reason = None
+    FakeVendorService.activations = []
     monkeypatch.setattr(vos, "VendorIntakeService", FakeIntakeService)
+    monkeypatch.setattr(vos, "VendorService", FakeVendorService)
 
     service = VendorOnboardingService(db=FakeDB())
     dao = FakeOnboardingDAO(pr=_pr(), engagement=_engagement())
+    # The vendor intake fake always produces vendor 900; it starts PENDING,
+    # exactly as VendorService.create_vendor leaves a newly created vendor.
+    dao.register_vendor(900, status_code="PENDING")
     service.onboarding_dao = dao
 
-    return SimpleNamespace(service=service, dao=dao)
+    return SimpleNamespace(service=service, dao=dao, vendor_service=FakeVendorService)
 
 
 def _create_payload(**overrides):
@@ -537,3 +582,207 @@ def test_rfq_eligibility_route_is_not_shadowed_by_rfq_id():
 
     assert matched, "no route matched /eligibility"
     assert matched[0].name == "get_rfq_eligibility"
+
+
+# ---------------------------------------------------------------------------
+# Admin: Internal Request (= Purchase Requisition) -> Vendor Onboarding
+#
+# "Internal Request" is this product's name for ap.purchase_requisition - it
+# carries the requester, department, lines, required_by, estimated_total,
+# status and the vendor requirement. The onboarding request already stores it
+# as pr_id, so the traceability chain is
+#     purchase_requisition -> vendor_onboarding_request -> vendor
+# ---------------------------------------------------------------------------
+
+
+def _completed(env):
+    request = env.service.create_request(_create_payload(), "admin-1")
+    env.service.start(request.id, _start_payload(), "admin-1")
+    env.service.run_pre_screen(request.id, "admin-1")
+    return env.service.complete(request.id, "admin-1")
+
+
+def test_onboarding_keeps_the_internal_request_reference_end_to_end(env):
+    request = env.service.create_request(_create_payload(), "admin-1")
+    assert request.pr_id == 1
+
+    env.service.start(request.id, _start_payload(), "admin-1")
+    env.service.run_pre_screen(request.id, "admin-1")
+    completed = env.service.complete(request.id, "admin-1")
+
+    # purchase_requisition -> vendor_onboarding_request -> vendor
+    assert completed.pr_id == 1
+    assert completed.vendor_id == 900
+    assert completed.engagement_id == 77
+    assert completed.status.status_code == "COMPLETED"
+
+
+def test_completion_activates_the_vendor_through_the_existing_vendor_service(env):
+    _completed(env)
+
+    assert env.vendor_service.activations == [(900, True, "admin-1")]
+
+
+def test_completion_records_the_activation_in_the_audit_trail(env):
+    _completed(env)
+
+    completed_rows = [a for a in env.dao.audit_logs if a.action == "COMPLETED"]
+    assert len(completed_rows) == 1
+    assert completed_rows[0].new_values["vendor_id"] == 900
+    assert completed_rows[0].new_values["vendor_activated"] is True
+
+
+def test_an_already_active_vendor_is_not_re_activated(env):
+    """Intake may reuse an existing, already-active vendor - completing then
+    must not churn a misleading STATUS_CHANGE audit row."""
+
+    env.dao.register_vendor(900, status_code="ACTIVE")
+
+    completed = _completed(env)
+
+    assert completed.status.status_code == "COMPLETED"
+    assert env.vendor_service.activations == []
+    completed_rows = [a for a in env.dao.audit_logs if a.action == "COMPLETED"]
+    assert completed_rows[0].new_values["vendor_activated"] is False
+
+
+def test_completion_is_atomic_when_vendor_activation_fails(env, monkeypatch):
+    """Vendor activation and the onboarding status change must succeed or
+    fail together. The activation call is what commits, so a failure there
+    leaves nothing committed."""
+
+    commits = []
+    monkeypatch.setattr(type(env.service.db), "commit", lambda self: commits.append(1))
+
+    def _boom(self, vendor_id, is_active, user_id):
+        raise ValueError("ACTIVE status is not configured for the VENDOR module")
+
+    monkeypatch.setattr(vos.VendorService, "change_status", _boom)
+
+    request = env.service.create_request(_create_payload(), "admin-1")
+    env.service.start(request.id, _start_payload(), "admin-1")
+    env.service.run_pre_screen(request.id, "admin-1")
+    commits.clear()
+
+    with pytest.raises(ValueError, match="not configured"):
+        env.service.complete(request.id, "admin-1")
+
+    # Nothing was committed by complete() - the route's rollback discards the
+    # pending COMPLETED transition along with it.
+    assert commits == []
+
+
+def test_completion_cannot_run_twice_so_no_duplicate_vendor_is_created(env):
+    request = env.service.create_request(_create_payload(), "admin-1")
+    env.service.start(request.id, _start_payload(), "admin-1")
+    env.service.run_pre_screen(request.id, "admin-1")
+    env.service.complete(request.id, "admin-1")
+
+    with pytest.raises(ValueError, match="cannot move from COMPLETED"):
+        env.service.complete(request.id, "admin-1")
+
+    assert env.vendor_service.activations == [(900, True, "admin-1")]
+    assert len(FakeIntakeService.calls) == 1
+
+
+def test_intake_cannot_run_twice_for_one_onboarding_request(env):
+    """Guards duplicate vendor creation at the other end of the flow."""
+
+    request = env.service.create_request(_create_payload(), "admin-1")
+    env.service.start(request.id, _start_payload(), "admin-1")
+
+    with pytest.raises(ValueError, match="already been completed"):
+        env.service.start(request.id, _start_payload(), "admin-1")
+
+    assert len(FakeIntakeService.calls) == 1
+
+
+def test_duplicate_active_onboarding_for_the_same_internal_request_is_prevented(env):
+    env.service.create_request(_create_payload(), "admin-1")
+
+    with pytest.raises(ValueError, match="An open vendor onboarding request already exists"):
+        env.service.create_request(_create_payload(), "admin-1")
+
+
+def test_completion_requires_a_passed_pre_screen(env):
+    """The existing gates stay: a request still sitting at PRE_SCREEN_PENDING
+    cannot be completed, so no vendor is created or activated."""
+
+    request = env.service.create_request(_create_payload(), "admin-1")
+    env.service.start(request.id, _start_payload(), "admin-1")
+
+    with pytest.raises(ValueError, match="cannot move from PRE_SCREEN_PENDING to COMPLETED"):
+        env.service.complete(request.id, "admin-1")
+
+    assert env.vendor_service.activations == []
+
+
+def test_completion_is_blocked_when_pre_screen_did_not_pass(env):
+    """Even once the status graph would allow it, the engagement's recorded
+    Pre-Screen verdict is re-checked before the vendor is activated."""
+
+    request = env.service.create_request(_create_payload(), "admin-1")
+    env.service.start(request.id, _start_payload(), "admin-1")
+    env.service.run_pre_screen(request.id, "admin-1")
+    env.dao._engagement.pre_screen_status = "NEED_INFORMATION"
+
+    with pytest.raises(ValueError, match="Pre-Screen has passed"):
+        env.service.complete(request.id, "admin-1")
+
+    assert env.vendor_service.activations == []
+
+
+def test_admin_flow_reuses_the_existing_vendor_services(env):
+    """No duplicated vendor/address/tax/engagement logic - onboarding
+    orchestrates the existing services."""
+
+    import inspect
+
+    source = inspect.getsource(vos)
+
+    assert "VendorIntakeService(self.db).create_intake" in source
+    assert "VendorIntakeService(self.db).run_pre_screen" in source
+    assert "VendorService(self.db).change_status" in source
+    # Nothing here constructs vendor-side rows itself.
+    for duplicated in ("VendorAddress(", "VendorTax(", "VendorBank("):
+        assert duplicated not in source, f"onboarding service builds {duplicated} itself"
+
+
+def test_the_documented_admin_endpoints_all_exist():
+    """The project's own route names, per its existing conventions."""
+
+    from Backend.API_Layer.routes import procurement_route, vendor_onboarding_route
+
+    pr_paths = {(tuple(sorted(r.methods)), r.path) for r in procurement_route.router.routes}
+    onboarding_paths = {
+        (tuple(sorted(r.methods)), r.path) for r in vendor_onboarding_route.router.routes
+    }
+
+    # Internal Requests (= purchase requisitions)
+    assert (("GET",), "/purchase-requisitions") in pr_paths
+    assert (("GET",), "/purchase-requisitions/{pr_id}") in pr_paths
+
+    # Vendor onboarding, started from an internal request and completed
+    assert (("POST",), "") in onboarding_paths
+    assert (("GET",), "") in onboarding_paths
+    assert (("GET",), "/{request_id}") in onboarding_paths
+    assert (("PATCH",), "/{request_id}/status") in onboarding_paths
+    assert (("POST",), "/{request_id}/start") in onboarding_paths
+    assert (("POST",), "/{request_id}/complete") in onboarding_paths
+
+
+def test_every_onboarding_route_is_permission_gated():
+    """Authorization is unchanged: the existing ONBOARDING_* permission
+    bundles remain the gate, and no route is left open."""
+
+    from Backend.API_Layer.routes import vendor_onboarding_route
+
+    for route in vendor_onboarding_route.router.routes:
+        assert route.dependencies, f"{route.path} has no permission dependency"
+
+    for bundle in (
+        vendor_onboarding_route.ONBOARDING_VIEW,
+        vendor_onboarding_route.ONBOARDING_CREATE,
+        vendor_onboarding_route.ONBOARDING_PROCESS,
+    ):
+        assert bundle, "permission bundle is empty"

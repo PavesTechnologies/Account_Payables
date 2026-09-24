@@ -3,14 +3,22 @@ import datetime
 import decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # =====================================================
 # Related Purchase Order / Invoice (minimal, read-only nesting)
 # =====================================================
 
 
+# ORM serialization (Pydantic v2). Needed because these DTOs are nested
+# inside wrapper responses such as VendorPurchaseOrderListResponse, which
+# are CONSTRUCTED IN THE ROUTE from SQLAlchemy objects. FastAPI only
+# applies from_attributes to a top-level response_model, so a nested DTO
+# without this config rejects an ORM instance with
+#   "Input should be a valid dictionary or instance of PurchaseOrderDTO".
 class PurchaseOrderSummaryDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     po_id: int
     po_number: str
     vendor_id: int
@@ -18,6 +26,8 @@ class PurchaseOrderSummaryDTO(BaseModel):
 
 
 class InvoiceSummaryDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     invoice_id: int
     invoice_number: str
     vendor_id: int
@@ -38,6 +48,8 @@ class GoodsReceiptLineRequest(BaseModel):
 
 
 class GoodsReceiptLineDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     grn_line_id: int
     grn_id: int
     po_line_id: Optional[int]
@@ -85,6 +97,8 @@ class UploadGoodsReceiptDocumentResponse(BaseModel):
 
 
 class GoodsReceiptDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     grn_id: int
     vendor_id: int
     po_id: Optional[int]

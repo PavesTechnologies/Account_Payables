@@ -36,6 +36,17 @@ PR_HISTORY_TABLE = "purchase_requisition"
 
 VALID_PRIORITIES = {"LOW", "NORMAL", "HIGH", "URGENT"}
 
+REQUIRED_BY_IN_PAST_MESSAGE = "Required By Date cannot be earlier than today."
+
+# Statuses a purchase requisition may be edited in.
+#
+# CANCELLED is included deliberately: a cancelled PR stays editable so it can
+# be corrected after the fact, and updating it does NOT
+# change its status - update_purchase_requisition never transitions a PR.
+# Every other status (PENDING_APPROVAL, APPROVED, VENDOR_SELECTION,
+# PO_GENERATED, REJECTED) remains blocked exactly as before.
+PR_EDITABLE_STATUS_CODES = {"DRAFT", "RETURNED", "CANCELLED"}
+
 # Units of measure now live in ap.unit_of_measure (Data_Access_Layer/models/master.py,
 # seeded by migration_uom_master.sql) instead of a hardcoded dict, and are exposed via
 # GET /apm/master/uoms. A PR line may also carry a free-text custom UOM
@@ -58,6 +69,7 @@ class ProcurementService:
     def create_purchase_requisition(self, data, user_id: str) -> PurchaseRequisition:
         self._validate_department_and_category(data.department_id, data.purchase_category_id)
         priority = self._validate_priority(data.priority)
+        self._validate_required_by(data.required_by)
         draft_status = self._require_status(PR_STATUS_MODULE, "DRAFT")
 
         pr = PurchaseRequisition(
@@ -112,7 +124,7 @@ class ProcurementService:
 
     def update_purchase_requisition(self, pr_id: int, data, user_id: Optional[str] = None) -> PurchaseRequisition:
         pr = self._require_pr(pr_id)
-        self._require_pr_status(pr, {"DRAFT", "RETURNED"}, "updated")
+        self._require_pr_status(pr, PR_EDITABLE_STATUS_CODES, "updated")
         if pr.status.status_code == "RETURNED":
             self._require_requester(
                 pr, user_id, "Only the purchase requisition's requester can edit it while it is RETURNED"
@@ -130,6 +142,7 @@ class ProcurementService:
         if data.priority is not None:
             pr.priority = self._validate_priority(data.priority)
         if data.required_by is not None:
+            self._validate_required_by(data.required_by)
             pr.required_by = data.required_by
         if data.delivery_location is not None:
             pr.delivery_location = data.delivery_location
@@ -507,6 +520,20 @@ class ProcurementService:
 
         lines = self.procurement_dao.get_lines_by_pr_id(pr_id)
 
+        # The PO's value is the VENDOR'S quoted amount, not the requester's
+        # estimate. quotation.total_amount is the overall/grand total quoted
+        # (the quotation header carries no subtotal/discount/tax breakdown by
+        # design), so it becomes both subtotal and total_amount with no tax
+        # split to invent. pr.estimated_total is left untouched - it remains
+        # the original requested estimate and is only the fallback for a
+        # legacy quotation that never captured a total.
+        selected_quotation = self.get_quotation(pr.selected_quotation_id)
+        quoted_total = (
+            selected_quotation.total_amount
+            if selected_quotation.total_amount is not None
+            else (pr.estimated_total or 0)
+        )
+
         purchase_order = PurchaseOrder(
             po_number=f"PO-TMP-{uuid.uuid4().hex[:12]}",
             pr_id=pr.id,
@@ -514,9 +541,9 @@ class ProcurementService:
             vendor_id=pr.selected_vendor_id,
             status_id=po_status.status_id,
             created_by=user_id,
-            subtotal=pr.estimated_total or 0,
+            subtotal=quoted_total,
             tax_amount=0,
-            total_amount=pr.estimated_total or 0,
+            total_amount=quoted_total,
         )
         self.po_dao.create_purchase_order(purchase_order)
         purchase_order.po_number = f"PO-{purchase_order.po_id:06d}"
@@ -656,6 +683,33 @@ class ProcurementService:
 
         if purchase_category.department_id != department_id:
             raise ValueError("Purchase category does not belong to the selected department.")
+
+    @staticmethod
+    def _validate_required_by(required_by) -> None:
+        """A Required By date may be today or later, never in the past.
+
+        ``purchase_requisition.required_by`` is a DATE column and pydantic
+        parses the request field as ``datetime.date``, so this compares dates
+        to dates - a same-day request is never rejected because of a time
+        component. ``date.today()`` (server-local) is used rather than a UTC
+        date for the same reason the NDA validity window does: where the two
+        differ, server-local is the lenient side, so a user's genuine "today"
+        is never refused.
+
+        None means "not supplied" (the column is nullable and the field is
+        optional on both create and update) and is left alone.
+        """
+
+        if required_by is None:
+            return
+
+        # Defensive: a datetime would otherwise compare against a date and
+        # raise TypeError. Business-wise only the calendar day matters.
+        if isinstance(required_by, datetime.datetime):
+            required_by = required_by.date()
+
+        if required_by < datetime.date.today():
+            raise ValueError(REQUIRED_BY_IN_PAST_MESSAGE)
 
     @staticmethod
     def _validate_priority(priority: str) -> str:
