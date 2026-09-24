@@ -16,6 +16,7 @@ from Backend.API_Layer.routes import (
     invoice_extraction_route,
     master_route,
     payment_route,
+    tds_route,
     procurement_route,
     purchase_order_route,
     rfq_route,
@@ -136,6 +137,7 @@ api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"
 )
 api_router.include_router(invoice_approval_route.router, tags=["Invoice Approval"], prefix="/invoice")
+api_router.include_router(tds_route.router, tags=["Invoice TDS"], prefix="/invoice")
 api_router.include_router(invoice_details_route.router, tags=["Invoice Details"], prefix="/invoice-details")
 api_router.include_router(payment_route.router, tags=["Payment"], prefix="/payment")
 api_router.include_router(procurement_route.router, tags=["Procurement"], prefix="/procurement")
