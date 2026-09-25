@@ -23,6 +23,7 @@ from typing import List, Optional
 
 from Backend.API_Layer.interface.vendor_intake_interface import VendorIntakeCreateRequest
 from Backend.Business_Layer.services.vendor_intake_service import VendorIntakeService
+from Backend.Business_Layer.services.vendor_service import VendorService
 from Backend.Business_Layer.utils import pr_workflow_events as events
 from Backend.Data_Access_Layer.dao.vendor_onboarding_dao import VendorOnboardingDAO
 from Backend.Data_Access_Layer.models.audit import AuditLog
@@ -34,6 +35,10 @@ PR_HISTORY_TABLE = "purchase_requisition"
 ONBOARDING_HISTORY_TABLE = "vendor_onboarding_request"
 
 PR_APPROVED_STATUS_CODE = "APPROVED"
+# Completing onboarding activates the vendor it produced, so the vendor is
+# usable by the workflows that require an ACTIVE vendor (RFQ invitation,
+# quotation capture). Resolved by module+code like every other status.
+VENDOR_ACTIVE_STATUS_CODE = "ACTIVE"
 
 STATUS_CREATED = "CREATED"
 STATUS_ASSIGNED = "ASSIGNED"
@@ -383,16 +388,51 @@ class VendorOnboardingService:
         self._transition(request, STATUS_COMPLETED)
         request.updated_by = user_id
 
+        # Activate the vendor through the EXISTING vendor service rather than
+        # writing status_id here - it owns status resolution (by module+code,
+        # never a hardcoded id) and the STATUS_CHANGE audit row.
+        #
+        # Ordering is deliberate and is what makes completion atomic: the
+        # transition above and the audit row below are still pending in this
+        # session, and change_status() commits the SAME session, so the
+        # onboarding status change and the vendor activation land in one
+        # commit. If it raises - vendor missing, or VENDOR/ACTIVE not
+        # configured - nothing is committed and the route rolls the whole
+        # thing back, leaving the request un-completed.
+        activated = False
+        if request.vendor_id is not None and not self._vendor_is_active(request.vendor_id):
+            activated = True
+
         self._record_onboarding_history(
             request.id,
             ACTION_COMPLETED,
             user_id,
-            {"vendor_id": request.vendor_id, "engagement_id": request.engagement_id},
+            {
+                "vendor_id": request.vendor_id,
+                "engagement_id": request.engagement_id,
+                "vendor_activated": activated,
+            },
         )
 
-        self.db.commit()
+        if activated:
+            VendorService(self.db).change_status(request.vendor_id, True, user_id)
+        else:
+            self.db.commit()
+
         self.db.refresh(request)
         return request
+
+    def _vendor_is_active(self, vendor_id: int) -> bool:
+        """Whether the vendor already sits in VENDOR/ACTIVE - a vendor that
+        intake reused may well be active already, and re-activating it would
+        add a misleading STATUS_CHANGE audit row."""
+
+        vendor = self.onboarding_dao.get_vendor_by_id(vendor_id)
+        if vendor is None or vendor.status_id is None:
+            return False
+
+        status = self.onboarding_dao.get_status_by_id(vendor.status_id)
+        return status is not None and status.status_code == VENDOR_ACTIVE_STATUS_CODE
 
     # =========================================================
     # Internal helpers
