@@ -3582,10 +3582,17 @@ def reconcile_gstins(
         ):
             _overwrite_gstin("buyer_gstin", anchored["buyer_gstin"])
 
-        elif "buyer_gstin" not in anchored:
-            # No valid anchored candidate for buyer either -
-            # don't guess further, but at least don't keep a
-            # value we know is wrong.
+        else:
+            # No valid anchored candidate for buyer (either missing
+            # entirely, e.g. a single-GSTIN document with no buyer
+            # registration to find - or, defensively, the anchored
+            # classifier itself independently landed on the same
+            # vendor GSTIN) - don't guess further, but at least don't
+            # keep a value we know is wrong. Using `else` rather than
+            # `elif "buyer_gstin" not in anchored` closes both cases
+            # unconditionally: buyer_gstin must never be left equal to
+            # vendor_gstin, regardless of why the anchored fallback
+            # didn't produce a distinct candidate.
             del extracted["buyer_gstin"]
 
         if (

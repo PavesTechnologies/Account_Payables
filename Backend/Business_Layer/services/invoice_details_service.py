@@ -1,5 +1,7 @@
+from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount
 from Backend.Data_Access_Layer.dao.invoice_details_dao import InvoiceDetailsDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
+from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
 from Backend.Data_Access_Layer.dao.vendor_dao import VendorDAO
 from Backend.API_Layer.interface.invoice_details_interface import InvoiceDetailsResponse
 
@@ -8,6 +10,7 @@ class InvoiceDetailsService:
         self.invoice_details_dao = InvoiceDetailsDAO(db)
         self.vendor_dao = VendorDAO(db)
         self.invoice_dao = InvoiceDAO(db)
+        self.tds_dao = TdsDAO(db)
 
     def get_invoice_history(self, invoice_id: int):
         """Chronological ap.audit_log trail for this invoice — see InvoiceHistoryEventDTO for
@@ -24,6 +27,7 @@ class InvoiceDetailsService:
             status_code = self.invoice_details_dao.get_status_master_by_id(result.status_id) if result.status_id else None
             vendor_details = self.vendor_dao.get_vendor_by_id(result.vendor_id) if result.vendor_id else None
             vendor_name = vendor_details.vendor_name if vendor_details else None
+            tds = self.tds_dao.get_invoice_tds_by_invoice_id(result.invoice_id)
             return InvoiceDetailsResponse(
                 invoice_id=result.invoice_id,
                 invoice_number=result.invoice_number,
@@ -44,17 +48,26 @@ class InvoiceDetailsService:
                 department_id=result.department_id,
                 purchase_category_id=result.purchase_category_id,
                 status_code=status_code,
+                tds_applicable=tds.tds_applicable if tds else None,
+                tds_amount=tds.tds_amount if tds else None,
+                payable_amount=compute_payable_amount(result.net_amount, tds),
             )
         except Exception as e:
             raise Exception(f"Error retrieving invoice details: {str(e)}")
     def get_all_invoice_details(self):
         try:
             results = self.invoice_details_dao.get_all_invoice_details()
+            # One bulk query for every invoice_tds row on the page, instead of one
+            # query per invoice - see TdsDAO.get_invoice_tds_by_invoice_ids.
+            tds_by_invoice_id = self.tds_dao.get_invoice_tds_by_invoice_ids(
+                [result.invoice_id for result in results]
+            )
             invoice_details_list = []
             for result in results:
                 status_code = self.invoice_details_dao.get_status_master_by_id(result.status_id) if result.status_id else None
                 vendor_details = self.vendor_dao.get_vendor_by_id(result.vendor_id) if result.vendor_id else None
                 vendor_name = vendor_details.vendor_name if vendor_details else None
+                tds = tds_by_invoice_id.get(result.invoice_id)
                 invoice_details_list.append(
                     InvoiceDetailsResponse(
                         invoice_id=result.invoice_id,
@@ -76,6 +89,9 @@ class InvoiceDetailsService:
                         department_id=result.department_id,
                         purchase_category_id=result.purchase_category_id,
                         status_code=status_code,
+                        tds_applicable=tds.tds_applicable if tds else None,
+                        tds_amount=tds.tds_amount if tds else None,
+                        payable_amount=compute_payable_amount(result.net_amount, tds),
                     )
                 )
             return invoice_details_list

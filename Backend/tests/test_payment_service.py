@@ -147,6 +147,23 @@ class _FakePaymentDAO:
         return audit_log
 
 
+@dataclass
+class _InvoiceTds:
+    invoice_id: int
+    tds_applicable: bool
+    tds_amount: Optional[Decimal]
+
+
+class _FakeTdsDAO:
+    store: dict = {}
+
+    def __init__(self, db):
+        self.db = db
+
+    def get_invoice_tds_by_invoice_id(self, invoice_id):
+        return self.store.get(invoice_id)
+
+
 @pytest.fixture(autouse=True)
 def _patch_daos(monkeypatch):
     _FakeVendorDAO.vendors = {1}
@@ -157,9 +174,11 @@ def _patch_daos(monkeypatch):
     _FakePaymentDAO.audits = []
     _FakePaymentDAO.next_payment_id = 100
     _FakePaymentDAO.next_allocation_id = 1000
+    _FakeTdsDAO.store = {}
     monkeypatch.setattr(svc, "VendorDAO", _FakeVendorDAO)
     monkeypatch.setattr(svc, "InvoiceDAO", _FakeInvoiceDAO)
     monkeypatch.setattr(svc, "PaymentDAO", _FakePaymentDAO)
+    monkeypatch.setattr(svc, "TdsDAO", _FakeTdsDAO)
     yield
 
 
@@ -361,6 +380,90 @@ def test_update_status_cleared_marks_paid_when_fully_covered():
     svc.PaymentService(db).update_status(1, "CLEARED", None, None, "user-1")
 
     assert invoice.amount_paid == Decimal("1000.00")
+    assert invoice.status_id == 12  # PAID
+
+
+# ---------------------------------------------------------------------------
+# TDS-aware payable amount - net_amount minus tds_amount when TDS applies,
+# never invoice.net_amount itself. The withheld amount is remitted to the
+# tax authority, never paid to the vendor.
+# ---------------------------------------------------------------------------
+
+def test_create_payment_caps_allocation_at_net_amount_minus_tds():
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _payable_invoice(net=Decimal("177000.00"))
+    _FakeTdsDAO.store[1] = _InvoiceTds(invoice_id=1, tds_applicable=True, tds_amount=Decimal("17700.00"))
+
+    # 159300.00 (net minus TDS) is fine...
+    request = PaymentCreateRequest(
+        vendor_id=1, scheduled_date="2026-08-20", currency_id=1, payment_method="NEFT",
+        allocations=[PaymentAllocationRequest(invoice_id=1, allocated_amount=Decimal("159300.00"))],
+    )
+    payment = svc.PaymentService(db).create_payment(request, "user-1")
+    assert payment.total_amount == Decimal("159300.00")
+
+
+def test_create_payment_rejects_allocation_above_net_amount_minus_tds():
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _payable_invoice(net=Decimal("177000.00"))
+    _FakeTdsDAO.store[1] = _InvoiceTds(invoice_id=1, tds_applicable=True, tds_amount=Decimal("17700.00"))
+
+    # ...but the full 177000.00 (ignoring TDS) is not, even though that's
+    # <= invoice.net_amount - this is exactly the bug being fixed: the old
+    # ceiling only checked against net_amount, letting the withheld amount
+    # be paid out too.
+    request = PaymentCreateRequest(
+        vendor_id=1, scheduled_date="2026-08-20", currency_id=1, payment_method="NEFT",
+        allocations=[PaymentAllocationRequest(invoice_id=1, allocated_amount=Decimal("177000.00"))],
+    )
+    with pytest.raises(ValueError, match="exceeds the remaining payable"):
+        svc.PaymentService(db).create_payment(request, "user-1")
+
+
+def test_create_payment_uses_full_net_amount_when_tds_not_applicable():
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _payable_invoice(net=Decimal("1000.00"))
+    _FakeTdsDAO.store[1] = _InvoiceTds(invoice_id=1, tds_applicable=False, tds_amount=None)
+
+    request = PaymentCreateRequest(
+        vendor_id=1, scheduled_date="2026-08-20", currency_id=1, payment_method="NEFT",
+        allocations=[PaymentAllocationRequest(invoice_id=1, allocated_amount=Decimal("1000.00"))],
+    )
+    payment = svc.PaymentService(db).create_payment(request, "user-1")
+    assert payment.total_amount == Decimal("1000.00")
+
+
+def test_create_payment_uses_full_net_amount_when_no_tds_determination_exists():
+    # No TDS row at all for this invoice (e.g. TDS was never determined) -
+    # falls back to the full net_amount exactly as before this change, so
+    # every pre-existing invoice/test without TDS data is unaffected.
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _payable_invoice(net=Decimal("1000.00"))
+
+    request = PaymentCreateRequest(
+        vendor_id=1, scheduled_date="2026-08-20", currency_id=1, payment_method="NEFT",
+        allocations=[PaymentAllocationRequest(invoice_id=1, allocated_amount=Decimal("1000.00"))],
+    )
+    payment = svc.PaymentService(db).create_payment(request, "user-1")
+    assert payment.total_amount == Decimal("1000.00")
+
+
+def test_update_status_cleared_marks_paid_at_net_amount_minus_tds_not_full_net_amount():
+    db = _FakeDB()
+    invoice = _payable_invoice(invoice_id=1, net=Decimal("177000.00"), paid=Decimal("0"))
+    _FakeInvoiceDAO.store[1] = invoice
+    _FakeTdsDAO.store[1] = _InvoiceTds(invoice_id=1, tds_applicable=True, tds_amount=Decimal("17700.00"))
+    payment = _Payment(
+        payment_id=1, vendor_id=1, status=_Status(21, "SENT"),
+        payment_invoice=[_PaymentInvoice(1, 1, Decimal("159300.00"))],
+    )
+    _FakePaymentDAO.payments[1] = payment
+
+    svc.PaymentService(db).update_status(1, "CLEARED", None, None, "user-1")
+
+    # Paying exactly net_amount minus TDS fully settles the invoice - it must
+    # not stay PARTIALLY_PAID just because amount_paid < invoice.net_amount.
+    assert invoice.amount_paid == Decimal("159300.00")
     assert invoice.status_id == 12  # PAID
 
 

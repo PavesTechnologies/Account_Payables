@@ -48,9 +48,14 @@ class FakeDB:
 class FakeInvoiceDAO:
     def __init__(self, invoices):
         self.invoices = invoices
+        self.audit_logs = []
 
     def get_invoice_by_id_locked(self, invoice_id):
         return self.invoices.get(invoice_id)
+
+    def create_audit_log(self, audit_log):
+        self.audit_logs.append(audit_log)
+        return audit_log
 
 
 class FakeVendorDAO:
@@ -650,3 +655,118 @@ def test_gst_compliance_unexpected_exception_from_search_does_not_propagate(monk
 
     row = service.determine(invoice.invoice_id, user_id="u")  # must not raise
     assert row.gstin_status == GSTIN_STATUS_CHECK_UNAVAILABLE
+
+
+# =========================================================
+# 9) entity_type derivation from PAN (4th character) - only at
+#    vendor_tds_profile CREATION time, never overwriting an existing row
+# =========================================================
+
+def test_entity_type_derived_from_pan_on_new_profile():
+    # _vendor()'s default PAN AAJCA9880A has 'C' as its 4th character -> COMPANY.
+    service, tds_dao, invoice, vendor = _default_setup(gross=Decimal("100000.00"))
+    service.determine(invoice.invoice_id, user_id="u")
+
+    profile = tds_dao.get_vendor_tds_profile(vendor.vendor_id)
+    assert profile.entity_type == "COMPANY"
+
+
+def test_entity_type_derivation_for_individual_pan():
+    vendor = _vendor(pan_number="ABCPD1234E")  # 4th char 'P' -> INDIVIDUAL
+    service, tds_dao, invoice, _ = _default_setup(vendor=vendor, gross=Decimal("100000.00"))
+    service.determine(invoice.invoice_id, user_id="u")
+
+    profile = tds_dao.get_vendor_tds_profile(vendor.vendor_id)
+    assert profile.entity_type == "INDIVIDUAL"
+
+
+def test_entity_type_stays_none_when_pan_missing():
+    vendor = _vendor(pan_number=None)
+    service, tds_dao, invoice, _ = _default_setup(vendor=vendor, gross=Decimal("100000.00"))
+    service.determine(invoice.invoice_id, user_id="u")
+
+    profile = tds_dao.get_vendor_tds_profile(vendor.vendor_id)
+    assert profile.entity_type is None
+    assert profile.pan_status == "NOT_AVAILABLE"
+
+
+def test_entity_type_never_guessed_for_malformed_pan():
+    vendor = _vendor(pan_number="NOT-A-REAL-PAN")
+    service, tds_dao, invoice, _ = _default_setup(vendor=vendor, gross=Decimal("100000.00"))
+    service.determine(invoice.invoice_id, user_id="u")
+
+    profile = tds_dao.get_vendor_tds_profile(vendor.vendor_id)
+    assert profile.entity_type is None
+
+
+def test_existing_profile_entity_type_is_never_overwritten():
+    # A profile that already exists (e.g. hand-corrected by an admin, or just
+    # created with a different value than the PAN would derive) must never be
+    # silently patched by a later determine() call.
+    service, tds_dao, invoice, vendor = _default_setup(gross=Decimal("100000.00"))
+    existing_profile = VendorTdsProfile(
+        vendor_id=vendor.vendor_id, residency_type="RESIDENT", pan_status="VALID",
+        entity_type="TRUST",  # deliberately different from what the PAN would derive (COMPANY)
+    )
+    tds_dao.profiles[vendor.vendor_id] = existing_profile
+
+    service.determine(invoice.invoice_id, user_id="u")
+
+    assert tds_dao.get_vendor_tds_profile(vendor.vendor_id).entity_type == "TRUST"
+
+
+# =========================================================
+# 10) Audit trail - determine()/verify() must show up in the invoice's
+#     shared Activity timeline (ap.audit_log), same as every other
+#     invoice-lifecycle action (send-for-approval, approve, reject, ...)
+# =========================================================
+
+def test_determine_writes_an_audit_log_entry():
+    service, _, invoice, _ = _default_setup(gross=Decimal("100000.00"))
+    row = service.determine(invoice.invoice_id, user_id="5100007")
+
+    logs = service.invoice_dao.audit_logs
+    assert len(logs) == 1
+    entry = logs[0]
+    assert entry.table_name == "invoice"
+    assert entry.record_id == invoice.invoice_id
+    assert entry.action == "INVOICE_TDS_DETERMINED"
+    assert entry.changed_by == "5100007"
+    assert entry.new_values["tds_applicable"] is True
+    assert entry.new_values["tds_amount"] == str(row.tds_amount)
+    assert entry.new_values["payment_nature_code"] == "PROFESSIONAL_SERVICE"
+
+
+def test_redetermination_writes_another_audit_log_entry():
+    service, _, invoice, _ = _default_setup(gross=Decimal("100000.00"))
+    service.determine(invoice.invoice_id, user_id="u")
+    service.determine(invoice.invoice_id, user_id="u", payment_nature_code="PROFESSIONAL_SERVICE")
+
+    assert len(service.invoice_dao.audit_logs) == 2
+    assert all(e.action == "INVOICE_TDS_DETERMINED" for e in service.invoice_dao.audit_logs)
+
+
+def test_verify_writes_an_audit_log_entry():
+    service, _, invoice, _ = _default_setup(gross=Decimal("100000.00"))
+    service.determine(invoice.invoice_id, user_id="u")
+    service.verify(invoice.invoice_id, user_id="finance-1", remarks="Looks correct")
+
+    logs = service.invoice_dao.audit_logs
+    assert len(logs) == 2
+    verify_entry = logs[-1]
+    assert verify_entry.action == "INVOICE_TDS_VERIFIED"
+    assert verify_entry.changed_by == "finance-1"
+    assert verify_entry.new_values["remarks"] == "Looks correct"
+
+
+def test_not_applicable_determination_still_writes_audit_log():
+    invoice = _invoice(purchase_category_id=None)
+    vendor = _vendor()
+    service, _ = _make_service(invoices=[invoice], vendors=[vendor])
+
+    service.determine(invoice.invoice_id, user_id="u")
+
+    logs = service.invoice_dao.audit_logs
+    assert len(logs) == 1
+    assert logs[0].action == "INVOICE_TDS_DETERMINED"
+    assert logs[0].new_values["tds_applicable"] is False
