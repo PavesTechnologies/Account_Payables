@@ -515,3 +515,107 @@ def test_regex_derived_field_has_null_bounding_box(monkeypatch):
 
     assert result.vendor.pan == "AABCU9603R"
     assert result.extraction.field_details["vendor_pan"]["bounding_box"] is None
+
+
+# ---------------------------------------------------------------------------
+# reconcile_gstins - a Textract query can answer BUYER_GSTIN/SELLER_GSTIN
+# with the same single GSTIN a single-GSTIN document actually has (real
+# invoices never have vendor and buyer sharing one registration); the
+# full-text anchored classifier is the fallback used to correct or clear it.
+# ---------------------------------------------------------------------------
+
+def _reconcile(extracted, full_text):
+    confidence: Dict[str, float] = {}
+    sources: Dict[str, str] = {}
+    field_details: Dict[str, Any] = {}
+    fields.reconcile_gstins(extracted, confidence, sources, field_details, full_text)
+    return extracted
+
+
+def test_reconcile_gstins_clears_buyer_when_no_distinct_candidate_anywhere():
+    # No "GSTIN" label appears anywhere near the buyer's name in the full
+    # text at all - classify_party_gstins finds nothing for buyer_gstin.
+    extracted = {
+        "vendor_gstin": "07AAJCA9880A1ZL",
+        "buyer_gstin": "07AAJCA9880A1ZL",
+        "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+        "buyer_name": "Paves Global Infotech Pvt Ltd",
+    }
+    full_text = (
+        "AMAZON WEB SERVICES INDIA PRIVATE LIMITED\n"
+        "GSTIN: 07AAJCA9880A1ZL\n"
+        "Bill To: Paves Global Infotech Pvt Ltd\n"
+    )
+
+    result = _reconcile(extracted, full_text)
+
+    assert "buyer_gstin" not in result
+    assert result["vendor_gstin"] == "07AAJCA9880A1ZL"
+
+
+def test_reconcile_gstins_clears_buyer_when_anchored_also_resolves_to_vendor_gstin():
+    # Regression: the single "GSTIN:" label sits textually closer to the
+    # buyer's name than the vendor's in the full text (e.g. Textract's
+    # linearized reading order doesn't match visual layout) - so
+    # classify_party_gstins assigns the one GSTIN to "buyer_gstin" instead
+    # of "vendor_gstin". The old `elif "buyer_gstin" not in anchored` never
+    # caught this, since "buyer_gstin" *is* a key in anchored - just with
+    # the same wrong value - and buyer_gstin was left equal to vendor_gstin.
+    extracted = {
+        "vendor_gstin": "07AAJCA9880A1ZL",
+        "buyer_gstin": "07AAJCA9880A1ZL",
+        "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+        "buyer_name": "Paves Global Infotech Pvt Ltd",
+    }
+    # buyer_name appears before the GSTIN label; vendor_name is absent from
+    # this full_text entirely, so _find_anchor(vendor_name) returns -1
+    # (infinitely far) and the GSTIN is anchored to the buyer instead.
+    full_text = (
+        "Bill To: Paves Global Infotech Pvt Ltd\n"
+        "GSTIN: 07AAJCA9880A1ZL\n"
+    )
+
+    result = _reconcile(extracted, full_text)
+
+    assert "buyer_gstin" not in result
+    assert result["vendor_gstin"] == "07AAJCA9880A1ZL"
+
+
+def test_reconcile_gstins_uses_anchored_buyer_when_genuinely_distinct():
+    extracted = {
+        "vendor_gstin": "07AAJCA9880A1ZL",
+        "buyer_gstin": "07AAJCA9880A1ZL",  # query mix-up, same as vendor's
+        "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+        "buyer_name": "Paves Global Infotech Pvt Ltd",
+    }
+    # Each GSTIN sits immediately next to its own party's name/heading, with
+    # enough separation between the two blocks that the anchored classifier's
+    # character-distance heuristic resolves each to the right party - unlike
+    # the short, tightly-packed layout in the regression test above, where
+    # both GSTINs end up textually closer to the buyer heading than to the
+    # distant vendor heading regardless of which party they actually belong to.
+    full_text = (
+        "AMAZON WEB SERVICES INDIA PRIVATE LIMITED GSTIN: 07AAJCA9880A1ZL\n"
+        "International Trade Tower, Nehru Place, New Delhi\n"
+        "Invoice Number: AIN2627000970001\n"
+        "Bill To: Paves Global Infotech Pvt Ltd GSTIN: 36AABCP1234Q1ZS\n"
+        "Hyderabad, Telangana\n"
+    )
+
+    result = _reconcile(extracted, full_text)
+
+    assert result["buyer_gstin"] == "36AABCP1234Q1ZS"
+    assert result["vendor_gstin"] == "07AAJCA9880A1ZL"
+
+
+def test_reconcile_gstins_no_op_when_vendor_and_buyer_already_differ():
+    extracted = {
+        "vendor_gstin": "07AAJCA9880A1ZL",
+        "buyer_gstin": "36AABCP1234Q1ZS",
+    }
+    full_text = "irrelevant"
+
+    result = _reconcile(extracted, full_text)
+
+    assert result["vendor_gstin"] == "07AAJCA9880A1ZL"
+    assert result["buyer_gstin"] == "36AABCP1234Q1ZS"

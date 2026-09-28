@@ -1,7 +1,7 @@
 # Backend/Data_Access_Layer/dao/tds_dao.py
 import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import func, or_
 
@@ -109,6 +109,18 @@ class TdsDAO:
             .filter(InvoiceTds.invoice_id == invoice_id)
             .first()
         )
+
+    def get_invoice_tds_by_invoice_ids(self, invoice_ids: List[int]) -> Dict[int, InvoiceTds]:
+        """Bulk lookup for list views (e.g. InvoiceDetailsService.get_all_invoice_details) -
+        one query for every invoice on the page instead of one query per invoice."""
+        if not invoice_ids:
+            return {}
+        rows = (
+            self.db.query(InvoiceTds)
+            .filter(InvoiceTds.invoice_id.in_(invoice_ids))
+            .all()
+        )
+        return {row.invoice_id: row for row in rows}
 
     def get_invoice_tds_by_invoice_id_locked(self, invoice_id: int) -> Optional[InvoiceTds]:
         return (

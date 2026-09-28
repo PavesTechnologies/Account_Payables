@@ -32,6 +32,15 @@ class InvoiceDetailsResponse(BaseModel):
     department_id: int | None
     purchase_category_id: int | None
     status_code: str | None
+    # TDS-adjusted figures - never derived by mutating net_amount (that stays the
+    # invoice's own accounting face value: gross - discount + tax). tds_amount is
+    # the withheld amount when applicable; payable_amount is what's actually owed
+    # to the vendor (net_amount - tds_amount when applicable, else net_amount
+    # unchanged) - same figure PaymentService._net_payable() enforces at payment
+    # time, exposed here so list/detail views don't have to recompute it.
+    tds_applicable: bool | None = None
+    tds_amount: Decimal | None = None
+    payable_amount: Decimal
 
 
 class InvoiceHistoryEventDTO(BaseModel):

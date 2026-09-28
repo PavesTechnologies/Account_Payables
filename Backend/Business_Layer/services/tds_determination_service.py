@@ -32,9 +32,11 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from Backend.Business_Layer.utils.vendor_auto_onboarding import GST_ACTIVE_STATUS, call_gst_search
+from Backend.Business_Layer.utils.vendor_validator import PAN_REGEX
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
 from Backend.Data_Access_Layer.dao.vendor_dao import VendorDAO
+from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.tds import InvoiceTds, TdsPaymentNature, VendorTdsProfile
 
 DETERMINATION_STATUS_PENDING = "PENDING"
@@ -59,6 +61,25 @@ THRESHOLD_TYPE_AGGREGATE_PERIOD = "AGGREGATE_PERIOD"
 GSTIN_STATUS_NOT_ON_FILE = "NOT_ON_FILE"
 GSTIN_STATUS_CHECK_UNAVAILABLE = "CHECK_UNAVAILABLE"
 GST_TAX_REGISTRATION_TYPES = ("GST", "GSTIN")
+
+# The 4th character of a valid Indian PAN deterministically encodes the
+# holder's entity type (Income Tax Dept spec) - same fact vendor_validator.py
+# already checks (PAN_ENTITY_TYPE_CODES) when validating a PAN's format, just
+# not previously turned into a stored value anywhere. Reused here, not
+# duplicated, so a malformed/dummy PAN is rejected the exact same way in both
+# places.
+_ENTITY_TYPE_BY_PAN_CODE = {
+    "P": "INDIVIDUAL",
+    "C": "COMPANY",
+    "H": "HUF",
+    "F": "FIRM",
+    "A": "AOP",
+    "T": "TRUST",
+    "B": "BOI",
+    "L": "LOCAL_AUTHORITY",
+    "J": "ARTIFICIAL_JURIDICAL_PERSON",
+    "G": "GOVERNMENT",
+}
 
 _CENTS = Decimal("0.01")
 
@@ -89,6 +110,18 @@ def _primary_gstin(vendor) -> Optional[str]:
     return None
 
 
+def compute_payable_amount(net_amount: Decimal, tds: Optional[InvoiceTds]) -> Decimal:
+    """What's actually owed to the vendor: net_amount minus TDS when applicable,
+    otherwise net_amount unchanged. Shared by PaymentService (enforces this as the
+    payment-allocation ceiling / PAID threshold) and InvoiceDetailsService (surfaces
+    it for display) so the figure is computed identically everywhere rather than
+    duplicated. Deliberately never mutates net_amount itself - see either caller's
+    module docstring for why."""
+    if tds is not None and tds.tds_applicable and tds.tds_amount:
+        return net_amount - tds.tds_amount
+    return net_amount
+
+
 def _extract_gst_status(gst_response: Optional[dict]) -> Optional[str]:
     """Pull just the registration status out of the raw Sandbox response - unlike
     vendor_auto_onboarding.py's extract_vendor_data_from_gst_response, this does
@@ -101,6 +134,19 @@ def _extract_gst_status(gst_response: Optional[dict]) -> Optional[str]:
     data = outer.get("data") or {}
     status = (data.get("sts") or "").strip()
     return status or None
+
+
+def _entity_type_from_pan(pan_number: Optional[str]) -> Optional[str]:
+    """Derives entity_type from the PAN's own 4th character - no API call,
+    no new field to collect. Returns None (never guesses) for a missing or
+    malformed PAN, or a code PAN_REGEX/PAN_ENTITY_TYPE_CODES wouldn't
+    recognize - a bad guess here is worse than leaving it unset."""
+    if not pan_number:
+        return None
+    normalized = pan_number.strip().upper()
+    if not PAN_REGEX.match(normalized):
+        return None
+    return _ENTITY_TYPE_BY_PAN_CODE.get(normalized[3])
 
 
 def _taxable_base(invoice) -> Decimal:
@@ -172,6 +218,20 @@ class TDSDeterminationService:
                 result["determination_reason"] = (result["determination_reason"] + " " + gstin_note).strip()
 
             row = self._save(invoice_id, existing, result, user_id)
+
+            self._record_audit(
+                invoice_id, "INVOICE_TDS_DETERMINED", user_id,
+                {
+                    "tds_applicable": row.tds_applicable,
+                    "payment_nature_code": payment_nature.code if payment_nature else None,
+                    "tds_rule_id": row.tds_rule_id,
+                    "tds_rate": str(row.tds_rate) if row.tds_rate is not None else None,
+                    "tds_amount": str(row.tds_amount) if row.tds_amount is not None else None,
+                    "gstin_status": row.gstin_status,
+                    "determination_reason": row.determination_reason,
+                },
+            )
+
             self.db.commit()
             self.db.refresh(row)
             return row
@@ -206,6 +266,15 @@ class TDSDeterminationService:
             if remarks:
                 row.remarks = remarks
 
+            self._record_audit(
+                invoice_id, "INVOICE_TDS_VERIFIED", user_id,
+                {
+                    "tds_applicable": row.tds_applicable,
+                    "tds_amount": str(row.tds_amount) if row.tds_amount is not None else None,
+                    "remarks": remarks,
+                },
+            )
+
             self.db.commit()
             self.db.refresh(row)
             return row
@@ -232,12 +301,17 @@ class TDSDeterminationService:
         if profile is not None:
             return profile
         # No profile has ever been created for this vendor - default it from the
-        # one PAN signal that already exists (Vendor.pan_number), same heuristic
-        # used to backfill the initial vendor_tds_profile rows for this project.
+        # PAN signals that already exist on Vendor.pan_number (presence for
+        # pan_status, same heuristic used to backfill the initial
+        # vendor_tds_profile rows for this project; the 4th character for
+        # entity_type - see _entity_type_from_pan). Only happens at profile
+        # CREATION time, never on an existing row, so a value someone has
+        # since corrected by hand is never silently overwritten by a guess.
         profile = VendorTdsProfile(
             vendor_id=vendor.vendor_id,
             residency_type="RESIDENT",
             pan_status=PAN_STATUS_VALID if vendor.pan_number else PAN_STATUS_NOT_AVAILABLE,
+            entity_type=_entity_type_from_pan(vendor.pan_number),
             lower_deduction_available=False,
             tds_exemption_flag=False,
         )
@@ -440,3 +514,20 @@ class TDSDeterminationService:
         row.determined_at = now
         row.determined_by = str(user_id) if user_id is not None else None
         return row
+
+    def _record_audit(self, invoice_id: int, action: str, user_id, values: dict) -> None:
+        # Same shared ap.audit_log table every other invoice-lifecycle event uses
+        # (table_name="invoice", record_id=invoice_id) - matches
+        # InvoiceApprovalService._record_audit exactly, so TDS determine/verify
+        # events show up in the invoice's Activity timeline (InvoiceDAO.
+        # get_audit_log_for_record) alongside OCR review/send-for-approval/
+        # approve/reject, instead of being invisible there.
+        self.invoice_dao.create_audit_log(
+            AuditLog(
+                table_name="invoice",
+                record_id=invoice_id,
+                action=action,
+                changed_by=str(user_id) if user_id is not None else None,
+                new_values={k: v for k, v in values.items() if v is not None} or None,
+            )
+        )

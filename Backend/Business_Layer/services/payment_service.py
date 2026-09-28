@@ -7,6 +7,12 @@ or SCHEDULED/SENT -> FAILED. invoice.amount_paid is only incremented when
 a payment reaches CLEARED — SCHEDULED/SENT allocations are "reserved"
 (see PaymentDAO.get_pending_committed_amount_for_invoice) but don't move
 money yet, so a FAILED payment never has to be unwound.
+
+The amount actually payable to a vendor is invoice.net_amount minus TDS
+when applicable (see _net_payable) — the withheld amount is remitted to
+the tax authority, never paid to the vendor, so it's excluded both from
+the allocation ceiling in create_payment and from the amount_paid >= X
+check that flips an invoice to PAID in update_status.
 """
 from __future__ import annotations
 
@@ -15,8 +21,10 @@ from decimal import Decimal
 from typing import List, Optional
 
 from Backend.API_Layer.interface.payment_interface import PaymentCreateRequest
+from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.payment_dao import PaymentDAO
+from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
 from Backend.Data_Access_Layer.dao.vendor_dao import VendorDAO
 from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.payment import Payment, PaymentInvoice
@@ -54,6 +62,15 @@ class PaymentService:
         self.payment_dao = PaymentDAO(db)
         self.invoice_dao = InvoiceDAO(db)
         self.vendor_dao = VendorDAO(db)
+        self.tds_dao = TdsDAO(db)
+
+    def _net_payable(self, invoice) -> Decimal:
+        """What the vendor is actually owed for this invoice - see
+        tds_determination_service.compute_payable_amount. Regardless of whether
+        Finance has clicked Verify yet (verification confirms the calculated
+        numbers; it doesn't gate whether a determined deduction applies)."""
+        tds = self.tds_dao.get_invoice_tds_by_invoice_id(invoice.invoice_id)
+        return compute_payable_amount(invoice.net_amount, tds)
 
     def create_payment(self, request: PaymentCreateRequest, user_id: str) -> Payment:
         try:
@@ -85,7 +102,7 @@ class PaymentService:
                 pending_committed = self.payment_dao.get_pending_committed_amount_for_invoice(
                     allocation.invoice_id
                 )
-                remaining = invoice.net_amount - invoice.amount_paid - pending_committed
+                remaining = self._net_payable(invoice) - invoice.amount_paid - pending_committed
                 if allocation.allocated_amount <= 0:
                     raise ValueError("allocated_amount must be greater than zero")
                 if allocation.allocated_amount > remaining:
@@ -251,7 +268,7 @@ class PaymentService:
                     invoice_status_before = invoice.status.status_code if invoice.status else None
                     invoice.amount_paid = invoice.amount_paid + allocation.allocated_amount
 
-                    if invoice.amount_paid >= invoice.net_amount:
+                    if invoice.amount_paid >= self._net_payable(invoice):
                         new_status_code = STATUS_CODE_PAID
                     else:
                         new_status_code = STATUS_CODE_PARTIALLY_PAID
