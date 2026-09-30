@@ -19,6 +19,19 @@ def _normalize(values) -> set[str]:
     }
 
 
+def has_permissions(user, required_permissions: list[str], require_all: bool = False) -> bool:
+    """Same check permission_based_access enforces, for decisions a route can
+    only make after inspecting the request (e.g. an import that needs an extra
+    permission only when it would create master data)."""
+    if not user:
+        return False
+    normalized_user_permissions = _normalize(user.get("permissions", []))
+    normalized_required_permissions = _normalize(required_permissions)
+    if require_all:
+        return normalized_required_permissions.issubset(normalized_user_permissions)
+    return bool(normalized_user_permissions.intersection(normalized_required_permissions))
+
+
 def permission_based_access(required_permissions: list[str], require_all: bool = False) -> Callable:
     """
     FastAPI dependency for permission-based access control, driven entirely
@@ -44,17 +57,7 @@ def permission_based_access(required_permissions: list[str], require_all: bool =
                 detail="Authentication required",
             )
 
-        normalized_user_permissions = _normalize(user.get("permissions", []))
-        normalized_required_permissions = _normalize(required_permissions)
-
-        if require_all:
-            is_authorized = normalized_required_permissions.issubset(normalized_user_permissions)
-        else:
-            is_authorized = bool(
-                normalized_user_permissions.intersection(normalized_required_permissions)
-            )
-
-        if not is_authorized:
+        if not has_permissions(user, required_permissions, require_all):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to access this resource",

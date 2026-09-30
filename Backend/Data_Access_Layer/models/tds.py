@@ -38,6 +38,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from Backend.Data_Access_Layer.models.base import Base
@@ -73,6 +74,31 @@ class TdsPaymentNature(Base):
         "PurchaseCategoryTdsMapping", back_populates="tds_payment_nature"
     )
     invoice_tds: Mapped[list["InvoiceTds"]] = relationship("InvoiceTds", back_populates="payment_nature")
+
+
+class TdsDeductor(Base):
+    """Deductor (payer) category a TDS rule variant applies to - the TDS
+    Configuration UI's "Deductor" master. Referenced by TaxRule.tds_deductor_id
+    rather than repeating free text on every rule. Descriptive only: the
+    deductor on an invoice is always this organisation, so it is not a
+    determination input (see TDSDeterminationService). Created by
+    migration_tds_configuration.sql (or create_all on a fresh environment)."""
+
+    __tablename__ = "tds_deductor"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="tds_deductor_pkey"),
+        UniqueConstraint("code", name="tds_deductor_code_key"),
+        Index("idx_tds_deductor_active", "is_active"),
+        {"schema": "ap"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class PurchaseCategoryTdsMapping(Base):
@@ -183,11 +209,18 @@ class InvoiceTds(Base):
     tds_rate: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(7, 4))
     tds_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
     threshold_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
+    threshold_type: Mapped[Optional[str]] = mapped_column(String(20))
     prior_period_aggregate: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2), server_default=text("0"))
     current_transaction_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
     aggregate_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric(18, 2))
     pan_status: Mapped[Optional[str]] = mapped_column(String(30))
     entity_type: Mapped[Optional[str]] = mapped_column(String(50))
+    residency_type: Mapped[Optional[str]] = mapped_column(String(30))
+    # The rule variant exactly as applied (rule_code, sections, deductor, rate
+    # condition, rate row) - keeps the snapshot self-describing after the live
+    # tax_rule is edited from TDS Configuration. NULL on rows determined before
+    # migration_tds_configuration.sql.
+    rule_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
     # GST registration compliance signal (Sandbox GSTIN search) - a warning
     # surfaced to AP/Finance alongside the determination, never an input to
     # tds_applicable/tds_rate/tds_amount (see TDSDeterminationService).

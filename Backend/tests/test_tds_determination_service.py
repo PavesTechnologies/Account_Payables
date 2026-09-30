@@ -96,14 +96,14 @@ class FakeTdsDAO:
         return profile
 
     # rule engine
-    def get_active_tds_rule_for_payment_nature(self, payment_nature_code, as_of_date):
+    def list_active_tds_rules_for_payment_nature(self, payment_nature_code, as_of_date):
         candidates = [
             r for r in self.rules.get(payment_nature_code, [])
             if r.is_active and r.effective_from <= as_of_date
             and (r.effective_to is None or r.effective_to >= as_of_date)
         ]
-        candidates.sort(key=lambda r: r.priority)
-        return candidates[0] if candidates else None
+        candidates.sort(key=lambda r: (r.priority, r.tax_rule_id))
+        return candidates
 
     def get_active_tax_rate_rule_for_tax_rule(self, tax_rule_id, as_of_date):
         candidates = [

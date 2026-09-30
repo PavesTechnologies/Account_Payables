@@ -21,6 +21,7 @@ from typing import List, Optional
 from Backend.Data_Access_Layer.dao.approval_policy_dao import ApprovalPolicyDAO
 from Backend.Data_Access_Layer.dao.invoice_approval_dao import InvoiceApprovalDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
+from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
 from Backend.Data_Access_Layer.models.approval import (
     InvoiceApproval,
     InvoiceApprovalStep,
@@ -29,6 +30,7 @@ from Backend.Data_Access_Layer.models.approval import (
 from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Business_Layer.services.approval_policy_service import ApprovalPolicyService
 from Backend.Business_Layer.services.approver_resolver_service import ApproverResolverService
+from Backend.Business_Layer.services.tds_determination_service import require_tds_ready_for_approval
 
 STATUS_CODE_OCR_REVIEWED = "OCR_REVIEWED"
 STATUS_CODE_PENDING_APPROVAL = "PENDING_APPROVAL"
@@ -45,6 +47,7 @@ class InvoiceApprovalService:
         self.policy_dao = ApprovalPolicyDAO(db)
         self.policy_service = ApprovalPolicyService(db)
         self.resolver = ApproverResolverService(db)
+        self.tds_dao = TdsDAO(db)
 
     # =========================================================
     # Send for approval
@@ -72,6 +75,8 @@ class InvoiceApprovalService:
                 "Invoice is missing department/purchase category - required before it can be "
                 "sent for approval"
             )
+
+        require_tds_ready_for_approval(invoice_id, self.tds_dao.get_invoice_tds_by_invoice_id(invoice_id))
 
         policy = self.policy_service.match_policy(
             invoice.department_id, invoice.purchase_category_id, invoice.net_amount

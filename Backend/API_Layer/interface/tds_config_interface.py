@@ -1,0 +1,203 @@
+import datetime
+import decimal
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+
+# =========================================================
+# Payment nature / deductor (same code-name master shape)
+# =========================================================
+
+class TdsMasterCreateRequest(BaseModel):
+    code: str = Field(..., max_length=50)
+    name: str = Field(..., max_length=150)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None  # defaults to active
+
+
+class TdsMasterUpdateRequest(BaseModel):
+    # Omitted fields are left unchanged. code can only change while the
+    # record is not referenced anywhere.
+    code: Optional[str] = Field(None, max_length=50)
+    name: Optional[str] = Field(None, max_length=150)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TdsStatusRequest(BaseModel):
+    is_active: bool
+
+
+class TdsMasterDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    name: str
+    description: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+    @computed_field
+    @property
+    def status(self) -> str:
+        return "ACTIVE" if self.is_active else "INACTIVE"
+
+
+class TdsDeleteResponse(BaseModel):
+    id: int
+    message: str
+
+
+# =========================================================
+# TDS rules
+# =========================================================
+
+class TdsRuleRequest(BaseModel):
+    """Create/update payload - the TDS Configuration rule form. Nature of
+    Payment and Deductor may be given by id or by code."""
+
+    code: str = Field(..., max_length=100)
+    old_section: str = Field(..., max_length=20)
+    new_section: Optional[str] = Field(None, max_length=100)
+    payment_nature_id: Optional[int] = None
+    payment_nature_code: Optional[str] = None
+    deductor_id: Optional[int] = None
+    deductor_code: Optional[str] = None
+    rate: decimal.Decimal
+    threshold_amount: Optional[decimal.Decimal] = None
+    # "Single Transaction" / "Financial Year (Aggregate)" or PER_TRANSACTION / AGGREGATE_PERIOD
+    threshold_period: Optional[str] = None
+    # e.g. "ENTITY_TYPE IN INDIVIDUAL,HUF"; blank = applies to every vendor
+    rate_condition: Optional[str] = None
+    effective_from: datetime.date
+    effective_to: Optional[datetime.date] = None
+    rule_name: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    legal_reference: Optional[str] = Field(None, max_length=50)
+    priority: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None  # create only; use PATCH .../status afterwards
+
+
+class TdsRefDTO(BaseModel):
+    id: Optional[int] = None
+    code: Optional[str] = None
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TdsRuleConditionDTO(BaseModel):
+    id: Optional[int] = None
+    condition_type: str
+    operator: str
+    condition_value: str
+    logical_group: Optional[int] = None
+    sequence_no: Optional[int] = None
+
+
+class TdsRateDTO(BaseModel):
+    id: Optional[int] = None
+    rate_percent: decimal.Decimal
+    calculation_type: str
+    fixed_amount: Optional[decimal.Decimal] = None
+    effective_from: datetime.date
+    effective_to: Optional[datetime.date] = None
+    is_active: bool
+
+
+class TdsRuleDTO(BaseModel):
+    id: int
+    code: str
+    rule_name: str
+    description: Optional[str] = None
+    old_section: Optional[str] = None
+    new_section: Optional[str] = None
+    legal_reference: Optional[str] = None
+    payment_nature: Optional[TdsRefDTO] = None
+    deductor: Optional[TdsRefDTO] = None
+    rate_percent: Optional[decimal.Decimal] = None
+    calculation_type: Optional[str] = None
+    current_rate_rule_id: Optional[int] = None
+    threshold_amount: Optional[decimal.Decimal] = None
+    threshold_period: Optional[str] = None
+    threshold_period_label: Optional[str] = None
+    rate_condition: Optional[str] = None
+    conditions: List[TdsRuleConditionDTO] = []
+    rates: List[TdsRateDTO] = []
+    effective_from: datetime.date
+    effective_to: Optional[datetime.date] = None
+    priority: Optional[int] = None
+    is_active: bool
+    status: str
+    created_by: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
+# =========================================================
+# Import
+# =========================================================
+
+class TdsImportErrorDTO(BaseModel):
+    row: Optional[int] = None
+    field: str
+    message: str
+
+
+class TdsImportRowDTO(BaseModel):
+    row: int
+    code: Optional[str] = None
+    status: str  # NEW / UPDATED / UNCHANGED / ERROR
+    existing_rule_id: Optional[int] = None
+    changed_fields: List[str] = []
+
+
+class TdsImportNewMasterDTO(BaseModel):
+    name: str
+    code: str  # generated by the backend
+    row_numbers: List[int]
+
+
+class TdsImportReportDTO(BaseModel):
+    valid: bool
+    imported: bool
+    total_rows: int
+    valid_rows: int
+    error_rows: int
+    new_rows: int
+    updated_rows: int
+    unchanged_rows: int
+    errors: List[TdsImportErrorDTO] = []
+    rows: List[TdsImportRowDTO] = []
+    import_batch_id: Optional[str] = None
+    # validate: would be created; successful import: were created
+    new_payment_natures: List[TdsImportNewMasterDTO] = []
+    new_deductors: List[TdsImportNewMasterDTO] = []
+    new_payment_nature_count: int = 0
+    new_deductor_count: int = 0
+
+
+# =========================================================
+# Metadata (form dropdowns / import template)
+# =========================================================
+
+class TdsOptionDTO(BaseModel):
+    value: str
+    label: str
+
+
+class TdsConditionTypeDTO(BaseModel):
+    condition_type: str
+    operators: List[str]
+    values: List[str]
+
+
+class TdsConfigMetadataDTO(BaseModel):
+    threshold_periods: List[TdsOptionDTO]
+    rate_condition_types: List[TdsConditionTypeDTO]
+    rate_condition_example: str
+    import_columns: List[str]
+    import_file_types: List[str]

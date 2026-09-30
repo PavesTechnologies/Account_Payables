@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from sqlalchemy import func, or_
+from sqlalchemy.orm import selectinload
 
 from Backend.Data_Access_Layer.models.invoice import Invoice
 from Backend.Data_Access_Layer.models.master import TaxRateRule, TaxRule, TaxRuleCondition
@@ -69,10 +70,15 @@ class TdsDAO:
     # TaxRule -> TaxRuleCondition -> TaxRateRule, effective-dated, priority-ordered)
     # =====================================================
 
-    def get_active_tds_rule_for_payment_nature(self, payment_nature_code: str, as_of_date) -> Optional[TaxRule]:
+    def list_active_tds_rules_for_payment_nature(self, payment_nature_code: str, as_of_date) -> List[TaxRule]:
+        """Every active, in-effect TDS rule VARIANT for a payment nature (one
+        legal section can have several - e.g. 194C Individual/HUF vs. other),
+        with conditions eager-loaded so the service can evaluate each
+        variant's rate condition (see tds_rate_condition.select_rule_variant)."""
         return (
             self.db.query(TaxRule)
             .join(TaxRuleCondition, TaxRuleCondition.tax_rule_id == TaxRule.tax_rule_id)
+            .options(selectinload(TaxRule.conditions), selectinload(TaxRule.tds_deductor))
             .filter(
                 TaxRule.rule_category == TDS_RULE_CATEGORY,
                 TaxRule.is_active.is_(True),
@@ -82,8 +88,9 @@ class TdsDAO:
                 TaxRuleCondition.operator == "EQUALS",
                 TaxRuleCondition.condition_value == payment_nature_code,
             )
-            .order_by(TaxRule.priority.asc())
-            .first()
+            .order_by(TaxRule.priority.asc(), TaxRule.tax_rule_id.asc())
+            .distinct()
+            .all()
         )
 
     def get_active_tax_rate_rule_for_tax_rule(self, tax_rule_id: int, as_of_date) -> Optional[TaxRateRule]:

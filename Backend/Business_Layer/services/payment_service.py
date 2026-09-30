@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from Backend.API_Layer.interface.payment_interface import PaymentCreateRequest
-from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount
+from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount, require_tds_verified
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.payment_dao import PaymentDAO
 from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
@@ -194,6 +194,8 @@ class PaymentService:
                 raise ValueError(
                     f"Invoice {invoice_id} cannot be marked ready for payment while in status {current_code}"
                 )
+
+            require_tds_verified(invoice_id, self.tds_dao.get_invoice_tds_by_invoice_id(invoice_id))
 
             ready_status = self.invoice_dao.get_status_by_code(STATUS_CODE_READY_FOR_PAYMENT)
             if ready_status is None:
