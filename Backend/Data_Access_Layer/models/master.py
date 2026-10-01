@@ -3,7 +3,7 @@ from typing import Optional, TYPE_CHECKING
 import datetime
 import decimal
 
-from sqlalchemy import Boolean, CHAR, CheckConstraint, Date, DateTime, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CHAR, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Numeric, PrimaryKeyConstraint, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from Backend.Data_Access_Layer.models.base import Base
 
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder
     from Backend.Data_Access_Layer.models.purchase import PurchaseRequisition, Quotation
     from Backend.Data_Access_Layer.models.vendor import Vendor, VendorAddress, VendorTax
+    from Backend.Data_Access_Layer.models.tds import TdsDeductor
 
 
 
@@ -278,6 +279,17 @@ class TaxRule(Base):
     # AGGREGATE_PERIOD: compare the vendor+payment-nature cumulative financial-year total
     # (see TDSDeterminationService._financial_year_bounds) against threshold_amount.
     threshold_type: Mapped[Optional[str]] = mapped_column(String(20))
+    # TDS Configuration UI "Old Section"/"New Section" (e.g. 194C under the
+    # 1961 Act / its number under the replacement Act) and "Deductor" - see
+    # migration_tds_configuration.sql. rule_code is the per-VARIANT business
+    # key; several variants (rule_codes) can share one old_section.
+    old_section: Mapped[Optional[str]] = mapped_column(String(20))
+    new_section: Mapped[Optional[str]] = mapped_column(String(100))
+    tds_deductor_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey('ap.tds_deductor.id', ondelete='RESTRICT', name='tax_rule_tds_deductor_fk')
+    )
+
+    tds_deductor: Mapped[Optional['TdsDeductor']] = relationship('TdsDeductor')
 
     tax_type: Mapped['TaxType'] = relationship(
         'TaxType',

@@ -152,6 +152,10 @@ class _InvoiceTds:
     invoice_id: int
     tds_applicable: bool
     tds_amount: Optional[Decimal]
+    determination_status: str = "VERIFIED"
+    payment_nature_id: Optional[int] = 2
+    tds_rule_id: Optional[int] = 7
+    tds_rate_rule_id: Optional[int] = 7
 
 
 class _FakeTdsDAO:
@@ -506,6 +510,7 @@ def test_mark_ready_for_payment_from_approved_succeeds():
         status=_Status(status_id=9, status_code="APPROVED"),
     )
     _FakeInvoiceDAO.store[1] = invoice
+    _FakeTdsDAO.store[1] = _InvoiceTds(invoice_id=1, tds_applicable=True, tds_amount=Decimal("100.00"))
 
     updated = svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
 
@@ -514,6 +519,48 @@ def test_mark_ready_for_payment_from_approved_succeeds():
     assert db.committed == 1
     assert len(_FakeInvoiceDAO.invoice_audits) == 1
     assert _FakeInvoiceDAO.invoice_audits[0].action == "INVOICE_READY_FOR_PAYMENT"
+
+
+def _approved_invoice():
+    return _Invoice(
+        invoice_id=1, vendor_id=1, net_amount=Decimal("1000.00"), amount_paid=Decimal("0"),
+        status=_Status(status_id=9, status_code="APPROVED"),
+    )
+
+
+def test_mark_ready_for_payment_blocked_when_tds_not_determined():
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _approved_invoice()
+
+    with pytest.raises(ValueError, match="TDS has not been determined"):
+        svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+    assert db.committed == 0
+    assert _FakeInvoiceDAO.store[1].status_id is None
+    assert _FakeInvoiceDAO.invoice_audits == []
+
+
+def test_mark_ready_for_payment_blocked_when_tds_determined_but_not_verified():
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _approved_invoice()
+    _FakeTdsDAO.store[1] = _InvoiceTds(
+        invoice_id=1, tds_applicable=True, tds_amount=Decimal("100.00"), determination_status="DETERMINED"
+    )
+
+    with pytest.raises(ValueError, match="not been verified"):
+        svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+    assert db.committed == 0
+
+
+def test_mark_ready_for_payment_allowed_when_verified_not_applicable():
+    """A VERIFIED 'no TDS applies' outcome (e.g. INTEREST, no rule) is valid."""
+    db = _FakeDB()
+    _FakeInvoiceDAO.store[1] = _approved_invoice()
+    _FakeTdsDAO.store[1] = _InvoiceTds(
+        invoice_id=1, tds_applicable=False, tds_amount=None, tds_rule_id=None, tds_rate_rule_id=None
+    )
+
+    updated = svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+    assert updated.status_id == 13
 
 
 def test_mark_ready_for_payment_requires_approved_status():

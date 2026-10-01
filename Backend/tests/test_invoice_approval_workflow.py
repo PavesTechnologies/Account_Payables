@@ -78,6 +78,23 @@ class FakeDB:
         pass
 
 
+class FakeTdsDAO:
+    """send_for_approval requires a complete TDS determination. Every invoice
+    defaults to a DETERMINED one so the approval-engine tests below are
+    unaffected; tests of the TDS gate itself override per invoice."""
+
+    def __init__(self):
+        self.rows: Dict[int, object] = {}
+
+    def get_invoice_tds_by_invoice_id(self, invoice_id):
+        if invoice_id in self.rows:
+            return self.rows[invoice_id]
+        return SimpleNamespace(
+            invoice_id=invoice_id, determination_status="DETERMINED",
+            payment_nature_id=2, tds_rule_id=7, tds_rate_rule_id=7,
+        )
+
+
 class FakeInvoiceDAO:
     def __init__(self, registry, invoices):
         self.registry = registry
@@ -324,6 +341,8 @@ class Workflow:
         self.service.master_dao = self.master_dao
         self.service.policy_service = self.policy_service
         self.service.resolver = self.resolver
+        self.tds_dao = FakeTdsDAO()
+        self.service.tds_dao = self.tds_dao
 
         self._next_invoice_id = 1
 
@@ -520,6 +539,40 @@ def test_missing_department_or_category_on_invoice_blocks_send_for_approval(wf: 
 
     with pytest.raises(ValueError, match="missing department/purchase category"):
         wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+
+def test_send_for_approval_blocked_when_tds_not_determined(wf: Workflow):
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.tds_dao.rows[invoice.invoice_id] = None
+
+    with pytest.raises(ValueError, match="TDS has not been determined"):
+        wf.service.send_for_approval(invoice.invoice_id, 5100010)
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "OCR_REVIEWED"
+    assert wf.approval_dao.get_active_invoice_approval_for_invoice(invoice.invoice_id) is None
+
+
+def test_send_for_approval_blocked_when_tds_has_no_payment_nature(wf: Workflow):
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.tds_dao.rows[invoice.invoice_id] = SimpleNamespace(
+        determination_status="DETERMINED", payment_nature_id=None, tds_rule_id=None, tds_rate_rule_id=None,
+    )
+
+    with pytest.raises(ValueError, match="no payment nature"):
+        wf.service.send_for_approval(invoice.invoice_id, 5100010)
+
+
+def test_send_for_approval_allowed_when_tds_determined_not_applicable(wf: Workflow):
+    """A determined 'no TDS rule for this payment nature' outcome (INTEREST/OTHER) is complete."""
+    wf.create_policy(levels=[_level(1, "ROLE", role_code="AP_EXECUTIVE")])
+    invoice = wf.add_invoice(net_amount=1000)
+    wf.tds_dao.rows[invoice.invoice_id] = SimpleNamespace(
+        determination_status="DETERMINED", payment_nature_id=7, tds_rule_id=None, tds_rate_rule_id=None,
+    )
+
+    wf.service.send_for_approval(invoice.invoice_id, 5100010)
+    assert wf.invoice_after(invoice.invoice_id).status.status_code == "PENDING_APPROVAL"
 
 
 def test_invoice_not_pending_approval_cannot_be_sent(wf: Workflow):

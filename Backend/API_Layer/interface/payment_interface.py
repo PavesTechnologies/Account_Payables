@@ -66,3 +66,104 @@ class InvoiceReadyForPaymentResponse(BaseModel):
     invoice_id: int
     status_code: str
     message: str
+
+
+# =========================================================
+# Payment Management screens (see PaymentTrackingService)
+# =========================================================
+
+class RecordPaymentRequest(BaseModel):
+    """Record a payment Finance has ALREADY made to the vendor outside this
+    system. The invoice status (PARTIALLY_PAID / PAID) is set by the backend."""
+    payment_date: datetime.date
+    amount: decimal.Decimal
+    payment_mode: str                 # one of GET /payment/metadata payment_modes[].value
+    reference_number: str             # UTR / transaction / cheque number
+    remarks: Optional[str] = None
+
+
+class PaymentDocumentDTO(BaseModel):
+    id: int
+    payment_id: int
+    document_type: str
+    file_name: str
+    content_type: Optional[str] = None
+    file_size: Optional[int] = None
+    uploaded_by: Optional[str] = None
+    uploaded_at: datetime.datetime
+
+
+class PaymentRecordDTO(BaseModel):
+    payment_id: int
+    payment_date: Optional[datetime.date] = None
+    scheduled_date: datetime.date
+    amount: decimal.Decimal           # amount of THIS payment applied to the invoice
+    payment_total: decimal.Decimal    # whole payment (may cover other invoices)
+    payment_mode: str
+    reference_number: Optional[str] = None
+    remarks: Optional[str] = None
+    status_code: Optional[str] = None  # SCHEDULED / SENT / CLEARED / FAILED
+    status_name: Optional[str] = None
+    recorded_by: Optional[str] = None
+    recorded_at: datetime.datetime
+    documents: List[PaymentDocumentDTO] = []
+
+
+class InvoicePaymentSummaryDTO(BaseModel):
+    invoice_id: int
+    invoice_number: str
+    vendor_id: int
+    vendor_name: str
+    invoice_date: datetime.date
+    due_date: datetime.date
+    currency_code: Optional[str] = None
+    currency_symbol: Optional[str] = None
+    gross_amount: decimal.Decimal
+    discount_amount: decimal.Decimal
+    tax_amount: decimal.Decimal
+    invoice_amount: decimal.Decimal    # invoice.net_amount - what the vendor billed
+    tds_applicable: bool
+    tds_amount: decimal.Decimal
+    tds_determination_status: Optional[str] = None
+    net_payable: decimal.Decimal       # invoice_amount - tds_amount
+    amount_paid: decimal.Decimal
+    pending_amount: decimal.Decimal    # reserved by SCHEDULED/SENT payments
+    remaining_amount: decimal.Decimal
+    status_code: Optional[str] = None
+    status_name: Optional[str] = None
+    is_overdue: bool
+    payment_count: int
+    last_payment_date: Optional[datetime.date] = None
+    last_payment_mode: Optional[str] = None
+    last_payment_reference: Optional[str] = None
+    receipt_count: int
+
+
+class InvoicePaymentPageDTO(BaseModel):
+    items: List[InvoicePaymentSummaryDTO]
+    total: int
+    page: int
+    page_size: int
+
+
+class InvoicePaymentDetailDTO(InvoicePaymentSummaryDTO):
+    tds_tracking_status: Optional[str] = None
+    can_record_payment: bool
+    payments: List[PaymentRecordDTO] = []
+    recorded_payment_id: Optional[int] = None  # set only in the record-payment response
+
+
+class PaymentOptionDTO(BaseModel):
+    value: str
+    label: str
+    reference_label: Optional[str] = None
+
+
+class PaymentMetadataDTO(BaseModel):
+    payment_modes: List[PaymentOptionDTO]
+    document_types: List[PaymentOptionDTO]
+    reference_required: bool
+    receipt_required: bool
+    allowed_file_extensions: List[str]
+    max_file_size_bytes: int
+    ready_for_payment_statuses: List[str]

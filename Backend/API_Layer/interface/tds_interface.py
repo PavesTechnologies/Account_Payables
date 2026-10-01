@@ -36,6 +36,8 @@ class TdsRuleDTO(BaseModel):
     rule_code: str
     rule_name: str
     legal_reference: Optional[str] = None
+    old_section: Optional[str] = None
+    new_section: Optional[str] = None
 
 
 class InvoiceTdsDTO(BaseModel):
@@ -49,11 +51,16 @@ class InvoiceTdsDTO(BaseModel):
     tds_rate: Optional[decimal.Decimal] = None
     tds_amount: Optional[decimal.Decimal] = None
     threshold_amount: Optional[decimal.Decimal] = None
+    threshold_type: Optional[str] = None
     prior_period_aggregate: Optional[decimal.Decimal] = None
     current_transaction_amount: Optional[decimal.Decimal] = None
     aggregate_amount: Optional[decimal.Decimal] = None
     pan_status: Optional[str] = None
     entity_type: Optional[str] = None
+    residency_type: Optional[str] = None
+    # The rule variant exactly as applied (see InvoiceTds.rule_snapshot) -
+    # prefer this over tds_rule for historical display.
+    rule_snapshot: Optional[dict] = None
     # GST registration compliance signal - a warning only, never an input to
     # tds_applicable/tds_rate/tds_amount above.
     gstin_status: Optional[str] = None

@@ -14,16 +14,22 @@ invoice_approval_service.py / payment_service.py):
     - service methods own db.commit()/db.rollback() (DAOs only add/flush).
     - InvoiceDAO/VendorDAO are reused as-is, not duplicated.
 
-Deliberately NOT wired into InvoiceApprovalService.send_for_approval or
-PaymentService.mark_ready_for_payment in this phase - see the implementation
-report's "Workflow integration" section for why (in short: those services'
-existing unit tests construct them against a hand-rolled FakeDB with no
-.query() support at all, so any unconditional new DAO call inside them -
-even one gated behind a config flag that defaults off - breaks the whole
-existing suite before the flag is ever read). The frontend sequences
-determine() before send-for-approval and verify() before mark-ready-for-
-payment; a later phase can add a real gate once that reworks (or provides a
-DB-backed double for) those tests.
+Rule variants: one legal section can have several ap.tax_rule rows (e.g.
+194C Individual/HUF 1% vs. other 2%). Every in-effect rule for the payment
+nature is a candidate; its "rate condition" (tax_rule_condition rows other
+than PAYMENT_NATURE) is evaluated against the vendor's TDS profile and the
+most specific match wins (see utils/tds_rate_condition.select_rule_variant).
+No matching rule (e.g. INTEREST / OTHER today) is a valid outcome:
+tds_applicable=False with the reason recorded - never an invented rate.
+
+Workflow gates (the single source of these rules - callers never re-implement
+them):
+    - require_tds_ready_for_approval(): InvoiceApprovalService.send_for_approval
+      refuses an invoice whose TDS determination is missing/incomplete.
+    - require_tds_verified(): PaymentService.mark_ready_for_payment refuses an
+      invoice whose TDS is not VERIFIED.
+    - determine()/update_inputs() refuse once the invoice has been sent for
+      approval (TDS_LOCKED_INVOICE_STATUSES) - the payment nature is locked.
 """
 from __future__ import annotations
 
@@ -31,6 +37,12 @@ import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from Backend.Business_Layer.utils.tds_rate_condition import (
+    ENTITY_TYPE_BY_PAN_CODE,
+    rate_conditions_from_rows,
+    render_rate_condition,
+    select_rule_variant,
+)
 from Backend.Business_Layer.utils.vendor_auto_onboarding import GST_ACTIVE_STATUS, call_gst_search
 from Backend.Business_Layer.utils.vendor_validator import PAN_REGEX
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
@@ -62,24 +74,23 @@ GSTIN_STATUS_NOT_ON_FILE = "NOT_ON_FILE"
 GSTIN_STATUS_CHECK_UNAVAILABLE = "CHECK_UNAVAILABLE"
 GST_TAX_REGISTRATION_TYPES = ("GST", "GSTIN")
 
+# Once an invoice has been sent for approval its payment nature (and therefore
+# its TDS determination) is locked - see determine().
+TDS_LOCKED_INVOICE_STATUSES = frozenset({
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "REJECTED",
+    "READY_FOR_PAYMENT",
+    "PARTIALLY_PAID",
+    "PAID",
+})
+
 # The 4th character of a valid Indian PAN deterministically encodes the
 # holder's entity type (Income Tax Dept spec) - same fact vendor_validator.py
-# already checks (PAN_ENTITY_TYPE_CODES) when validating a PAN's format, just
-# not previously turned into a stored value anywhere. Reused here, not
-# duplicated, so a malformed/dummy PAN is rejected the exact same way in both
-# places.
-_ENTITY_TYPE_BY_PAN_CODE = {
-    "P": "INDIVIDUAL",
-    "C": "COMPANY",
-    "H": "HUF",
-    "F": "FIRM",
-    "A": "AOP",
-    "T": "TRUST",
-    "B": "BOI",
-    "L": "LOCAL_AUTHORITY",
-    "J": "ARTIFICIAL_JURIDICAL_PERSON",
-    "G": "GOVERNMENT",
-}
+# already checks (PAN_ENTITY_TYPE_CODES) when validating a PAN's format. The
+# mapping lives in tds_rate_condition so ENTITY_TYPE rate conditions use the
+# same vocabulary.
+_ENTITY_TYPE_BY_PAN_CODE = ENTITY_TYPE_BY_PAN_CODE
 
 _CENTS = Decimal("0.01")
 
@@ -120,6 +131,37 @@ def compute_payable_amount(net_amount: Decimal, tds: Optional[InvoiceTds]) -> De
     if tds is not None and tds.tds_applicable and tds.tds_amount:
         return net_amount - tds.tds_amount
     return net_amount
+
+
+def tds_determination_problem(tds: Optional[InvoiceTds]) -> Optional[str]:
+    """Why this invoice's TDS determination can't be relied on yet, or None
+    when it is complete. "Complete" includes a valid tds_applicable=False
+    outcome (below threshold, exempt, no rule for the payment nature) - only a
+    missing determination, a missing payment nature, or a matched rule with no
+    rate (a configuration gap) are incomplete."""
+    if tds is None:
+        return "TDS has not been determined for this invoice"
+    if tds.determination_status not in (DETERMINATION_STATUS_DETERMINED, DETERMINATION_STATUS_VERIFIED):
+        return f"TDS determination is {tds.determination_status or 'pending'}"
+    if tds.payment_nature_id is None:
+        return "TDS determination is incomplete - no payment nature has been set; correct the payment nature and re-determine"
+    if tds.tds_rule_id is not None and tds.tds_rate_rule_id is None:
+        return "TDS determination is incomplete - the matched TDS rule has no active rate; fix the TDS configuration and re-determine"
+    return None
+
+
+def require_tds_ready_for_approval(invoice_id: int, tds: Optional[InvoiceTds]) -> None:
+    problem = tds_determination_problem(tds)
+    if problem:
+        raise ValueError(f"Invoice {invoice_id} cannot be sent for approval: {problem}")
+
+
+def require_tds_verified(invoice_id: int, tds: Optional[InvoiceTds]) -> None:
+    problem = tds_determination_problem(tds)
+    if problem is None and tds.determination_status != DETERMINATION_STATUS_VERIFIED:
+        problem = "TDS has not been verified by Finance"
+    if problem:
+        raise ValueError(f"Invoice {invoice_id} cannot be marked ready for payment: {problem}")
 
 
 def _extract_gst_status(gst_response: Optional[dict]) -> Optional[str]:
@@ -185,6 +227,13 @@ class TDSDeterminationService:
                     f"TDS for invoice {invoice_id} has already been verified and can no longer be recalculated"
                 )
 
+            status_code = invoice.status.status_code if getattr(invoice, "status", None) else None
+            if status_code in TDS_LOCKED_INVOICE_STATUSES:
+                raise ValueError(
+                    f"TDS payment nature for invoice {invoice_id} is locked - the invoice has already been sent "
+                    f"for approval (status {status_code})"
+                )
+
             profile = self._get_or_create_profile(vendor)
 
             reasons: list[str] = []
@@ -193,6 +242,7 @@ class TDSDeterminationService:
             result = self._blank_result()
             result["pan_status"] = profile.pan_status
             result["entity_type"] = profile.entity_type
+            result["residency_type"] = profile.residency_type
 
             # GST registration compliance - a warning/signal only, appended to
             # whatever determination_reason the branches below produce. It is
@@ -225,6 +275,8 @@ class TDSDeterminationService:
                     "tds_applicable": row.tds_applicable,
                     "payment_nature_code": payment_nature.code if payment_nature else None,
                     "tds_rule_id": row.tds_rule_id,
+                    "tds_rule_code": (row.rule_snapshot or {}).get("rule_code"),
+                    "tds_rate_rule_id": row.tds_rate_rule_id,
                     "tds_rate": str(row.tds_rate) if row.tds_rate is not None else None,
                     "tds_amount": str(row.tds_amount) if row.tds_amount is not None else None,
                     "gstin_status": row.gstin_status,
@@ -258,6 +310,9 @@ class TDSDeterminationService:
                 raise ValueError(f"TDS determination for invoice {invoice_id} not found - determine it first")
             if row.determination_status == DETERMINATION_STATUS_VERIFIED:
                 raise ValueError(f"TDS for invoice {invoice_id} has already been verified")
+            problem = tds_determination_problem(row)
+            if problem:
+                raise ValueError(f"TDS for invoice {invoice_id} cannot be verified: {problem}")
 
             now = datetime.datetime.now(datetime.timezone.utc)
             row.determination_status = DETERMINATION_STATUS_VERIFIED
@@ -270,6 +325,9 @@ class TDSDeterminationService:
                 invoice_id, "INVOICE_TDS_VERIFIED", user_id,
                 {
                     "tds_applicable": row.tds_applicable,
+                    "tds_rule_id": row.tds_rule_id,
+                    "tds_rate_rule_id": row.tds_rate_rule_id,
+                    "tds_rate": str(row.tds_rate) if row.tds_rate is not None else None,
                     "tds_amount": str(row.tds_amount) if row.tds_amount is not None else None,
                     "remarks": remarks,
                 },
@@ -374,14 +432,29 @@ class TDSDeterminationService:
 
     def _apply_rule_engine(self, invoice, vendor, profile: VendorTdsProfile, payment_nature: TdsPaymentNature, result: dict) -> None:
         as_of = invoice.invoice_date
-        rule = self.tds_dao.get_active_tds_rule_for_payment_nature(payment_nature.code, as_of)
-        if rule is None:
+        candidates = self.tds_dao.list_active_tds_rules_for_payment_nature(payment_nature.code, as_of)
+        if not candidates:
             result["determination_reason"] = (
                 f"No active TDS rule is configured for payment nature '{payment_nature.code}' as of {as_of}."
             )
             return
 
+        facts = {"ENTITY_TYPE": profile.entity_type, "RESIDENCY_TYPE": profile.residency_type}
+        rule, unmatched = select_rule_variant(candidates, facts)
+        if rule is None:
+            variants = ", ".join(
+                f"{r.rule_code} [{render_rate_condition(rate_conditions_from_rows(r.conditions or [])) or 'no condition'}]"
+                for r in unmatched
+            )
+            result["determination_reason"] = (
+                f"No TDS rule variant for payment nature '{payment_nature.code}' matches this vendor "
+                f"(entity type: {profile.entity_type or 'unknown'}, residency: {profile.residency_type or 'unknown'}) "
+                f"as of {as_of}. Variants considered: {variants}."
+            )
+            return
+
         rate_rule = self.tds_dao.get_active_tax_rate_rule_for_tax_rule(rule.tax_rule_id, as_of)
+        result["rule_snapshot"] = self._rule_snapshot(rule, rate_rule, profile, candidates)
         if rate_rule is None:
             result["tds_rule_id"] = rule.tax_rule_id
             result["determination_reason"] = (
@@ -407,6 +480,7 @@ class TDSDeterminationService:
         aggregate_amount = prior_aggregate + taxable_base
 
         result["threshold_amount"] = threshold_amount
+        result["threshold_type"] = threshold_type
         result["prior_period_aggregate"] = prior_aggregate
         result["current_transaction_amount"] = taxable_base
         result["aggregate_amount"] = aggregate_amount
@@ -414,7 +488,7 @@ class TDSDeterminationService:
         compare_amount = aggregate_amount if threshold_type == THRESHOLD_TYPE_AGGREGATE_PERIOD else taxable_base
         below_threshold = threshold_amount is not None and threshold_type is not None and compare_amount < threshold_amount
 
-        legal_ref = rule.legal_reference or rule.rule_code
+        legal_ref = rule.legal_reference or (f"Section {rule.old_section}" if rule.old_section else rule.rule_code)
 
         if below_threshold:
             qualifier = "Cumulative" if threshold_type == THRESHOLD_TYPE_AGGREGATE_PERIOD else "Transaction"
@@ -432,6 +506,7 @@ class TDSDeterminationService:
         if rate_rule.calculation_type == "FIXED":
             tds_amount = _round_amount(rate_rule.fixed_amount or Decimal("0"))
             reason_bits.append(f"Fixed deduction of {tds_amount} applies.")
+            result["rule_snapshot"]["rate_basis"] = "FIXED"
             result["tds_rate"] = None
             result["tds_amount"] = tds_amount
         else:
@@ -443,7 +518,15 @@ class TDSDeterminationService:
                 and profile.certificate_valid_to is not None
                 and profile.certificate_valid_from <= as_of <= profile.certificate_valid_to
             )
+            rate_basis = "STANDARD"
             if certificate_active:
+                rate_basis = "LOWER_DEDUCTION_CERTIFICATE"
+                result["rule_snapshot"]["lower_deduction_certificate"] = {
+                    "certificate_number": profile.certificate_number,
+                    "certificate_rate": str(profile.certificate_rate),
+                    "valid_from": profile.certificate_valid_from.isoformat(),
+                    "valid_to": profile.certificate_valid_to.isoformat(),
+                }
                 effective_rate = profile.certificate_rate
                 reason_bits.append(
                     f"Lower-deduction certificate {profile.certificate_number or ''} applies: rate reduced to "
@@ -451,6 +534,7 @@ class TDSDeterminationService:
                 )
             elif profile.pan_status != PAN_STATUS_VALID:
                 if effective_rate < PAN_MISSING_RATE_FLOOR:
+                    rate_basis = "PAN_NOT_AVAILABLE_206AA"
                     effective_rate = PAN_MISSING_RATE_FLOOR
                     reason_bits.append(
                         f"Vendor PAN is not valid/available - higher rate of {effective_rate}% applied (Section 206AA)."
@@ -459,11 +543,54 @@ class TDSDeterminationService:
                     reason_bits.append(f"Vendor PAN is not valid/available (standard rate already >= {PAN_MISSING_RATE_FLOOR}%).")
 
             tds_amount = _round_amount(taxable_base * effective_rate / Decimal("100"))
+            result["rule_snapshot"]["rate_basis"] = rate_basis
             result["tds_rate"] = effective_rate
             result["tds_amount"] = tds_amount
 
         result["tds_applicable"] = True
         result["determination_reason"] = " ".join(reason_bits)
+
+    @staticmethod
+    def _rule_snapshot(rule, rate_rule, profile: VendorTdsProfile, candidates) -> dict:
+        """The rule variant exactly as applied - stored on invoice_tds so the
+        historical determination stays explainable after the live rule is
+        edited from TDS Configuration."""
+        deductor = getattr(rule, "tds_deductor", None)
+
+        def _iso(value):
+            return value.isoformat() if value is not None else None
+
+        def _str(value):
+            return str(value) if value is not None else None
+
+        return {
+            "tax_rule_id": rule.tax_rule_id,
+            "rule_code": rule.rule_code,
+            "rule_name": rule.rule_name,
+            "old_section": rule.old_section,
+            "new_section": rule.new_section,
+            "legal_reference": rule.legal_reference,
+            "deductor": {"id": deductor.id, "code": deductor.code, "name": deductor.name} if deductor else None,
+            "rate_condition": render_rate_condition(rate_conditions_from_rows(rule.conditions or [])),
+            "rule_effective_from": _iso(rule.effective_from),
+            "rule_effective_to": _iso(rule.effective_to),
+            "threshold_amount": _str(rule.threshold_amount),
+            "threshold_type": rule.threshold_type,
+            "tax_rate_rule_id": rate_rule.tax_rate_rule_id if rate_rule else None,
+            "configured_rate_percent": _str(rate_rule.rate_percent) if rate_rule else None,
+            "calculation_type": rate_rule.calculation_type if rate_rule else None,
+            "fixed_amount": _str(rate_rule.fixed_amount) if rate_rule else None,
+            "rate_effective_from": _iso(rate_rule.effective_from) if rate_rule else None,
+            "rate_effective_to": _iso(rate_rule.effective_to) if rate_rule else None,
+            "variants_considered": [c.rule_code for c in candidates],
+            "vendor_facts": {
+                "entity_type": profile.entity_type,
+                "residency_type": profile.residency_type,
+                "pan_status": profile.pan_status,
+                "tds_exemption_flag": profile.tds_exemption_flag,
+                "lower_deduction_available": profile.lower_deduction_available,
+            },
+        }
 
     @staticmethod
     def _blank_result() -> dict:
@@ -476,11 +603,14 @@ class TDSDeterminationService:
             "tds_rate": None,
             "tds_amount": None,
             "threshold_amount": None,
+            "threshold_type": None,
             "prior_period_aggregate": None,
             "current_transaction_amount": None,
             "aggregate_amount": None,
             "pan_status": None,
             "entity_type": None,
+            "residency_type": None,
+            "rule_snapshot": None,
             "gstin_status": None,
             "gstin_checked_at": None,
             "determination_reason": "",
@@ -502,11 +632,14 @@ class TDSDeterminationService:
         row.tds_rate = result["tds_rate"]
         row.tds_amount = result["tds_amount"]
         row.threshold_amount = result["threshold_amount"]
+        row.threshold_type = result["threshold_type"]
         row.prior_period_aggregate = result["prior_period_aggregate"]
         row.current_transaction_amount = result["current_transaction_amount"]
         row.aggregate_amount = result["aggregate_amount"]
         row.pan_status = result["pan_status"]
         row.entity_type = result["entity_type"]
+        row.residency_type = result["residency_type"]
+        row.rule_snapshot = result["rule_snapshot"]
         row.gstin_status = result["gstin_status"]
         row.gstin_checked_at = result["gstin_checked_at"]
         row.determination_status = DETERMINATION_STATUS_DETERMINED

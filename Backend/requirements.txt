@@ -15,5 +15,6 @@ numpy
 Pillow
 pytest
 python-multipart
+openpyxl
 redis
 kafka-python
