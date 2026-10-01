@@ -25,6 +25,7 @@ from Backend.API_Layer.interface.vendor_intake_interface import VendorIntakeCrea
 from Backend.Business_Layer.services.vendor_intake_service import VendorIntakeService
 from Backend.Business_Layer.services.vendor_service import VendorService
 from Backend.Business_Layer.utils import pr_workflow_events as events
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Data_Access_Layer.dao.vendor_onboarding_dao import VendorOnboardingDAO
 from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.vendor import Vendor
@@ -212,6 +213,7 @@ class VendorOnboardingService:
             user_id,
             {"onboarding_request_id": request.id, "requested_vendor_name": request.requested_vendor_name},
         )
+        APNotificationEvents(self.db).onboarding_created(request, user_id)
 
         self.db.commit()
         self.db.refresh(request)
@@ -240,6 +242,7 @@ class VendorOnboardingService:
             raise ValueError("assigned_to is required")
 
         request = self._require_request(request_id)
+        previous_assignee = request.assigned_to
         request.assigned_to = assigned_to.strip()
 
         if self._status_code(request) == STATUS_CREATED:
@@ -249,6 +252,7 @@ class VendorOnboardingService:
         self._record_onboarding_history(
             request.id, ACTION_ASSIGNED, user_id, {"assigned_to": request.assigned_to}
         )
+        APNotificationEvents(self.db).onboarding_assigned(request, user_id, previous_assignee)
 
         self.db.commit()
         self.db.refresh(request)
@@ -273,6 +277,7 @@ class VendorOnboardingService:
             user_id,
             {"from": previous, "to": status_code, "reason": reason},
         )
+        APNotificationEvents(self.db).onboarding_status_changed(request, status_code, user_id, reason)
 
         self.db.commit()
         self.db.refresh(request)
@@ -334,6 +339,7 @@ class VendorOnboardingService:
                 "gst_status": intake_result.gst_status,
             },
         )
+        APNotificationEvents(self.db).onboarding_status_changed(request, STATUS_PRE_SCREEN_PENDING, user_id)
 
         self.db.commit()
         self.db.refresh(request)
@@ -353,7 +359,8 @@ class VendorOnboardingService:
         if target_status is None:
             raise ValueError(f"Unexpected Pre-Screen result '{outcome.result}'")
 
-        if self._status_code(request) != target_status:
+        status_changed = self._status_code(request) != target_status
+        if status_changed:
             self._transition(request, target_status)
         request.updated_by = user_id
 
@@ -368,6 +375,10 @@ class VendorOnboardingService:
                 "nda_recommended": outcome.nda_recommended,
             },
         )
+        if status_changed:
+            APNotificationEvents(self.db).onboarding_status_changed(
+                request, target_status, user_id, outcome.reason
+            )
 
         self.db.commit()
         self.db.refresh(request)
@@ -413,6 +424,9 @@ class VendorOnboardingService:
                 "vendor_activated": activated,
             },
         )
+        # Before the commit below (or change_status' commit), so the
+        # notification lands in the same transaction as the completion.
+        APNotificationEvents(self.db).onboarding_status_changed(request, STATUS_COMPLETED, user_id)
 
         if activated:
             VendorService(self.db).change_status(request.vendor_id, True, user_id)

@@ -57,6 +57,7 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     UploadPageSummary,
 )
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Data_Access_Layer.dao.inbound_document_dao import InboundDocumentDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.master_dao import MasterDAO
@@ -664,6 +665,8 @@ def apply_ocr_review(
 
         invoice.status_id = reviewed_status.status_id
         invoice.updated_by = user_id
+        notification_events = APNotificationEvents(db)
+        notification_events.invoice_reviewed(invoice)
 
         if _config_bool(db, PO_MANDATORY_CONFIG_KEY) and invoice.po_id is None:
             po_required_issue = invoice_status.build_issue(
@@ -674,6 +677,10 @@ def apply_ocr_review(
             )
             po_required_issue.invoice_id = invoice.invoice_id
             invoice_dao.create_invoice_issue(po_required_issue)
+            notification_events.invoice_validation_exception(
+                invoice, ISSUE_TYPE_PO_REQUIRED, po_required_issue.description, user_id,
+                getattr(po_required_issue, "invoice_issue_id", None),
+            )
 
         _resolve_approval_context(invoice, db)
 

@@ -178,6 +178,14 @@ class NdaDAO:
             .all()
         )
 
+    def get_ndas_by_pr(self, pr_id: int) -> List[VendorNda]:
+        return (
+            self.db.query(VendorNda)
+            .filter(VendorNda.pr_id == pr_id)
+            .order_by(VendorNda.nda_id.asc())
+            .all()
+        )
+
     def get_ndas_in_scope(
         self,
         vendor_id: int,

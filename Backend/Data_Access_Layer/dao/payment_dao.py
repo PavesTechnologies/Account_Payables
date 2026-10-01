@@ -76,6 +76,24 @@ class PaymentDAO:
         )
         return Decimal(result or 0)
 
+    def get_failed_payment_ids_for_invoices(self, invoice_ids) -> List[int]:
+        """Ids of FAILED payments that covered any of these invoices."""
+        invoice_ids = list(invoice_ids)
+        if not invoice_ids:
+            return []
+        rows = (
+            self.db.query(Payment.payment_id)
+            .join(PaymentInvoice, PaymentInvoice.payment_id == Payment.payment_id)
+            .join(StatusMaster, Payment.status_id == StatusMaster.status_id)
+            .filter(
+                PaymentInvoice.invoice_id.in_(invoice_ids),
+                StatusMaster.status_code == "FAILED",
+            )
+            .distinct()
+            .all()
+        )
+        return [row[0] for row in rows]
+
     def get_status_by_module_code(
         self,
         module_name: str,

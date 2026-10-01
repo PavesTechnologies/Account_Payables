@@ -7,6 +7,7 @@ from typing import List, Optional
 from Backend.Business_Layer.services.rfq_eligibility_service import RFQEligibilityService
 from Backend.Business_Layer.utils.email_service import EmailSendResult, send_email
 from Backend.Business_Layer.utils import pr_workflow_events as events
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Data_Access_Layer.dao.procurement_dao import ProcurementDAO
 from Backend.Data_Access_Layer.dao.rfq_dao import RFQDAO
 from Backend.Data_Access_Layer.models.audit import AuditLog
@@ -68,6 +69,7 @@ class RFQService:
         rfq.rfq_number = f"RFQ-{rfq.id:06d}"
 
         pr.sourcing_type = "RFQ"
+        APNotificationEvents(self.db).sourcing_started(pr)
 
         self.db.commit()
         self.db.refresh(rfq)
@@ -119,6 +121,7 @@ class RFQService:
                 rfq.pr_id, events.VENDOR_INVITED, user_id,
                 metadata={"rfq_id": rfq_id, "vendor_ids": newly_invited},
             )
+            APNotificationEvents(self.db).vendors_invited(rfq, newly_invited)
 
         self.db.commit()
         self.db.refresh(rfq)
@@ -233,7 +236,12 @@ class RFQService:
 
         # The RFQ can move to SENT only when at least one
         # selected vendor successfully receives the RFQ.
+        failed_count = sum(1 for result in results if not result.success)
+
         if not any(result.success for result in results):
+            APNotificationEvents(self.db).rfq_send_failures(
+                rfq, pr, failed_count, len(results), True, user_id
+            )
             self.db.commit()
 
             raise ValueError(
@@ -261,6 +269,10 @@ class RFQService:
                     if not result.success
                 ),
             },
+        )
+
+        APNotificationEvents(self.db).rfq_send_failures(
+            rfq, pr, failed_count, len(results), False, user_id
         )
 
         self.db.commit()
@@ -374,6 +386,10 @@ class RFQService:
         self._transition_rfq(rfq, "CLOSED")
         rfq.closed_by = user_id
         rfq.closed_at = datetime.datetime.now(datetime.timezone.utc)
+
+        APNotificationEvents(self.db).rfq_closed(
+            rfq, lambda: self.procurement_dao.get_quotations_by_rfq_id(rfq_id), user_id
+        )
 
         self.db.commit()
         self.db.refresh(rfq)

@@ -21,6 +21,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from Backend.API_Layer.interface.payment_interface import PaymentCreateRequest
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.payment_dao import PaymentDAO
@@ -171,6 +172,10 @@ class PaymentService:
                     )
                 )
 
+            APNotificationEvents(self.db).payment_scheduled(
+                payment, [a.invoice_id for a in request.allocations]
+            )
+
             self.db.commit()
             self.db.refresh(payment)
             return payment
@@ -276,6 +281,8 @@ class PaymentService:
                     if new_status is not None:
                         invoice.status_id = new_status.status_id
                     invoice.updated_by = user_id
+                    if new_status_code == STATUS_CODE_PAID:
+                        APNotificationEvents(self.db).invoice_paid(invoice)
 
                     # Same reasoning as create_payment's per-invoice entry below — this is the
                     # one event that actually changes the invoice itself (amount_paid/status),
@@ -322,6 +329,12 @@ class PaymentService:
 
             payment.status_id = target_status.status_id
             payment.updated_by = user_id
+
+            notification_events = APNotificationEvents(self.db)
+            if status_code == STATUS_CODE_FAILED:
+                notification_events.payment_failed(payment, user_id)
+            elif status_code == STATUS_CODE_CLEARED:
+                notification_events.payment_cleared(payment)
 
             self.payment_dao.create_audit_log(
                 AuditLog(

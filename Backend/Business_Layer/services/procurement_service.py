@@ -16,6 +16,7 @@ from Backend.Data_Access_Layer.models.purchase import (
 from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
 from Backend.Business_Layer.services.rfq_service import RFQ_STATUS_MODULE
 from Backend.Business_Layer.utils import pr_workflow_events as events
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 
 PR_STATUS_MODULE = "PURCHASE_REQUISITION"
 QUOTATION_STATUS_MODULE = "QUOTATION"
@@ -172,7 +173,8 @@ class ProcurementService:
                 "Purchase requisition must have at least one line before it can be submitted"
             )
         self._transition_pr(pr, "PENDING_APPROVAL")
-        self._record_pr_history(pr_id, events.SUBMITTED_FOR_APPROVAL, user_id)
+        history = self._record_pr_history(pr_id, events.SUBMITTED_FOR_APPROVAL, user_id)
+        APNotificationEvents(self.db).pr_submitted(pr, user_id, history)
         self.db.commit()
         self.db.refresh(pr)
         return pr
@@ -180,6 +182,7 @@ class ProcurementService:
     def cancel_purchase_requisition(self, pr_id: int) -> PurchaseRequisition:
         pr = self._require_pr(pr_id)
         self._transition_pr(pr, "CANCELLED")
+        APNotificationEvents(self.db).pr_closed(pr)
         self.db.commit()
         self.db.refresh(pr)
         return pr
@@ -268,6 +271,7 @@ class ProcurementService:
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = comment
         self._record_pr_history(pr_id, events.PR_APPROVED, user_id, reason=comment)
+        APNotificationEvents(self.db).pr_approved(pr, user_id)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -288,6 +292,7 @@ class ProcurementService:
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = comment.strip()
         self._record_pr_history(pr_id, events.PR_REJECTED, user_id, reason=comment.strip())
+        APNotificationEvents(self.db).pr_decided(pr)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -308,7 +313,8 @@ class ProcurementService:
         pr.approved_by = user_id
         pr.approved_at = datetime.datetime.now(datetime.timezone.utc)
         pr.approval_comment = reason
-        self._record_pr_history(pr_id, events.PR_SENT_BACK_FOR_CLARIFICATION, user_id, reason=reason)
+        history = self._record_pr_history(pr_id, events.PR_SENT_BACK_FOR_CLARIFICATION, user_id, reason=reason)
+        APNotificationEvents(self.db).pr_returned(pr, reason, user_id, history)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -331,7 +337,8 @@ class ProcurementService:
         pr.approved_by = None
         pr.approved_at = None
         pr.approval_comment = None
-        self._record_pr_history(pr_id, events.PR_RESUBMITTED, user_id, reason=previous_return_reason)
+        history = self._record_pr_history(pr_id, events.PR_RESUBMITTED, user_id, reason=previous_return_reason)
+        APNotificationEvents(self.db).pr_submitted(pr, user_id, history, resubmitted=True)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -354,6 +361,7 @@ class ProcurementService:
             )
 
         pr.sourcing_type = sourcing_type
+        APNotificationEvents(self.db).sourcing_started(pr)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -423,6 +431,7 @@ class ProcurementService:
             pr_id, events.QUOTATION_RECEIVED, user_id,
             metadata={"quotation_id": quotation.id, "vendor_id": vendor_id, "rfq_id": rfq_id},
         )
+        APNotificationEvents(self.db).quotation_received(quotation, pr, rfq, user_id)
 
         self.db.commit()
         self.db.refresh(quotation)
@@ -448,6 +457,7 @@ class ProcurementService:
             )
 
         self.procurement_dao.delete_quotation(quotation)
+        APNotificationEvents(self.db).quotation_deleted(quotation)
         self.db.commit()
 
     # =========================================================
@@ -471,6 +481,7 @@ class ProcurementService:
         if quotation.status.status_code != "RECEIVED":
             raise ValueError("Only a RECEIVED quotation can be selected")
 
+        rfq = None
         if quotation.rfq_id is not None:
             rfq = self.rfq_dao.get_rfq_by_id(quotation.rfq_id)
             if rfq is not None and rfq.status.status_code != "CLOSED":
@@ -481,7 +492,8 @@ class ProcurementService:
         selected_status = self._require_status(QUOTATION_STATUS_MODULE, "SELECTED")
         rejected_status = self._require_status(QUOTATION_STATUS_MODULE, "REJECTED")
 
-        for sibling in self.procurement_dao.get_quotations_by_pr_id(pr_id):
+        siblings = self.procurement_dao.get_quotations_by_pr_id(pr_id)
+        for sibling in siblings:
             if sibling.id == quotation.id:
                 sibling.status_id = selected_status.status_id
             elif sibling.status.status_code == "RECEIVED":
@@ -496,6 +508,7 @@ class ProcurementService:
             pr_id, events.VENDOR_SELECTED, user_id,
             reason=reason, metadata={"quotation_id": quotation.id, "vendor_id": quotation.vendor_id},
         )
+        APNotificationEvents(self.db).vendor_selected(pr, quotation, [q.id for q in siblings], user_id, rfq)
 
         self.db.commit()
         self.db.refresh(pr)
@@ -571,6 +584,7 @@ class ProcurementService:
             )
 
         self._transition_pr(pr, "PO_GENERATED")
+        APNotificationEvents(self.db).pr_closed(pr)
 
         self.db.commit()
         self.db.refresh(purchase_order)
@@ -634,7 +648,7 @@ class ProcurementService:
         values = {k: v for k, v in (metadata or {}).items() if v is not None}
         if reason is not None:
             values["reason"] = reason
-        self.procurement_dao.create_audit_log(
+        return self.procurement_dao.create_audit_log(
             AuditLog(
                 table_name=PR_HISTORY_TABLE,
                 record_id=pr_id,

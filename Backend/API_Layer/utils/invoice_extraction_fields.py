@@ -2865,6 +2865,38 @@ def validate_invoice(
                 "match the reported total tax amount.",
             )
 
+    # Rate check: each tax component should be taxable x rate.
+    # A WARNING, not an issue - multi-rate invoices legitimately
+    # carry a header rate that doesn't apply to every line.
+    if taxable_amount is not None:
+
+        for tax_key, tax_label in (
+            ("igst", "IGST"),
+            ("cgst", "CGST"),
+            ("sgst", "SGST"),
+            ("ugst", "UGST"),
+        ):
+
+            rate = normalize_number(extracted.get(f"{tax_key}_rate"))
+            amount = normalize_number(extracted.get(f"{tax_key}_amount"))
+
+            if not rate or not amount:
+                continue
+
+            expected_amount = round(taxable_amount * rate / 100, 2)
+
+            matched, _ = amounts_match(expected_amount, amount)
+
+            if not matched:
+
+                add_warning(
+                    f"{tax_key}_amount",
+                    "TAX_RATE_MISMATCH",
+                    f"{tax_label} amount {amount} does not equal "
+                    f"taxable amount x {rate}% "
+                    f"(expected {expected_amount}).",
+                )
+
     # Do not assume taxable + tax == grand_total: real invoices
     # can add freight/shipping/handling/other charges and a
     # round-off, and subtract a discount, before reaching the
@@ -2955,10 +2987,19 @@ def validate_invoice(
 
     if lines and taxable_amount is not None:
 
+        # Fall back to quantity x unit_price when the line has
+        # no printed taxable value, so the check isn't silently
+        # skipped for invoices that only print qty and rate.
         line_taxable_sum = sum(
             line.taxable_amount
+            if line.taxable_amount is not None
+            else (line.quantity * line.unit_price)
             for line in lines
             if line.taxable_amount is not None
+            or (
+                line.quantity is not None
+                and line.unit_price is not None
+            )
         )
 
         if line_taxable_sum:
@@ -3674,6 +3715,123 @@ def reconcile_taxable_amount(
             overwrite=True,
         )
 
+
+def reconcile_tax_amounts(
+    extracted: Dict[str, Any],
+    confidence: Dict[str, float],
+    sources: Dict[str, str],
+    field_details: Dict[str, Dict[str, Any]],
+):
+
+    # OCR can corrupt a printed tax figure (e.g. the rupee glyph
+    # in "₹2,700.00" read as a leading "1" -> "12,700.00"), and
+    # the summary field and full-text regex then agree on the
+    # same wrong value. Only correct it when two independent
+    # signals agree on a different figure: taxable x printed
+    # rate, and grand total - taxable (- charges/round-off,
+    # with or without discount).
+
+    taxable_amount = normalize_number(
+        extracted.get("taxable_amount")
+        or extracted.get("subtotal")
+    )
+    grand_total = normalize_number(extracted.get("grand_total"))
+    total_tax = normalize_number(extracted.get("total_tax"))
+
+    if taxable_amount is None or grand_total is None:
+        return
+
+    # CESS is often a fixed/specific levy rather than a clean
+    # percentage of taxable value - don't try to reconcile it.
+    if normalize_number(extracted.get("cess_amount")):
+        return
+
+    rates = {
+        tax_key: normalize_number(extracted.get(f"{tax_key}_rate"))
+        for tax_key in ("igst", "cgst", "sgst", "ugst")
+    }
+
+    if rates["igst"] and not (
+        rates["cgst"] or rates["sgst"] or rates["ugst"]
+    ):
+        components = {"igst": 1.0}
+    elif (
+        rates["cgst"]
+        and (rates["sgst"] or rates["ugst"])
+        and not rates["igst"]
+    ):
+        state_key = "sgst" if rates["sgst"] else "ugst"
+
+        if rates["cgst"] != rates[state_key]:
+            return
+
+        components = {"cgst": 0.5, state_key: 0.5}
+    else:
+        return
+
+    total_rate = sum(rates[key] for key in components)
+    rate_tax = round(taxable_amount * total_rate / 100, 2)
+
+    charges = sum(
+        normalize_number(extracted.get(field)) or 0.0
+        for field in (
+            "other_charges",
+            "shipping_charges",
+            "freight_charges",
+            "handling_charges",
+            "round_off",
+        )
+    )
+    discount = normalize_number(extracted.get("discount")) or 0.0
+
+    implied_candidates = {
+        round(grand_total - taxable_amount - charges, 2),
+        round(grand_total - taxable_amount - charges + discount, 2),
+    }
+
+    implied_tax = next(
+        (
+            candidate
+            for candidate in implied_candidates
+            if amounts_match(candidate, rate_tax)[0]
+        ),
+        None,
+    )
+
+    if implied_tax is None or implied_tax <= 0:
+        return
+
+    if total_tax is not None and amounts_match(total_tax, implied_tax)[0]:
+        return
+
+    for tax_key, share in components.items():
+
+        _set_field(
+            extracted,
+            confidence,
+            sources,
+            field_details,
+            f"{tax_key}_amount",
+            round(implied_tax * share, 2),
+            60.0,
+            "RECONCILED_FROM_RATE_AND_TOTAL",
+            ExtractionMethod.DERIVED,
+            overwrite=True,
+        )
+
+    _set_field(
+        extracted,
+        confidence,
+        sources,
+        field_details,
+        "total_tax",
+        implied_tax,
+        60.0,
+        "RECONCILED_FROM_RATE_AND_TOTAL",
+        ExtractionMethod.DERIVED,
+        overwrite=True,
+    )
+
 # ============================================================
 # Main service
 # ============================================================
@@ -3785,6 +3943,13 @@ async def extract_invoice_from_s3(
         )
 
         reconcile_taxable_amount(
+            extracted,
+            confidence,
+            sources,
+            field_details,
+        )
+
+        reconcile_tax_amounts(
             extracted,
             confidence,
             sources,

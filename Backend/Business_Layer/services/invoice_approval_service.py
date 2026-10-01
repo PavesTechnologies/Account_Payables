@@ -29,6 +29,7 @@ from Backend.Data_Access_Layer.models.approval import (
 from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Business_Layer.services.approval_policy_service import ApprovalPolicyService
 from Backend.Business_Layer.services.approver_resolver_service import ApproverResolverService
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 
 STATUS_CODE_OCR_REVIEWED = "OCR_REVIEWED"
 STATUS_CODE_PENDING_APPROVAL = "PENDING_APPROVAL"
@@ -73,31 +74,39 @@ class InvoiceApprovalService:
                 "sent for approval"
             )
 
-        policy = self.policy_service.match_policy(
-            invoice.department_id, invoice.purchase_category_id, invoice.net_amount
-        )
-        levels = sorted(
-            (level for level in self.policy_dao.get_levels_for_policy(policy.id) if level.is_active),
-            key=lambda level: level.level_number,
-        )
-        if not levels:
-            raise ValueError(f"Approval policy '{policy.name}' has no active levels configured")
-
-        # Resolve every level's approvers up front - if any level can't be
-        # resolved, abort with no side effects at all rather than creating
-        # a partially initialized workflow (spec section 28).
-        resolved_levels = []
-        for level in levels:
-            approver_uuids = self.resolver.resolve(
-                level.approver_type,
-                role_code=level.role_code,
-                user_uuid=level.user_uuid,
-                department_id=invoice.department_id,
+        # Configuration-caused failures (no matching policy, no active levels,
+        # no eligible approver) are re-raised unchanged; the only addition is
+        # an Admin WORKFLOW_CONFIGURATION_BLOCKED notification, written in its
+        # own transaction because the route rolls this one back.
+        try:
+            policy = self.policy_service.match_policy(
+                invoice.department_id, invoice.purchase_category_id, invoice.net_amount
             )
-            if not approver_uuids:
-                descriptor = level.role_code or level.approver_type
-                raise ValueError(f"No active approver found for level {level.level_number} ({descriptor})")
-            resolved_levels.append((level, approver_uuids))
+            levels = sorted(
+                (level for level in self.policy_dao.get_levels_for_policy(policy.id) if level.is_active),
+                key=lambda level: level.level_number,
+            )
+            if not levels:
+                raise ValueError(f"Approval policy '{policy.name}' has no active levels configured")
+
+            # Resolve every level's approvers up front - if any level can't be
+            # resolved, abort with no side effects at all rather than creating
+            # a partially initialized workflow (spec section 28).
+            resolved_levels = []
+            for level in levels:
+                approver_uuids = self.resolver.resolve(
+                    level.approver_type,
+                    role_code=level.role_code,
+                    user_uuid=level.user_uuid,
+                    department_id=invoice.department_id,
+                )
+                if not approver_uuids:
+                    descriptor = level.role_code or level.approver_type
+                    raise ValueError(f"No active approver found for level {level.level_number} ({descriptor})")
+                resolved_levels.append((level, approver_uuids))
+        except ValueError as e:
+            APNotificationEvents(self.db).workflow_configuration_blocked(invoice, str(e), user_id)
+            raise
 
         instance = InvoiceApproval(
             invoice_id=invoice.invoice_id,
@@ -108,6 +117,7 @@ class InvoiceApprovalService:
         self.db.flush()
 
         now = datetime.datetime.now(datetime.timezone.utc)
+        first_step, first_approver_uuids = None, []
         for index, (level, approver_uuids) in enumerate(resolved_levels):
             is_first = index == 0
             step = InvoiceApprovalStep(
@@ -122,6 +132,8 @@ class InvoiceApprovalService:
             )
             self.approval_dao.create_step(step)
             self.db.flush()
+            if is_first:
+                first_step, first_approver_uuids = step, approver_uuids
 
             for approver_uuid in approver_uuids:
                 self.approval_dao.create_step_approver(
@@ -144,6 +156,7 @@ class InvoiceApprovalService:
                 "status_code": STATUS_CODE_PENDING_APPROVAL,
             },
         )
+        APNotificationEvents(self.db).approval_step_pending(invoice, first_step, first_approver_uuids, user_id)
 
         self.db.commit()
         return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
@@ -175,7 +188,9 @@ class InvoiceApprovalService:
             },
         )
 
-        if self._is_step_complete(step):
+        step_complete = self._is_step_complete(step)
+        APNotificationEvents(self.db).approval_decided(step, step_approver.user_uuid, step_complete)
+        if step_complete:
             self._advance_or_complete(instance, step, user_id)
 
         self.db.commit()
@@ -212,6 +227,8 @@ class InvoiceApprovalService:
         invoice = self.invoice_dao.get_invoice_by_id_locked(instance.invoice_id)
         invoice.status_id = rejected_status.status_id
         invoice.updated_by = str(user_id)
+
+        APNotificationEvents(self.db).approval_decided(step, step_approver.user_uuid, True)
 
         self._record_audit(
             instance.invoice_id, "INVOICE_REJECTED", user_id,
@@ -278,6 +295,10 @@ class InvoiceApprovalService:
         invoice = self.invoice_dao.get_invoice_by_id_locked(instance.invoice_id)
         invoice.status_id = returned_status.status_id
         invoice.updated_by = str(user_id)
+
+        notification_events = APNotificationEvents(self.db)
+        notification_events.approval_decided(step, step_approver.user_uuid, True)
+        notification_events.invoice_returned(invoice, comments, user_id)
 
         self._record_audit(
             instance.invoice_id, "INVOICE_SENT_BACK", user_id,
@@ -360,8 +381,13 @@ class InvoiceApprovalService:
         if next_step is not None:
             next_step.status = "PENDING"
             next_step.started_at = now
-            for approver in self.approval_dao.get_approvers_for_step(next_step.id):
+            next_approvers = self.approval_dao.get_approvers_for_step(next_step.id)
+            for approver in next_approvers:
                 approver.status = "PENDING"
+            APNotificationEvents(self.db).approval_step_pending(
+                lambda: self.invoice_dao.get_invoice_by_id(instance.invoice_id),
+                next_step, [a.user_uuid for a in next_approvers], user_id,
+            )
             return
 
         instance.status = "APPROVED"
@@ -376,6 +402,7 @@ class InvoiceApprovalService:
             instance.invoice_id, "INVOICE_APPROVED", user_id,
             {"invoice_approval_id": instance.invoice_approval_id},
         )
+        APNotificationEvents(self.db).invoice_approved(invoice, user_id)
 
     def _require_invoice_status(self, status_code: str):
         status = self.invoice_dao.get_status_by_code(status_code)

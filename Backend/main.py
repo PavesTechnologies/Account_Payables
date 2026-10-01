@@ -27,6 +27,7 @@ from Backend.API_Layer.routes import (
     vendor_onboarding_route,
     nda_route,
     invoice_details_route,
+    notification_route,
 )
 from Backend.Data_Access_Layer import models  # noqa: F401 - registers all model classes with SQLAlchemy before metadata/mapper use
 from Backend.Data_Access_Layer.models.base import Base
@@ -147,6 +148,7 @@ api_router.include_router(
 )
 api_router.include_router(rfq_route.router, tags=["RFQ"], prefix="/rfq")
 api_router.include_router(approval_policy_route.router, tags=["Approval Policy"])
+api_router.include_router(notification_route.router, tags=["Notifications"], prefix="/notifications")
 app.include_router(api_router)
 
 

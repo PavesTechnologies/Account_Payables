@@ -58,4 +58,10 @@ class CdcFailureLogService:
 
     def mark_retry_failed(self, failure: CdcFailureLog, error_message: str) -> None:
         self.dao.update_failure_after_retry(failure, succeeded=False, error_message=error_message)
+        if failure.status == "EXHAUSTED":
+            # Same transaction as the EXHAUSTED transition, so the Admin alert
+            # is raised exactly once per failure (dedupe_key also guarantees it).
+            from Backend.Business_Layer.services.notification_events import APNotificationEvents
+
+            APNotificationEvents(self.db).identity_sync_failed(failure)
         self.db.commit()

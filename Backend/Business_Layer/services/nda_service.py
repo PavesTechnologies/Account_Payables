@@ -35,6 +35,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional
 
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Business_Layer.utils.email_service import EmailAttachment, EmailSendResult, send_email
 from Backend.Business_Layer.utils.nda_document import (
     build_nda_context,
@@ -311,6 +312,7 @@ class NdaService:
                 lookup.nda.nda_id, ACTION_REUSED, user_id,
                 {"vendor_id": vendor_id, "valid_until": str(lookup.nda.valid_until)},
             )
+            APNotificationEvents(self.db).nda_reused(lookup.nda)
             self.db.commit()
             return NdaGenerationResult(nda=lookup.nda, reused=True, required=True)
 
@@ -388,6 +390,7 @@ class NdaService:
         self._record_history(
             nda.nda_id, ACTION_UPLOADED, user_id, {"document_key": stored_key}
         )
+        APNotificationEvents(self.db).nda_required(nda, user_id)
 
         self.db.commit()
         self.db.refresh(nda)
@@ -583,6 +586,7 @@ class NdaService:
                 nda.nda_id, ACTION_SEND_FAILED, user_id,
                 {"recipient_email": nda.recipient_email, "error": result.error},
             )
+            APNotificationEvents(self.db).nda_send_failed(nda, result.error, user_id)
             self.db.commit()
             return nda, result
 
@@ -593,6 +597,7 @@ class NdaService:
         self._record_history(
             nda.nda_id, ACTION_SENT, user_id, {"recipient_email": nda.recipient_email}
         )
+        APNotificationEvents(self.db).nda_sent(nda)
 
         self.db.commit()
         self.db.refresh(nda)
@@ -725,6 +730,7 @@ class NdaService:
         self._record_history(
             nda.nda_id, ACTION_SIGNED, user_id, {"from": current_status, "to": STATUS_SIGNED}
         )
+        APNotificationEvents(self.db).nda_signed(nda, user_id)
 
         self.db.commit()
         self.db.refresh(nda)
@@ -770,6 +776,16 @@ class NdaService:
             {"from": previous, "to": status_code, "reason": reason,
              "signed_document_key": signed_document_key},
         )
+
+        notification_events = APNotificationEvents(self.db)
+        if status_code == STATUS_SIGNED:
+            notification_events.nda_signed(nda, user_id)
+        elif status_code == STATUS_COMPLETED:
+            notification_events.nda_completed(nda)
+        elif status_code == STATUS_EXPIRED:
+            notification_events.nda_expired(nda, user_id)
+        elif status_code == STATUS_REJECTED:
+            notification_events.nda_review_done(nda)
 
         self.db.commit()
         self.db.refresh(nda)

@@ -44,6 +44,7 @@ from Backend.API_Layer.utils.validation_progress import (
     skip_remaining_stages,
     update_validation_stage,
 )
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Business_Layer.utils import invoice_status
 from Backend.Business_Layer.utils.exceptions import (
     DuplicateInvoiceError,
@@ -1676,6 +1677,7 @@ class InvoiceExtractionService:
                     new_values={"invoice_number": invoice.invoice_number, "vendor_id": vendor_id},
                 )
             )
+            APNotificationEvents(self.db).invoice_review_required(invoice, created_by)
 
             self.db.commit()
             self.db.refresh(invoice)
