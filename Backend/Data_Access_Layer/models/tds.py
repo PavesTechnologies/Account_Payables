@@ -243,3 +243,79 @@ class InvoiceTds(Base):
     payment_nature: Mapped[Optional["TdsPaymentNature"]] = relationship("TdsPaymentNature", back_populates="invoice_tds")
     tds_rule: Mapped[Optional["TaxRule"]] = relationship("TaxRule", foreign_keys=[tds_rule_id])
     tds_rate_rule: Mapped[Optional["TaxRateRule"]] = relationship("TaxRateRule", foreign_keys=[tds_rate_rule_id])
+
+
+class InvoiceTdsTracking(Base):
+    """What Finance did about an invoice's withheld TDS AFTER it was verified -
+    deduction, deposit (challan) and return filing, all performed outside this
+    system and only recorded here. Deliberately separate from InvoiceTds (the
+    immutable determination snapshot). One row per invoice, created on the
+    first recorded activity; no row means TDS_PENDING. See
+    TdsTrackingService and migration_payment_tds_tracking.sql."""
+
+    __tablename__ = "invoice_tds_tracking"
+    __table_args__ = (
+        ForeignKeyConstraint(["invoice_id"], ["ap.invoice.invoice_id"], ondelete="CASCADE", name="invoice_tds_tracking_invoice_fk"),
+        PrimaryKeyConstraint("id", name="invoice_tds_tracking_pkey"),
+        UniqueConstraint("invoice_id", name="invoice_tds_tracking_invoice_unique"),
+        CheckConstraint(
+            "tracking_status IN ('TDS_PENDING','TDS_DEDUCTED','TDS_DEPOSITED','TDS_FILED')",
+            name="invoice_tds_tracking_status_chk",
+        ),
+        CheckConstraint(
+            "(deposit_date IS NULL OR deduction_date IS NULL OR deposit_date >= deduction_date) "
+            "AND (filing_date IS NULL OR deposit_date IS NULL OR filing_date >= deposit_date)",
+            name="invoice_tds_tracking_dates_chk",
+        ),
+        Index("idx_invoice_tds_tracking_status", "tracking_status"),
+        {"schema": "ap"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    invoice_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    tracking_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'TDS_PENDING'::character varying"))
+    deduction_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    challan_number: Mapped[Optional[str]] = mapped_column(String(50))
+    bsr_code: Mapped[Optional[str]] = mapped_column(String(20))
+    deposit_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    filing_date: Mapped[Optional[datetime.date]] = mapped_column(Date)
+    filing_reference: Mapped[Optional[str]] = mapped_column(String(100))
+    remarks: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[Optional[str]] = mapped_column(String(100))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_by: Mapped[Optional[str]] = mapped_column(String(100))
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    documents: Mapped[list["InvoiceTdsDocument"]] = relationship(
+        "InvoiceTdsDocument", back_populates="tracking", cascade="all, delete-orphan", order_by="InvoiceTdsDocument.id"
+    )
+
+
+class InvoiceTdsDocument(Base):
+    """Challan / TDS certificate / filing acknowledgement etc. for an invoice's
+    TDS tracking (S3 object key in file_path)."""
+
+    __tablename__ = "invoice_tds_document"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["invoice_tds_tracking_id"], ["ap.invoice_tds_tracking.id"], ondelete="CASCADE", name="invoice_tds_document_tracking_fk"
+        ),
+        PrimaryKeyConstraint("id", name="invoice_tds_document_pkey"),
+        CheckConstraint(
+            "document_type IN ('CHALLAN','CERTIFICATE','FILING_ACKNOWLEDGEMENT','OTHER')", name="invoice_tds_document_type_chk"
+        ),
+        Index("idx_invoice_tds_document_tracking", "invoice_tds_tracking_id"),
+        {"schema": "ap"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    invoice_tds_tracking_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_type: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'OTHER'::character varying"))
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[Optional[str]] = mapped_column(String(100))
+    file_size: Mapped[Optional[int]] = mapped_column(Integer)
+    uploaded_by: Mapped[Optional[str]] = mapped_column(String(100))
+    uploaded_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+    tracking: Mapped["InvoiceTdsTracking"] = relationship("InvoiceTdsTracking", back_populates="documents")

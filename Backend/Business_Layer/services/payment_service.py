@@ -267,35 +267,8 @@ class PaymentService:
                     invoice = self.invoice_dao.get_invoice_by_id_locked(allocation.invoice_id)
                     if invoice is None:
                         continue
-                    invoice_status_before = invoice.status.status_code if invoice.status else None
-                    invoice.amount_paid = invoice.amount_paid + allocation.allocated_amount
-
-                    if invoice.amount_paid >= self._net_payable(invoice):
-                        new_status_code = STATUS_CODE_PAID
-                    else:
-                        new_status_code = STATUS_CODE_PARTIALLY_PAID
-                    new_status = self.invoice_dao.get_status_by_code(new_status_code)
-                    if new_status is not None:
-                        invoice.status_id = new_status.status_id
-                    invoice.updated_by = user_id
-
-                    # Same reasoning as create_payment's per-invoice entry below — this is the
-                    # one event that actually changes the invoice itself (amount_paid/status),
-                    # so it belongs on that invoice's own Activity view, not just the payment's.
-                    self.invoice_dao.create_audit_log(
-                        AuditLog(
-                            table_name="invoice",
-                            record_id=allocation.invoice_id,
-                            action="INVOICE_PAYMENT_CLEARED",
-                            changed_by=user_id,
-                            old_values={"status_code": invoice_status_before},
-                            new_values={
-                                "status_code": new_status_code,
-                                "payment_id": payment.payment_id,
-                                "allocated_amount": str(allocation.allocated_amount),
-                                "amount_paid": str(invoice.amount_paid),
-                            },
-                        )
+                    self._apply_cleared_allocation(
+                        invoice, allocation.allocated_amount, payment.payment_id, user_id, "INVOICE_PAYMENT_CLEARED"
                     )
 
                 payment.payment_date = payment_date or datetime.date.today()
@@ -342,6 +315,44 @@ class PaymentService:
         except Exception:
             self.db.rollback()
             raise
+
+    def _apply_cleared_allocation(self, invoice, amount: Decimal, payment_id: int, user_id, action: str, extra: Optional[dict] = None) -> str:
+        """Money actually reached the vendor for this invoice: add it to
+        amount_paid and move the invoice to PAID / PARTIALLY_PAID against the
+        TDS-adjusted payable. The single place this happens - shared by the
+        SCHEDULED->SENT->CLEARED flow (update_status) and record_payment.
+        Returns the new invoice status code."""
+        invoice_status_before = invoice.status.status_code if invoice.status else None
+        invoice.amount_paid = invoice.amount_paid + amount
+
+        if invoice.amount_paid >= self._net_payable(invoice):
+            new_status_code = STATUS_CODE_PAID
+        else:
+            new_status_code = STATUS_CODE_PARTIALLY_PAID
+        new_status = self.invoice_dao.get_status_by_code(new_status_code)
+        if new_status is not None:
+            invoice.status_id = new_status.status_id
+        invoice.updated_by = user_id
+
+        # The one event that actually changes the invoice itself (amount_paid/status),
+        # so it belongs on that invoice's own Activity view, not just the payment's.
+        self.invoice_dao.create_audit_log(
+            AuditLog(
+                table_name="invoice",
+                record_id=invoice.invoice_id,
+                action=action,
+                changed_by=user_id,
+                old_values={"status_code": invoice_status_before},
+                new_values={
+                    "status_code": new_status_code,
+                    "payment_id": payment_id,
+                    "allocated_amount": str(amount),
+                    "amount_paid": str(invoice.amount_paid),
+                    **(extra or {}),
+                },
+            )
+        )
+        return new_status_code
 
     @staticmethod
     def _status_code(payment: Payment) -> Optional[str]:

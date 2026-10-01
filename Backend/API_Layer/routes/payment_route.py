@@ -1,17 +1,27 @@
 # Backend/API_Layer/routes/payment_route.py
+from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
 from Backend.API_Layer.interface.payment_interface import (
+    InvoicePaymentDetailDTO,
+    InvoicePaymentPageDTO,
     InvoiceReadyForPaymentResponse,
     PaymentCreateRequest,
+    PaymentDocumentDTO,
     PaymentDTO,
+    PaymentMetadataDTO,
     PaymentResponse,
     PaymentStatusUpdateRequest,
+    RecordPaymentRequest,
 )
 from Backend.API_Layer.middleware.permission_base_access import permission_based_access
+from Backend.API_Layer.utils.file_validation import validate_upload_file
+from Backend.API_Layer.utils.s3_utils import download_from_s3, view_from_s3
 from Backend.Business_Layer.services.payment_service import PaymentService
+from Backend.Business_Layer.services.payment_tracking_service import PaymentNotFoundError, PaymentTrackingService
+from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
 
 router = APIRouter()
 
@@ -59,6 +69,167 @@ def create_payment(payload: PaymentCreateRequest, http_request: Request):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================================================
+# Payment Management screens (PaymentTrackingService). Declared BEFORE the
+# GET "/{payment_id}" route below so "/metadata", "/history", ... are not
+# captured by it.
+# =========================================================
+
+_PAYMENT_READ_PERMISSIONS = ["PAYMENT_VIEW", "PAYMENT_PROCESS"]
+
+
+def _tracking_error(e: Exception, db, rollback: bool = True):
+    if rollback:
+        db.rollback()
+    if isinstance(e, PaymentNotFoundError):
+        raise HTTPException(status_code=404, detail=str(e))
+    if isinstance(e, ValueError):
+        raise HTTPException(status_code=422, detail=str(e))
+    if isinstance(e, HTTPException):
+        raise e
+    raise HTTPException(status_code=500, detail="Payment request failed")
+
+
+@router.get(
+    "/metadata",
+    response_model=PaymentMetadataDTO,
+    dependencies=[Depends(permission_based_access(_PAYMENT_READ_PERMISSIONS))],
+)
+def get_payment_metadata():
+    """Payment modes, document types and upload limits for the Record Payment form."""
+    return PaymentTrackingService.metadata()
+
+
+@router.get(
+    "/ready-for-payment",
+    response_model=InvoicePaymentPageDTO,
+    dependencies=[Depends(permission_based_access(_PAYMENT_READ_PERMISSIONS))],
+)
+def list_ready_for_payment(
+    http_request: Request,
+    search: Optional[str] = Query(None, description="Invoice number or vendor name"),
+    status: Optional[str] = Query(None, description="Comma-separated invoice status codes; default READY_FOR_PAYMENT,PARTIALLY_PAID"),
+    vendor_id: Optional[int] = Query(None),
+    due_from: Optional[date] = Query(None),
+    due_to: Optional[date] = Query(None),
+    overdue: bool = Query(False, description="Only invoices past their due date"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    db = http_request.state.db
+    try:
+        return PaymentTrackingService(db).list_ready_for_payment(search, status, vendor_id, due_from, due_to, overdue, page, page_size)
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
+
+
+@router.get(
+    "/history",
+    response_model=InvoicePaymentPageDTO,
+    dependencies=[Depends(permission_based_access(_PAYMENT_READ_PERMISSIONS))],
+)
+def list_payment_history(
+    http_request: Request,
+    search: Optional[str] = Query(None, description="Invoice number or vendor name"),
+    status: Optional[str] = Query(None, description="Comma-separated invoice status codes, e.g. PAID,PARTIALLY_PAID"),
+    vendor_id: Optional[int] = Query(None),
+    payment_mode: Optional[str] = Query(None),
+    paid_from: Optional[date] = Query(None),
+    paid_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """Invoices that have at least one payment, most recently paid first."""
+    db = http_request.state.db
+    try:
+        return PaymentTrackingService(db).list_payment_history(search, status, vendor_id, payment_mode, paid_from, paid_to, page, page_size)
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
+
+
+@router.get(
+    "/invoice/{invoice_id}",
+    response_model=InvoicePaymentDetailDTO,
+    dependencies=[Depends(permission_based_access(_PAYMENT_READ_PERMISSIONS))],
+)
+def get_invoice_payments(invoice_id: int, http_request: Request):
+    """Invoice payment summary + every payment (with receipts) applied to it."""
+    db = http_request.state.db
+    try:
+        return PaymentTrackingService(db).get_invoice_payments(invoice_id)
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
+
+
+@router.post(
+    "/invoice/{invoice_id}/record",
+    response_model=InvoicePaymentDetailDTO,
+    status_code=201,
+    dependencies=[Depends(permission_based_access(["PAYMENT_PROCESS"]))],
+)
+def record_payment(invoice_id: int, payload: RecordPaymentRequest, http_request: Request):
+    """Record a completed payment (partial or full). Returns the refreshed
+    invoice payment detail; recorded_payment_id identifies the new payment
+    (use it to upload the receipt)."""
+    db = http_request.state.db
+    try:
+        return PaymentTrackingService(db).record_payment(invoice_id, payload, _get_user_id(http_request))
+    except Exception as e:
+        _tracking_error(e, db)
+
+
+@router.post(
+    "/{payment_id}/documents",
+    response_model=PaymentDocumentDTO,
+    status_code=201,
+    dependencies=[Depends(permission_based_access(["PAYMENT_PROCESS"]))],
+)
+async def upload_payment_document(
+    payment_id: int,
+    http_request: Request,
+    file: UploadFile = File(...),
+    document_type: str = Form("RECEIPT"),
+):
+    db = http_request.state.db
+    content = await file.read()
+    try:
+        validate_upload_file(file, content)
+    except (UnsupportedFileType, InvalidUploadFile) as e:
+        raise HTTPException(status_code=415 if isinstance(e, UnsupportedFileType) else 400, detail=str(e))
+    try:
+        return PaymentTrackingService(db).upload_document(
+            payment_id, file.filename, content, file.content_type, document_type, _get_user_id(http_request)
+        )
+    except Exception as e:
+        _tracking_error(e, db)
+
+
+@router.get(
+    "/{payment_id}/documents/{document_id}/view",
+    dependencies=[Depends(permission_based_access(_PAYMENT_READ_PERMISSIONS))],
+)
+def view_payment_document(payment_id: int, document_id: int, http_request: Request):
+    db = http_request.state.db
+    try:
+        document = PaymentTrackingService(db).get_document(payment_id, document_id)
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
+    return view_from_s3(document.file_path)
+
+
+@router.get(
+    "/{payment_id}/documents/{document_id}/download",
+    dependencies=[Depends(permission_based_access(_PAYMENT_READ_PERMISSIONS))],
+)
+def download_payment_document(payment_id: int, document_id: int, http_request: Request):
+    db = http_request.state.db
+    try:
+        document = PaymentTrackingService(db).get_document(payment_id, document_id)
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
+    return download_from_s3(document.file_path)
 
 
 @router.post(

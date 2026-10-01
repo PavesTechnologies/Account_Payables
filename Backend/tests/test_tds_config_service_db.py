@@ -200,9 +200,11 @@ def test_rule_create_read_update_status_and_audit(db, tag):
     assert update_audit.new_values["rate_percent"] == "0.7500"
 
 
-def test_rule_duplicate_code_conflicts(db):
+def test_rule_duplicate_code_conflicts(db, tag):
+    svc = TdsConfigService(db)
+    svc.create_rule(_rule_raw(f"{tag}_DUP", "CONTRACTOR", effective_from="2030-04-01"), USER)
     with pytest.raises(TdsConfigConflictError, match="already exists"):
-        TdsConfigService(db).create_rule(_rule_raw("tds_194c", "CONTRACTOR", effective_from="2030-04-01"), USER)
+        svc.create_rule(_rule_raw(f"{tag.lower()}_dup", "CONTRACTOR", rate="2", effective_from="2031-04-01"), USER)
 
 
 def test_rule_code_used_by_gst_rule_conflicts(db):
