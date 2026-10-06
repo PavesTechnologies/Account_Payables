@@ -90,6 +90,14 @@ class DashboardPeriodDTO(BaseModel):
     granularity: str
 
 
+class DashboardActivityPageDTO(BaseModel):
+    period: DashboardPeriodDTO
+    page: int
+    page_size: int
+    total: int                    # matching rows across all pages
+    items: List[DashboardActivityDTO]
+
+
 class DashboardSummaryDTO(BaseModel):
     generated_at: datetime.datetime
     period: DashboardPeriodDTO

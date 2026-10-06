@@ -44,6 +44,7 @@ from Backend.Data_Access_Layer.dao.dashboard_dao import DashboardDAO
 MAX_RANGE_DAYS = 366
 DEFAULT_RANGE_DAYS = 30
 RECENT_ACTIVITY_LIMIT = 15
+ACTIVITY_PAGE_SIZE = 20
 
 VENDOR_MANAGER_ROLES = ["Admin", "Vendor_Intake"]
 
@@ -134,6 +135,10 @@ ACTIVITY_LABELS = {
 }
 
 _ENTITY_BY_TABLE = {"invoice": "invoice", "purchase_requisition": "purchase_requisition", "vendor": "vendor"}
+
+
+def _activity_title(action: str) -> str:
+    return ACTIVITY_LABELS.get(action, action.replace("_", " ").capitalize())
 
 
 def _money(value) -> str:
@@ -563,25 +568,62 @@ class DashboardService:
     # Recent activity
     # =========================================================
 
-    def _recent_activity(self, out, caps, period_from, period_to):
+    @staticmethod
+    def _activity_sources(caps) -> dict:
+        """{table_name: {actions}} the user may see, from their sections."""
         sources: dict = {}
         for section, tables in ACTIVITY_SOURCES.items():
             if section in caps:
                 for table, actions in tables.items():
                     sources.setdefault(table, set()).update(actions)
-        rows = self.dao.recent_audit(sources, period_from, period_to, RECENT_ACTIVITY_LIMIT)
+        return sources
+
+    def _activity_items(self, rows) -> list:
         invoice_numbers = self.dao.invoice_numbers(r.record_id for r in rows if r.table_name == "invoice")
         pr_numbers = self.dao.pr_numbers(r.record_id for r in rows if r.table_name == "purchase_requisition")
         vendor_names = self.dao.vendor_names(r.record_id for r in rows if r.table_name == "vendor")
         reference = {"invoice": invoice_numbers, "purchase_requisition": pr_numbers, "vendor": vendor_names}
-        for row in rows:
-            out["recent_activity"].append({
-                "id": row.audit_log_id,
-                "action": row.action,
-                "title": ACTIVITY_LABELS.get(row.action, row.action.replace("_", " ").capitalize()),
-                "entity_type": _ENTITY_BY_TABLE.get(row.table_name, row.table_name),
-                "entity_id": row.record_id,
-                "reference": reference.get(row.table_name, {}).get(row.record_id),
-                "actor": row.changed_by,
-                "occurred_at": row.changed_at,
-            })
+        return [{
+            "id": row.audit_log_id,
+            "action": row.action,
+            "title": _activity_title(row.action),
+            "entity_type": _ENTITY_BY_TABLE.get(row.table_name, row.table_name),
+            "entity_id": row.record_id,
+            "reference": reference.get(row.table_name, {}).get(row.record_id),
+            "actor": row.changed_by,
+            "occurred_at": row.changed_at,
+        } for row in rows]
+
+    def _recent_activity(self, out, caps, period_from, period_to):
+        rows = self.dao.recent_audit(self._activity_sources(caps), period_from, period_to, RECENT_ACTIVITY_LIMIT)
+        out["recent_activity"].extend(self._activity_items(rows))
+
+    # =========================================================
+    # Activity history ("View all activity" + search)
+    # =========================================================
+
+    def get_activity(self, user: dict, search: Optional[str] = None, entity_type: Optional[str] = None,
+                     from_date=None, to_date=None, page: int = 1, page_size: int = ACTIVITY_PAGE_SIZE) -> dict:
+        """Paged, searchable activity history - same visibility rules as the
+        summary's recent_activity (the caller's own sections only)."""
+        if entity_type is not None and entity_type not in _ENTITY_BY_TABLE.values():
+            raise ValueError(f"entity_type must be one of: {', '.join(sorted(_ENTITY_BY_TABLE.values()))}")
+        period_from, period_to, granularity = self.resolve_period(from_date, to_date)
+        sources = self._activity_sources(self.capabilities(user))
+        if entity_type is not None:
+            table = next(t for t, e in _ENTITY_BY_TABLE.items() if e == entity_type)
+            sources = {t: a for t, a in sources.items() if t == table}
+        search = (search or "").strip() or None
+        matched_actions = []
+        if search:
+            needle = search.lower()
+            matched_actions = [a for actions in sources.values() for a in actions if needle in _activity_title(a).lower()]
+        rows, total = self.dao.search_audit(sources, period_from, period_to, search, matched_actions,
+                                            (page - 1) * page_size, page_size)
+        return {
+            "period": {"from_date": period_from, "to_date": period_to, "granularity": granularity},
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "items": self._activity_items(rows),
+        }

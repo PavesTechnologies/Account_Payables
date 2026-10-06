@@ -337,21 +337,56 @@ class DashboardDAO:
     # Recent activity (ap.audit_log - the existing activity source)
     # =====================================================
 
+    def _audit_query(self, table_actions: dict, date_from, date_to):
+        conditions = [and_(AuditLog.table_name == t, AuditLog.action.in_(list(a))) for t, a in table_actions.items()]
+        start = datetime.datetime.combine(date_from, datetime.time.min)
+        end = datetime.datetime.combine(date_to, datetime.time.max)
+        return self.db.query(AuditLog).filter(or_(*conditions), AuditLog.changed_at >= start, AuditLog.changed_at <= end)
+
     def recent_audit(self, table_actions: dict, date_from, date_to, limit: int) -> List[AuditLog]:
         """Latest audit rows whose (table_name, action) is in table_actions
         ({table_name: [actions]}) within [date_from, date_to]."""
         if not table_actions:
             return []
-        conditions = [and_(AuditLog.table_name == t, AuditLog.action.in_(list(a))) for t, a in table_actions.items()]
-        start = datetime.datetime.combine(date_from, datetime.time.min)
-        end = datetime.datetime.combine(date_to, datetime.time.max)
         return (
-            self.db.query(AuditLog)
-            .filter(or_(*conditions), AuditLog.changed_at >= start, AuditLog.changed_at <= end)
+            self._audit_query(table_actions, date_from, date_to)
             .order_by(AuditLog.changed_at.desc(), AuditLog.audit_log_id.desc())
             .limit(limit)
             .all()
         )
+
+    def search_audit(self, table_actions: dict, date_from, date_to, search: Optional[str],
+                     matched_actions: Iterable[str], offset: int, limit: int):
+        """Paged recent_audit with an optional free-text search over the
+        record's reference (invoice number / PR number / vendor name) plus
+        any action whose label matched (matched_actions, resolved by the
+        caller). Returns (rows, total)."""
+        if not table_actions:
+            return [], 0
+        query = self._audit_query(table_actions, date_from, date_to)
+        if search:
+            pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            query = (
+                query
+                .outerjoin(Invoice, and_(AuditLog.table_name == "invoice", Invoice.invoice_id == AuditLog.record_id))
+                .outerjoin(PurchaseRequisition, and_(AuditLog.table_name == "purchase_requisition",
+                                                     PurchaseRequisition.id == AuditLog.record_id))
+                .outerjoin(Vendor, and_(AuditLog.table_name == "vendor", Vendor.vendor_id == AuditLog.record_id))
+                .filter(or_(
+                    Invoice.invoice_number.ilike(pattern, escape="\\"),
+                    PurchaseRequisition.pr_number.ilike(pattern, escape="\\"),
+                    Vendor.vendor_name.ilike(pattern, escape="\\"),
+                    AuditLog.action.in_(list(matched_actions)),
+                ))
+            )
+        total = query.order_by(None).count()
+        rows = (
+            query.order_by(AuditLog.changed_at.desc(), AuditLog.audit_log_id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return rows, total
 
     def invoice_numbers(self, ids: Iterable[int]) -> dict:
         ids = list(set(ids))

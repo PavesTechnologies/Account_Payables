@@ -15,9 +15,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from Backend.API_Layer.interface.dashboard_interface import DashboardSummaryDTO
+from Backend.API_Layer.interface.dashboard_interface import DashboardActivityPageDTO, DashboardSummaryDTO
 from Backend.API_Layer.routes import dashboard_route
 from Backend.Business_Layer.services.dashboard_service import DashboardService
+from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.approval import ApprovalPolicy, InvoiceApproval, InvoiceApprovalStep, InvoiceApprovalStepApprover
 from Backend.Data_Access_Layer.models.cdc import UmsUserCache
 from Backend.Data_Access_Layer.models.invoice import Invoice
@@ -289,6 +290,53 @@ def test_recent_activity_is_filtered_to_visible_modules(db):
     assert all(a["entity_type"] == "invoice" for a in out["recent_activity"])
 
 
+def _activity(db, role, **kwargs):
+    out = DashboardService(db).get_activity(_user(role), **kwargs)
+    DashboardActivityPageDTO.model_validate(out)
+    return out
+
+
+def test_activity_search_by_reference_and_label(db, tag):
+    invoice = _invoice(db, tag, "PENDING_APPROVAL")
+    db.add_all([
+        AuditLog(table_name="invoice", record_id=invoice.invoice_id, action="INVOICE_CREATED", changed_by="test-suite"),
+        AuditLog(table_name="invoice", record_id=invoice.invoice_id, action="INVOICE_SENT_FOR_APPROVAL", changed_by="test-suite"),
+        AuditLog(table_name="invoice", record_id=invoice.invoice_id, action="EMAIL_SENT", changed_by="test-suite"),  # noise
+    ])
+    db.flush()
+
+    by_number = _activity(db, "approver", search=invoice.invoice_number.lower())
+    assert by_number["total"] == 2
+    assert {i["action"] for i in by_number["items"]} == {"INVOICE_CREATED", "INVOICE_SENT_FOR_APPROVAL"}
+    assert all(i["reference"] == invoice.invoice_number for i in by_number["items"])
+
+    by_label = _activity(db, "approver", search="sent for approval")
+    assert any(i["entity_id"] == invoice.invoice_id and i["action"] == "INVOICE_SENT_FOR_APPROVAL" for i in by_label["items"])
+    assert all(i["action"] == "INVOICE_SENT_FOR_APPROVAL" or tag in (i["reference"] or "") for i in by_label["items"])
+
+    # LIKE wildcards in the search are literal
+    assert _activity(db, "approver", search="%%")["total"] == 0
+
+
+def test_activity_is_scoped_paged_and_validated(db, tag):
+    invoice = _invoice(db, tag, "PENDING_APPROVAL")
+    db.add_all([AuditLog(table_name="invoice", record_id=invoice.invoice_id, action="INVOICE_CREATED", changed_by="x")
+                for _ in range(3)])
+    db.flush()
+    # a PR-only user never sees invoice activity, even when searching for it
+    assert _activity(db, "pr_requestor", search=invoice.invoice_number)["total"] == 0
+    assert _activity(db, "approver", search=invoice.invoice_number, entity_type="vendor")["total"] == 0
+
+    first = _activity(db, "approver", search=invoice.invoice_number, page=1, page_size=2)
+    second = _activity(db, "approver", search=invoice.invoice_number, page=2, page_size=2)
+    assert first["total"] == second["total"] == 3
+    assert len(first["items"]) == 2 and len(second["items"]) == 1
+    assert not {i["id"] for i in first["items"]} & {i["id"] for i in second["items"]}
+
+    with pytest.raises(ValueError, match="entity_type"):
+        DashboardService(db).get_activity(_user("approver"), entity_type="payment")
+
+
 # =========================================================
 # Empty data (fake DAO - every query returns nothing)
 # =========================================================
@@ -350,3 +398,12 @@ def test_route_ignores_client_supplied_user_id(db):
     spoofed = client.get("/dashboard/summary", params={"user_id": "5100031"}).json()
     get = lambda out: next(a["value"] for a in out["action_required"] if a["key"] == "invoices_awaiting_my_approval")
     assert get(plain) == get(spoofed) == 0
+
+
+def test_activity_route(db):
+    assert _client(db, None).get("/dashboard/activity").status_code == 401
+    client = _client(db, _user("approver"))
+    response = client.get("/dashboard/activity", params={"search": "invoice", "page_size": 5})
+    assert response.status_code == 200 and response.json()["page_size"] == 5
+    assert client.get("/dashboard/activity", params={"entity_type": "bogus"}).status_code == 422
+    assert client.get("/dashboard/activity", params={"page": 0}).status_code == 422
