@@ -157,6 +157,8 @@ class PaymentOptionDTO(BaseModel):
     value: str
     label: str
     reference_label: Optional[str] = None
+    reference_pattern: Optional[str] = None  # payment modes: full-match regex for reference_number (null = free text)
+    reference_hint: Optional[str] = None     # payment modes: human-readable form of reference_pattern
 
 
 class PaymentMetadataDTO(BaseModel):

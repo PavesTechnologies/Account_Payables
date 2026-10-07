@@ -37,6 +37,7 @@ ROLE_VENDOR_INTAKE = "Vendor_Intake"
 ROLE_AP_EXECUTIVE = "AP_EXECUTIVE"
 ROLE_PAYMENT_PROCESSOR = "Payment_Processor"
 ROLE_FINANCE_MANAGER = "Finance_Manager"
+ROLE_FINANCE_EXECUTIVE = "Finance_Executive"
 ROLE_ADMIN = "Admin"
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,8 @@ PAYMENT_READY = "PAYMENT_READY"
 PAYMENT_DUE = "PAYMENT_DUE"
 PAYMENT_FAILED = "PAYMENT_FAILED"
 PAYMENT_EXCEPTION = "PAYMENT_EXCEPTION"
+# Finance executive (holds INVOICE_TDS_VERIFY)
+INVOICE_TDS_VERIFICATION_REQUIRED = "INVOICE_TDS_VERIFICATION_REQUIRED"
 # Finance manager
 FINANCE_ACTION_REQUIRED = "FINANCE_ACTION_REQUIRED"
 FINANCE_ESCALATION = "FINANCE_ESCALATION"
@@ -171,6 +174,10 @@ CATALOG: Dict[str, NotificationTypeDef] = {d.code: d for d in (
     _t(PAYMENT_DUE, HIGH, "Scheduled payment due", "Process scheduled payment", ROLE_PAYMENT_PROCESSOR, MODULE_PAYMENTS),
     _t(PAYMENT_FAILED, CRITICAL, "Payment failed", "Resolve payment failure", ROLE_PAYMENT_PROCESSOR, MODULE_PAYMENTS),
     _t(PAYMENT_EXCEPTION, HIGH, "Payment exception", "Resolve payment exception", ROLE_PAYMENT_PROCESSOR, MODULE_PAYMENTS),
+    # --- Finance executive ----------------------------------------------------
+    # AP has no permission -> user mapping (only UMS roles are synced), so the
+    # INVOICE_TDS_VERIFY holders are reached through their UMS role.
+    _t(INVOICE_TDS_VERIFICATION_REQUIRED, MEDIUM, "TDS verification required", "Verify TDS", ROLE_FINANCE_EXECUTIVE, MODULE_PAYMENTS),
     # --- Finance manager ------------------------------------------------------
     _t(FINANCE_ACTION_REQUIRED, HIGH, "Finance action required", "Review finance action", ROLE_FINANCE_MANAGER, MODULE_PAYMENTS),
     _t(FINANCE_ESCALATION, CRITICAL, "Finance escalation", "Review escalated issue", ROLE_FINANCE_MANAGER, MODULE_PAYMENTS),
@@ -193,8 +200,8 @@ UNEMITTED_TYPES: Dict[str, str] = {
     INVOICE_APPROVAL_AGEING: _NEEDS_SCHEDULER,
     PAYMENT_DUE: _NEEDS_SCHEDULER,
     PAYMENT_EXCEPTION: "no payment state represents an exception (only SCHEDULED/SENT/CLEARED/FAILED)",
-    FINANCE_ACTION_REQUIRED: "no finance-management action state exists; TDS verify is permission-based "
-                             "with no mapped role and does not gate payment",
+    FINANCE_ACTION_REQUIRED: "no finance-management action state exists (TDS verification is "
+                             "INVOICE_TDS_VERIFICATION_REQUIRED)",
     INVOICE_PAYMENT_ACTION_REQUIRED: "the post-approval payment step is Finance's (PAYMENT_READY), "
                                      "not an AP Executive action",
 }

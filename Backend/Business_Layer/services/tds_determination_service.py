@@ -37,6 +37,7 @@ import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Business_Layer.utils.tds_rate_condition import (
     ENTITY_TYPE_BY_PAN_CODE,
     rate_conditions_from_rows,
@@ -332,6 +333,7 @@ class TDSDeterminationService:
                     "remarks": remarks,
                 },
             )
+            APNotificationEvents(self.db).tds_verified(invoice_id)
 
             self.db.commit()
             self.db.refresh(row)

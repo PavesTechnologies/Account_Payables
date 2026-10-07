@@ -93,19 +93,19 @@ def test_partial_then_full_payment_and_history(db, tag):
     invoice = _invoice(db, tag)
     svc = PaymentTrackingService(db)
 
-    first = svc.record_payment(invoice.invoice_id, _pay("50000", "UTR0001", remarks="first part"), USER)
+    first = svc.record_payment(invoice.invoice_id, _pay("50000", "UTR0000000000001", remarks="first part"), USER)
     assert first["status_code"] == "PARTIALLY_PAID"
     assert (first["amount_paid"], first["remaining_amount"]) == (Decimal("50000.00"), Decimal("40000.00"))
     assert first["recorded_payment_id"] == first["payments"][0]["payment_id"]
     assert first["payments"][0]["status_code"] == "CLEARED" and first["payments"][0]["remarks"] == "first part"
 
     with pytest.raises(ValueError, match="exceeds the remaining payable amount 40000.00"):
-        svc.record_payment(invoice.invoice_id, _pay("40000.01", "UTR0002"), USER)
+        svc.record_payment(invoice.invoice_id, _pay("40000.01", "UTR0000000000002"), USER)
 
     # still listed as payable while partially paid
     assert svc.list_ready_for_payment(search=tag)["items"][0]["status_code"] == "PARTIALLY_PAID"
 
-    final = svc.record_payment(invoice.invoice_id, _pay("40000", "UTR0002", mode="RTGS"), USER)
+    final = svc.record_payment(invoice.invoice_id, _pay("40000", "UTR0000000000002", mode="RTGS"), USER)
     assert final["status_code"] == "PAID" and final["remaining_amount"] == Decimal("0.00")
     assert final["can_record_payment"] is False
     assert [p["amount"] for p in final["payments"]] == [Decimal("50000.00"), Decimal("40000.00")]
@@ -114,7 +114,7 @@ def test_partial_then_full_payment_and_history(db, tag):
     history = svc.list_payment_history(search=tag)
     assert history["total"] == 1
     row = history["items"][0]
-    assert row["payment_count"] == 2 and row["last_payment_reference"] == "UTR0002" and row["last_payment_mode"] == "RTGS"
+    assert row["payment_count"] == 2 and row["last_payment_reference"] == "UTR0000000000002" and row["last_payment_mode"] == "RTGS"
     assert svc.list_payment_history(search=tag, status="PARTIALLY_PAID")["total"] == 0
     assert svc.list_payment_history(search=tag, payment_mode="NEFT")["total"] == 1
 
@@ -125,7 +125,13 @@ def test_partial_then_full_payment_and_history(db, tag):
     (_pay("10.001", "R1"), "at most 2 decimal places"),
     (_pay("100", "R1", mode="CASH"), "Payment Mode must be one of"),
     (_pay("100", "  "), "Reference is required"),
-    (_pay("100", "bad;ref"), "may contain only"),
+    (_pay("100", "bad;ref", mode="BANK_TRANSFER"), "may contain only"),
+    (_pay("100", "UTR123"), "UTR Number for NEFT must be exactly 16 letters or digits"),
+    (_pay("100", "UTR-000000000001", mode="RTGS"), "UTR Number for RTGS must be exactly 16"),
+    (_pay("100", "12345678901", mode="IMPS"), "IMPS Reference Number for IMPS must be exactly 12 digits"),
+    (_pay("100", "12345678901A", mode="UPI"), "UPI Transaction ID for UPI must be exactly 12 digits"),
+    (_pay("100", "1234567", mode="CHEQUE"), "Cheque Number for Cheque must be exactly 6 digits"),
+    (_pay("100", "١٢٣٤٥٦", mode="DEMAND_DRAFT"), "DD Number for Demand Draft must be exactly 6 digits"),
 ])
 def test_record_payment_validation(db, tag, payload, message):
     invoice = _invoice(db, tag)
@@ -133,12 +139,29 @@ def test_record_payment_validation(db, tag, payload, message):
         PaymentTrackingService(db).record_payment(invoice.invoice_id, payload, USER)
 
 
+@pytest.mark.parametrize("mode, reference", [
+    ("NEFT", "SBIN026280012345"), ("rtgs", "hdfcr52026100712"), ("IMPS", "628012345678"), ("UPI", "628012345678"),
+    ("CHEQUE", "000123"), ("DEMAND_DRAFT", "456789"), ("BANK_TRANSFER", "TXN/2026-10/0042"),
+])
+def test_record_payment_accepts_valid_reference_per_mode(db, tag, mode, reference):
+    invoice = _invoice(db, tag)
+    detail = PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("100", reference, mode=mode), USER)
+    assert detail["payments"][0]["reference_number"] == reference
+
+
+def test_metadata_reference_patterns_match_validation():
+    modes = {m["value"]: m for m in PaymentTrackingService.metadata()["payment_modes"]}
+    assert modes["NEFT"]["reference_pattern"] == modes["RTGS"]["reference_pattern"] == "^[A-Za-z0-9]{16}$"
+    assert modes["DEMAND_DRAFT"]["reference_pattern"] == "^[0-9]{6}$"
+    assert modes["BANK_TRANSFER"]["reference_pattern"] is None
+
+
 def test_duplicate_reference_on_same_invoice_rejected(db, tag):
     invoice = _invoice(db, tag)
     svc = PaymentTrackingService(db)
-    svc.record_payment(invoice.invoice_id, _pay("100", "UTR-DUP"), USER)
+    svc.record_payment(invoice.invoice_id, _pay("100", "UTRDUP0000000001"), USER)
     with pytest.raises(ValueError, match="already recorded for this invoice"):
-        svc.record_payment(invoice.invoice_id, _pay("100", "utr-dup"), USER)
+        svc.record_payment(invoice.invoice_id, _pay("100", "utrdup0000000001"), USER)
 
 
 def test_payment_blocked_for_non_payable_invoice_and_unverified_tds(db, tag):
@@ -156,7 +179,7 @@ def test_payment_blocked_for_non_payable_invoice_and_unverified_tds(db, tag):
 def test_receipt_upload_and_listing(db, tag, fake_s3):
     invoice = _invoice(db, tag)
     svc = PaymentTrackingService(db)
-    payment_id = svc.record_payment(invoice.invoice_id, _pay("1000", "UTR-R"), USER)["recorded_payment_id"]
+    payment_id = svc.record_payment(invoice.invoice_id, _pay("1000", "UTRRECEIPT000001"), USER)["recorded_payment_id"]
 
     doc = svc.upload_document(payment_id, "receipt.pdf", b"%PDF-1.4 test", "application/pdf", "receipt", USER)
     assert doc["document_type"] == "RECEIPT" and doc["file_size"] == 13
@@ -251,7 +274,7 @@ def test_tds_activity_requires_verified_determination(db, tag):
 
 def test_tds_status_is_independent_of_invoice_payment_status(db, tag):
     invoice = _invoice(db, tag)
-    PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("90000", "UTR-FULL"), USER)
+    PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("90000", "UTRFULL000000001"), USER)
     detail = TdsTrackingService(db).get_tds_detail(invoice.invoice_id)
     assert detail["invoice_status_code"] == "PAID" and detail["payment"]["remaining_amount"] == Decimal("0.00")
     assert detail["tds_tracking_status"] == "TDS_PENDING"
@@ -292,7 +315,7 @@ def test_payment_routes_permissions_and_contract(db, tag):
     viewer = _client(db, payment_route.router, "/payment", ["PAYMENT_VIEW"])
     processor = _client(db, payment_route.router, "/payment", ["PAYMENT_PROCESS"])
     outsider = _client(db, payment_route.router, "/payment", ["INVOICE_VIEW"])
-    body = {"payment_date": TODAY.isoformat(), "amount": "1000", "payment_mode": "NEFT", "reference_number": "UTR-API"}
+    body = {"payment_date": TODAY.isoformat(), "amount": "1000", "payment_mode": "NEFT", "reference_number": "UTRAPI0000000001"}
 
     assert viewer.get("/payment/metadata").json()["payment_modes"][0]["value"] == "NEFT"
     listing = viewer.get("/payment/ready-for-payment", params={"search": tag})

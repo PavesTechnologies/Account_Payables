@@ -52,6 +52,7 @@ _NDA_TYPES = (
 _INVOICE_REVIEW_TYPES = (nt.INVOICE_REVIEW_REQUIRED, nt.INVOICE_VALIDATION_EXCEPTION, nt.INVOICE_RETURNED)
 _INVOICE_PAYMENT_TYPES = (
     nt.PAYMENT_READY, nt.INVOICE_DUE, nt.INVOICE_OVERDUE, nt.INVOICE_PAYMENT_ACTION_REQUIRED,
+    nt.INVOICE_TDS_VERIFICATION_REQUIRED,
 )
 _APPROVAL_STEP_TYPES = (nt.INVOICE_APPROVAL_REQUIRED, nt.INVOICE_APPROVAL_AGEING)
 _PAYMENT_TYPES = (nt.PAYMENT_DUE, nt.PAYMENT_FAILED, nt.PAYMENT_EXCEPTION, nt.FINANCE_ESCALATION)
@@ -156,6 +157,11 @@ class APNotificationEvents:
         rows = InvoiceDAO(self.db).get_audit_log_for_record("invoice", invoice.invoice_id)
         senders = [r.changed_by for r in rows if r.action == "INVOICE_SENT_FOR_APPROVAL" and r.changed_by]
         return senders[-1] if senders else None
+
+    def _invoice_tds(self, invoice_id):
+        from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
+
+        return TdsDAO(self.db).get_invoice_tds_by_invoice_id(invoice_id)
 
     # =========================================================
     # Procurement
@@ -673,6 +679,30 @@ class APNotificationEvents:
             priority=nt.CRITICAL if overdue else None, deadline=invoice.due_date,
             metadata={"vendor_id": invoice.vendor_id},
         )
+
+    @_best_effort
+    def tds_verification_required(self, invoice, actor_user_id):
+        """Called on final approval. Payment is gated on VERIFIED TDS, so an
+        approved invoice whose TDS is only DETERMINED (applicable or not)
+        waits on Finance. Already VERIFIED (Finance verified during approval)
+        -> nothing to do."""
+        tds = self._invoice_tds(invoice.invoice_id)
+        if tds is None or tds.determination_status != "DETERMINED":
+            return
+        self.dispatcher.notify(
+            nt.INVOICE_TDS_VERIFICATION_REQUIRED,
+            entity_type=nt.ENTITY_INVOICE, entity_id=invoice.invoice_id, entity_display_id=invoice.invoice_number,
+            message=(
+                f"Invoice {invoice.invoice_number} has been approved. "
+                "Verify TDS to make it ready for payment."
+            ),
+            event_id="approved", actor_user_id=actor_user_id, owners=None, deadline=invoice.due_date,
+            metadata={"vendor_id": invoice.vendor_id, "tds_applicable": tds.tds_applicable},
+        )
+
+    @_best_effort
+    def tds_verified(self, invoice_id):
+        self.dispatcher.resolve(nt.ENTITY_INVOICE, invoice_id, [nt.INVOICE_TDS_VERIFICATION_REQUIRED])
 
     @_best_effort
     def invoice_paid(self, invoice):

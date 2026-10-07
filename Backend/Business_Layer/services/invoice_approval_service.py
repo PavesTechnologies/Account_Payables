@@ -407,7 +407,9 @@ class InvoiceApprovalService:
             instance.invoice_id, "INVOICE_APPROVED", user_id,
             {"invoice_approval_id": instance.invoice_approval_id},
         )
-        APNotificationEvents(self.db).invoice_approved(invoice, user_id)
+        events = APNotificationEvents(self.db)
+        events.invoice_approved(invoice, user_id)
+        events.tds_verification_required(invoice, user_id)
 
     def _require_invoice_status(self, status_code: str):
         status = self.invoice_dao.get_status_by_code(status_code)

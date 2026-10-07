@@ -46,16 +46,31 @@ from Backend.Data_Access_Layer.models.tds import InvoiceTdsTracking
 
 # Payment modes for recorded payments - the backend is the source of truth
 # (exposed through GET /payment/metadata; validated in record_payment).
+# reference_pattern: full-match regex for reference_number, written in the
+# subset Python and JavaScript agree on ([0-9], not \d - Python's \d also
+# matches non-ASCII digits) so the frontend can use it verbatim. These are the
+# standard Indian banking conventions (UTR / RRN / cheque & DD number), not yet
+# confirmed against this org's bank data - None means only the generic
+# _REFERENCE_RE check applies.
 PAYMENT_MODES = [
-    {"value": "NEFT", "label": "NEFT", "reference_label": "UTR Number"},
-    {"value": "RTGS", "label": "RTGS", "reference_label": "UTR Number"},
-    {"value": "IMPS", "label": "IMPS", "reference_label": "IMPS Reference Number"},
-    {"value": "UPI", "label": "UPI", "reference_label": "UPI Transaction ID"},
-    {"value": "BANK_TRANSFER", "label": "Bank Transfer", "reference_label": "Transaction Reference"},
-    {"value": "CHEQUE", "label": "Cheque", "reference_label": "Cheque Number"},
-    {"value": "DEMAND_DRAFT", "label": "Demand Draft", "reference_label": "DD Number"},
+    {"value": "NEFT", "label": "NEFT", "reference_label": "UTR Number",
+     "reference_pattern": "^[A-Za-z0-9]{16}$", "reference_hint": "16 letters or digits"},
+    {"value": "RTGS", "label": "RTGS", "reference_label": "UTR Number",
+     "reference_pattern": "^[A-Za-z0-9]{16}$", "reference_hint": "16 letters or digits"},
+    {"value": "IMPS", "label": "IMPS", "reference_label": "IMPS Reference Number",
+     "reference_pattern": "^[0-9]{12}$", "reference_hint": "12 digits"},
+    {"value": "UPI", "label": "UPI", "reference_label": "UPI Transaction ID",
+     "reference_pattern": "^[0-9]{12}$", "reference_hint": "12 digits"},
+    {"value": "BANK_TRANSFER", "label": "Bank Transfer", "reference_label": "Transaction Reference",
+     "reference_pattern": None, "reference_hint": None},
+    {"value": "CHEQUE", "label": "Cheque", "reference_label": "Cheque Number",
+     "reference_pattern": "^[0-9]{6}$", "reference_hint": "6 digits"},
+    {"value": "DEMAND_DRAFT", "label": "Demand Draft", "reference_label": "DD Number",
+     "reference_pattern": "^[0-9]{6}$", "reference_hint": "6 digits"},
 ]
 _PAYMENT_MODE_VALUES = {m["value"] for m in PAYMENT_MODES}
+_PAYMENT_MODE_BY_VALUE = {m["value"]: m for m in PAYMENT_MODES}
+_REFERENCE_PATTERNS = {m["value"]: re.compile(m["reference_pattern"]) for m in PAYMENT_MODES if m["reference_pattern"]}
 
 PAYMENT_DOCUMENT_TYPES = [
     {"value": "RECEIPT", "label": "Payment Receipt / Proof"},
@@ -310,6 +325,10 @@ class PaymentTrackingService:
             reference = (data.reference_number or "").strip()
             if not reference:
                 errors.append("UTR / Transaction Reference is required")
+            elif mode in _REFERENCE_PATTERNS:
+                if not _REFERENCE_PATTERNS[mode].fullmatch(reference):
+                    spec = _PAYMENT_MODE_BY_VALUE[mode]
+                    errors.append(f"{spec['reference_label']} for {spec['label']} must be exactly {spec['reference_hint']}")
             elif len(reference) > 100 or not _REFERENCE_RE.match(reference):
                 errors.append("UTR / Transaction Reference may contain only letters, digits, spaces and / - _ . (max 100)")
 

@@ -50,12 +50,13 @@ U_PAYMENT = uuid.UUID("00000000-0000-0000-0000-000000000110")
 U_FIN_MGR = uuid.UUID("00000000-0000-0000-0000-000000000111")
 U_ADMIN = uuid.UUID("00000000-0000-0000-0000-000000000112")
 U_REQUESTER_2 = uuid.UUID("00000000-0000-0000-0000-000000000113")
+U_FIN_EXEC = uuid.UUID("00000000-0000-0000-0000-000000000114")
 
 USER_IDS = {
     "buyer1": U_REQUESTER, "manager1": U_PR_APPROVER, "officer1": U_PO_1, "officer2": U_PO_2,
     "intake1": U_INTAKE_1, "intake2": U_INTAKE_2, "apexec1": U_AP_EXEC,
     "invapprA": U_INV_APPROVER_A, "invapprB": U_INV_APPROVER_B, "payer1": U_PAYMENT,
-    "finmgr1": U_FIN_MGR, "admin1": U_ADMIN, "buyer2": U_REQUESTER_2,
+    "finmgr1": U_FIN_MGR, "admin1": U_ADMIN, "buyer2": U_REQUESTER_2, "finexec1": U_FIN_EXEC,
 }
 ROLES = {
     "PR_Creator": [U_REQUESTER, U_REQUESTER_2],
@@ -65,6 +66,7 @@ ROLES = {
     nt.ROLE_AP_EXECUTIVE: [U_AP_EXEC],
     nt.ROLE_PAYMENT_PROCESSOR: [U_PAYMENT],
     nt.ROLE_FINANCE_MANAGER: [U_FIN_MGR],
+    nt.ROLE_FINANCE_EXECUTIVE: [U_FIN_EXEC],
     nt.ROLE_ADMIN: [U_ADMIN],
 }
 
@@ -685,6 +687,55 @@ def test_overdue_approved_invoice_is_critical(store):
     ev = APNotificationEvents(FakeSession(), dispatcher=_dispatcher(store))
     ev.invoice_approved(_invoice(due_date=datetime.date(2000, 1, 1)), "invapprA")
     assert store.rows[0].priority == nt.CRITICAL
+
+
+def _with_tds(monkeypatch, status, applicable=True):
+    tds = None if status is None else SimpleNamespace(determination_status=status, tds_applicable=applicable)
+    monkeypatch.setattr(APNotificationEvents, "_invoice_tds", lambda self, invoice_id: tds)
+
+
+@pytest.mark.parametrize("applicable", [True, False])
+def test_approved_invoice_with_unverified_tds_notifies_finance_executive(store, monkeypatch, applicable):
+    _with_tds(monkeypatch, "DETERMINED", applicable)
+    ev = APNotificationEvents(FakeSession(), dispatcher=_dispatcher(store))
+    ev.tds_verification_required(_invoice(), "invapprA")
+    [n] = store.rows
+    assert (n.recipient_user_uuid, n.notification_type) == (U_FIN_EXEC, nt.INVOICE_TDS_VERIFICATION_REQUIRED)
+    assert (n.entity_type, n.entity_id, n.priority) == (nt.ENTITY_INVOICE, "42", nt.MEDIUM)
+    assert n.title == "INV-42 — TDS verification required"
+    assert n.message == "Invoice INV-42 has been approved. Verify TDS to make it ready for payment."
+    assert n.payload["action_label"] == "Verify TDS"
+    assert nt.module_for(n.notification_type) == nt.MODULE_PAYMENTS
+
+
+@pytest.mark.parametrize("status", ["VERIFIED", None])
+def test_no_tds_verification_notification_when_already_verified_or_missing(store, monkeypatch, status):
+    _with_tds(monkeypatch, status)
+    APNotificationEvents(FakeSession(), dispatcher=_dispatcher(store)).tds_verification_required(_invoice(), "invapprA")
+    assert store.rows == []
+
+
+def test_finance_executive_approving_is_not_notified_about_their_own_approval(store, monkeypatch):
+    _with_tds(monkeypatch, "DETERMINED")
+    APNotificationEvents(FakeSession(), dispatcher=_dispatcher(store)).tds_verification_required(_invoice(), "finexec1")
+    assert store.rows == []
+
+
+def test_real_tds_verify_resolves_the_verification_notification(store, monkeypatch):
+    from Backend.Business_Layer.services.tds_determination_service import TDSDeterminationService
+
+    _with_tds(monkeypatch, "DETERMINED")
+    APNotificationEvents(FakeSession(), dispatcher=_dispatcher(store)).tds_verification_required(_invoice(), "invapprA")
+    row = SimpleNamespace(determination_status="DETERMINED", payment_nature_id=1, tds_rule_id=None,
+                          tds_rate_rule_id=None, tds_applicable=False, tds_rate=None, tds_amount=None, remarks=None)
+    service = TDSDeterminationService(FakeSession())
+    service.tds_dao = SimpleNamespace(get_invoice_tds_by_invoice_id_locked=lambda invoice_id: row)
+    service.invoice_dao = SimpleNamespace(create_audit_log=lambda log: log)
+
+    service.verify(42, "finexec1")
+
+    [n] = store.rows
+    assert row.determination_status == "VERIFIED" and n.resolved_at is not None
 
 
 def test_payment_failure_notifies_creator_and_escalates_to_finance_manager(store):
