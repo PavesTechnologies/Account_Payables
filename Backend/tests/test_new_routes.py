@@ -44,10 +44,10 @@ def _make_client(permissions):
 
 @pytest.fixture
 def client():
-    """PO/GRN routes have no permission gate (pre-existing, unrelated to this feature) — an
-    empty permissions list is fine for those. Payment routes now do (PAYMENT_VIEW/
-    PAYMENT_PROCESS), so the payment tests below use payment_client instead."""
-    return _make_client([])
+    """PO/GRN routes are gated by Backend/API_Layer/utils/vendor_permissions.py (PO_READ /
+    GRN_READ ...); a vendor-management user holds VENDOR_VIEW. Payment routes need
+    PAYMENT_VIEW/PAYMENT_PROCESS, so the payment tests below use payment_client instead."""
+    return _make_client(["VENDOR_VIEW"])
 
 
 @pytest.fixture

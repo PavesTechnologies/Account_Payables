@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import Depends, APIRouter, File, HTTPException, Request, UploadFile
 from sqlalchemy.exc import IntegrityError
 
 from Backend.API_Layer.interface.goods_receipt_interface import (
@@ -17,6 +17,9 @@ from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.s3_utils import download_from_s3
 from Backend.Business_Layer.services.goods_receipt_service import GoodsReceiptService
 from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
+
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
+from Backend.API_Layer.utils import vendor_permissions as vp
 
 router = APIRouter()
 
@@ -38,7 +41,7 @@ def _get_user_id(http_request: Request) -> str:
 # ---------------------------------------------------------
 # Create Goods Receipt
 # ---------------------------------------------------------
-@router.post("", response_model=GoodsReceiptResponse)
+@router.post("", response_model=GoodsReceiptResponse, dependencies=[Depends(permission_based_access(vp.GRN_WRITE))])
 def create_goods_receipt(payload: GoodsReceiptCreateRequest, http_request: Request):
     db = http_request.state.db
 
@@ -73,7 +76,7 @@ from Backend.API_Layer.interface.goods_receipt_interface import (
 )
 
 
-@router.get("", response_model=list[GoodsReceiptDTO])
+@router.get("", response_model=list[GoodsReceiptDTO], dependencies=[Depends(permission_based_access(vp.GRN_READ))])
 def get_all_goods_receipts(
     http_request: Request,
     vendor_id: Optional[int] = None,
@@ -95,7 +98,7 @@ def get_all_goods_receipts(
 # Get Goods Receipt By ID (includes related purchase order and invoices
 # via eager-loaded relationships)
 # ---------------------------------------------------------
-@router.get("/{grn_id}", response_model=GoodsReceiptDTO)
+@router.get("/{grn_id}", response_model=GoodsReceiptDTO, dependencies=[Depends(permission_based_access(vp.GRN_READ))])
 def get_goods_receipt_by_id(grn_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -113,7 +116,7 @@ def get_goods_receipt_by_id(grn_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Update Goods Receipt
 # ---------------------------------------------------------
-@router.put("/{grn_id}", response_model=GoodsReceiptDTO)
+@router.put("/{grn_id}", response_model=GoodsReceiptDTO, dependencies=[Depends(permission_based_access(vp.GRN_WRITE))])
 def update_goods_receipt(
     grn_id: int,
     payload: GoodsReceiptUpdateRequest,
@@ -144,7 +147,7 @@ def update_goods_receipt(
 # ---------------------------------------------------------
 # Delete Goods Receipt
 # ---------------------------------------------------------
-@router.delete("/{grn_id}", response_model=DeleteGoodsReceiptResponse)
+@router.delete("/{grn_id}", response_model=DeleteGoodsReceiptResponse, dependencies=[Depends(permission_based_access(vp.GRN_WRITE))])
 def delete_goods_receipt(grn_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -179,7 +182,7 @@ def delete_goods_receipt(grn_id: int, http_request: Request):
 # ===========================================================
 
 
-@router.post("/{grn_id}/document", response_model=UploadGoodsReceiptDocumentResponse)
+@router.post("/{grn_id}/document", response_model=UploadGoodsReceiptDocumentResponse, dependencies=[Depends(permission_based_access(vp.GRN_WRITE))])
 async def upload_goods_receipt_document(
     grn_id: int,
     http_request: Request,
@@ -219,7 +222,7 @@ async def upload_goods_receipt_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{grn_id}/lines", response_model=list[GoodsReceiptLineDTO])
+@router.get("/{grn_id}/lines", response_model=list[GoodsReceiptLineDTO], dependencies=[Depends(permission_based_access(vp.GRN_READ))])
 def get_goods_receipt_lines(grn_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -235,7 +238,7 @@ def get_goods_receipt_lines(grn_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{grn_id}/document/download")
+@router.get("/{grn_id}/document/download", dependencies=[Depends(permission_based_access(vp.GRN_READ))])
 def download_goods_receipt_document(grn_id: int, http_request: Request):
     db = http_request.state.db
 

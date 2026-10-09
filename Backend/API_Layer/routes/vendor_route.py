@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import Depends, APIRouter, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 
 from Backend.API_Layer.interface.vendor_interface import (
@@ -37,6 +37,9 @@ from Backend.API_Layer.interface.vendor_interface import (
 from Backend.API_Layer.routes.nda_route import _to_dto as _nda_to_dto
 from Backend.Business_Layer.services.vendor_service import VendorService
 
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
+from Backend.API_Layer.utils import vendor_permissions as vp
+
 router = APIRouter()
 
 
@@ -55,7 +58,7 @@ def _get_user_id(http_request: Request) -> str:
 # ---------------------------------------------------------
 # Create Vendor
 # ---------------------------------------------------------
-@router.post("", response_model=VendorResponse)
+@router.post("", response_model=VendorResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def create_vendor(payload: VendorCreateRequest, http_request: Request):
     db = http_request.state.db
 
@@ -88,7 +91,7 @@ def create_vendor(payload: VendorCreateRequest, http_request: Request):
 # ---------------------------------------------------------
 # Get All Vendors
 # ---------------------------------------------------------
-@router.get("", response_model=list[VendorDTO])
+@router.get("", response_model=list[VendorDTO], dependencies=[Depends(permission_based_access(vp.VENDOR_LIST_READ))])
 def get_all_vendors(
     http_request: Request,
     status_id: Optional[int] = None,
@@ -111,7 +114,7 @@ def get_all_vendors(
 # Get Vendor By ID (complete vendor profile — includes addresses,
 # banks, and taxes via eager-loaded relationships)
 # ---------------------------------------------------------
-@router.get("/{vendor_id}", response_model=VendorDTO)
+@router.get("/{vendor_id}", response_model=VendorDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_DETAIL_READ))])
 def get_vendor_by_id(vendor_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -139,7 +142,7 @@ def get_vendor_by_id(vendor_id: int, http_request: Request):
 # ===========================================================
 
 
-@router.get("/{vendor_id}/purchase-orders", response_model=VendorPurchaseOrderListResponse)
+@router.get("/{vendor_id}/purchase-orders", response_model=VendorPurchaseOrderListResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def list_vendor_purchase_orders(
     vendor_id: int,
     http_request: Request,
@@ -167,7 +170,7 @@ def list_vendor_purchase_orders(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/ndas", response_model=VendorNdaListResponse)
+@router.get("/{vendor_id}/ndas", response_model=VendorNdaListResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def list_vendor_ndas(vendor_id: int, http_request: Request):
     """Every NDA on file for this vendor, newest first.
 
@@ -193,7 +196,7 @@ def list_vendor_ndas(vendor_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/grns", response_model=VendorGoodsReceiptListResponse)
+@router.get("/{vendor_id}/grns", response_model=VendorGoodsReceiptListResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def list_vendor_goods_receipts(
     vendor_id: int,
     http_request: Request,
@@ -220,7 +223,7 @@ def list_vendor_goods_receipts(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/documents", response_model=VendorDocumentListResponse)
+@router.get("/{vendor_id}/documents", response_model=VendorDocumentListResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def list_vendor_documents(
     vendor_id: int,
     http_request: Request,
@@ -269,7 +272,7 @@ def list_vendor_documents(
 # ---------------------------------------------------------
 # Update Vendor
 # ---------------------------------------------------------
-@router.put("/{vendor_id}", response_model=VendorDTO)
+@router.put("/{vendor_id}", response_model=VendorDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def update_vendor(
     vendor_id: int,
     payload: VendorUpdateRequest,
@@ -303,7 +306,7 @@ def update_vendor(
 # ---------------------------------------------------------
 # Activate / Deactivate Vendor (soft status)
 # ---------------------------------------------------------
-@router.patch("/{vendor_id}/status", response_model=VendorDTO)
+@router.patch("/{vendor_id}/status", response_model=VendorDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def update_vendor_status(
     vendor_id: int,
     payload: VendorStatusUpdateRequest,
@@ -334,7 +337,7 @@ def update_vendor_status(
 _ADDRESS_NOT_FOUND = {"Vendor not found", "Address not found"}
 
 
-@router.post("/{vendor_id}/addresses", response_model=VendorAddressResponse)
+@router.post("/{vendor_id}/addresses", response_model=VendorAddressResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def create_vendor_address(
     vendor_id: int,
     payload: VendorAddressCreateRequest,
@@ -363,7 +366,7 @@ def create_vendor_address(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/addresses", response_model=list[VendorAddressDTO])
+@router.get("/{vendor_id}/addresses", response_model=list[VendorAddressDTO], dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def get_vendor_addresses(vendor_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -378,7 +381,7 @@ def get_vendor_addresses(vendor_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/addresses/{address_id}", response_model=VendorAddressDTO)
+@router.get("/{vendor_id}/addresses/{address_id}", response_model=VendorAddressDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def get_vendor_address(vendor_id: int, address_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -394,7 +397,7 @@ def get_vendor_address(vendor_id: int, address_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/{vendor_id}/addresses/{address_id}", response_model=VendorAddressDTO)
+@router.put("/{vendor_id}/addresses/{address_id}", response_model=VendorAddressDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def update_vendor_address(
     vendor_id: int,
     address_id: int,
@@ -419,7 +422,7 @@ def update_vendor_address(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{vendor_id}/addresses/{address_id}", response_model=DeleteVendorAddressResponse)
+@router.delete("/{vendor_id}/addresses/{address_id}", response_model=DeleteVendorAddressResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def delete_vendor_address(vendor_id: int, address_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -448,7 +451,7 @@ def delete_vendor_address(vendor_id: int, address_id: int, http_request: Request
 _BANK_NOT_FOUND = {"Vendor not found", "Bank not found"}
 
 
-@router.post("/{vendor_id}/banks", response_model=VendorBankResponse)
+@router.post("/{vendor_id}/banks", response_model=VendorBankResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_BANK_WRITE))])
 def create_vendor_bank(
     vendor_id: int,
     payload: VendorBankCreateRequest,
@@ -477,7 +480,7 @@ def create_vendor_bank(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/banks", response_model=list[VendorBankDTO])
+@router.get("/{vendor_id}/banks", response_model=list[VendorBankDTO], dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def get_vendor_banks(vendor_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -492,7 +495,7 @@ def get_vendor_banks(vendor_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{vendor_id}/banks/{bank_id}", response_model=VendorBankDTO)
+@router.get("/{vendor_id}/banks/{bank_id}", response_model=VendorBankDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def get_vendor_bank(vendor_id: int, bank_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -508,7 +511,7 @@ def get_vendor_bank(vendor_id: int, bank_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/{vendor_id}/banks/{bank_id}", response_model=VendorBankDTO)
+@router.put("/{vendor_id}/banks/{bank_id}", response_model=VendorBankDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_BANK_WRITE))])
 def update_vendor_bank(
     vendor_id: int,
     bank_id: int,
@@ -533,7 +536,7 @@ def update_vendor_bank(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{vendor_id}/banks/{bank_id}", response_model=DeleteVendorBankResponse)
+@router.delete("/{vendor_id}/banks/{bank_id}", response_model=DeleteVendorBankResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_BANK_WRITE))])
 def delete_vendor_bank(vendor_id: int, bank_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -562,7 +565,7 @@ def delete_vendor_bank(vendor_id: int, bank_id: int, http_request: Request):
 _TAX_NOT_FOUND = {"Address not found", "Tax not found"}
 
 
-@router.post("/addresses/{vendor_address_id}/taxes", response_model=VendorTaxResponse)
+@router.post("/addresses/{vendor_address_id}/taxes", response_model=VendorTaxResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def create_vendor_tax(
     vendor_address_id: int,
     payload: VendorTaxCreateRequest,
@@ -598,7 +601,7 @@ def create_vendor_tax(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/addresses/{vendor_address_id}/taxes", response_model=list[VendorTaxDTO])
+@router.get("/addresses/{vendor_address_id}/taxes", response_model=list[VendorTaxDTO], dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def get_vendor_taxes(vendor_address_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -613,7 +616,7 @@ def get_vendor_taxes(vendor_address_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/addresses/{vendor_address_id}/taxes/{tax_id}", response_model=VendorTaxDTO)
+@router.get("/addresses/{vendor_address_id}/taxes/{tax_id}", response_model=VendorTaxDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_READ))])
 def get_vendor_tax(vendor_address_id: int, tax_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -629,7 +632,7 @@ def get_vendor_tax(vendor_address_id: int, tax_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/addresses/{vendor_address_id}/taxes/{tax_id}", response_model=VendorTaxDTO)
+@router.put("/addresses/{vendor_address_id}/taxes/{tax_id}", response_model=VendorTaxDTO, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def update_vendor_tax(
     vendor_address_id: int,
     tax_id: int,
@@ -661,7 +664,7 @@ def update_vendor_tax(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/addresses/{vendor_address_id}/taxes/{tax_id}", response_model=DeleteVendorTaxResponse)
+@router.delete("/addresses/{vendor_address_id}/taxes/{tax_id}", response_model=DeleteVendorTaxResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def delete_vendor_tax(vendor_address_id: int, tax_id: int, http_request: Request):
     db = http_request.state.db
 

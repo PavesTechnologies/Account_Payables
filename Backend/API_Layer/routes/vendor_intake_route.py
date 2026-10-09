@@ -9,7 +9,7 @@ otherwise ``GET /apm/vendor-intake/screening-rules`` is captured by
 Keep new literal paths above the "Vendor Engagement (dynamic paths)" section.
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import Depends, APIRouter, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 
 from Backend.API_Layer.interface.vendor_intake_interface import (
@@ -30,6 +30,9 @@ from Backend.Business_Layer.services.vendor_intake_service import (
 )
 from Backend.Data_Access_Layer.models.vendor import VendorEngagement
 from Backend.Data_Access_Layer.models.vendor_screening_rule import VendorScreeningRule
+
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
+from Backend.API_Layer.utils import vendor_permissions as vp
 
 router = APIRouter()
 
@@ -103,7 +106,7 @@ _CONFLICT_MESSAGES = {
 # ---------------------------------------------------------
 # Vendor Intake (Save)
 # ---------------------------------------------------------
-@router.post("", response_model=VendorIntakeResponse)
+@router.post("", response_model=VendorIntakeResponse, dependencies=[Depends(permission_based_access(vp.INTAKE_WRITE))])
 def create_intake(payload: VendorIntakeCreateRequest, http_request: Request):
     db = http_request.state.db
 
@@ -145,7 +148,7 @@ def create_intake(payload: VendorIntakeCreateRequest, http_request: Request):
 # ===========================================================
 
 
-@router.post("/screening-rules", response_model=VendorScreeningRuleResponse)
+@router.post("/screening-rules", response_model=VendorScreeningRuleResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def create_screening_rule(payload: VendorScreeningRuleRequest, http_request: Request):
     db = http_request.state.db
 
@@ -169,7 +172,7 @@ def create_screening_rule(payload: VendorScreeningRuleRequest, http_request: Req
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/screening-rules", response_model=list[VendorScreeningRuleDTO])
+@router.get("/screening-rules", response_model=list[VendorScreeningRuleDTO], dependencies=[Depends(permission_based_access(vp.INTAKE_READ))])
 def get_all_screening_rules(http_request: Request):
     db = http_request.state.db
 
@@ -181,7 +184,7 @@ def get_all_screening_rules(http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/screening-rules/{rule_id}", response_model=VendorScreeningRuleResponse)
+@router.put("/screening-rules/{rule_id}", response_model=VendorScreeningRuleResponse, dependencies=[Depends(permission_based_access(vp.VENDOR_WRITE))])
 def update_screening_rule(rule_id: int, payload: VendorScreeningRuleRequest, http_request: Request):
     db = http_request.state.db
 
@@ -211,7 +214,7 @@ def update_screening_rule(rule_id: int, payload: VendorScreeningRuleRequest, htt
 # List a Vendor's Engagements (literal /vendor prefix - also
 # declared before /{engagement_id})
 # ---------------------------------------------------------
-@router.get("/vendor/{vendor_id}", response_model=list[VendorEngagementDTO])
+@router.get("/vendor/{vendor_id}", response_model=list[VendorEngagementDTO], dependencies=[Depends(permission_based_access(vp.INTAKE_READ))])
 def list_engagements_for_vendor(vendor_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -231,7 +234,7 @@ def list_engagements_for_vendor(vendor_id: int, http_request: Request):
 # ===========================================================
 
 
-@router.get("/{engagement_id}", response_model=VendorEngagementDTO)
+@router.get("/{engagement_id}", response_model=VendorEngagementDTO, dependencies=[Depends(permission_based_access(vp.INTAKE_READ))])
 def get_engagement(engagement_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -249,7 +252,7 @@ def get_engagement(engagement_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Edit Engagement
 # ---------------------------------------------------------
-@router.put("/{engagement_id}", response_model=VendorEngagementDTO)
+@router.put("/{engagement_id}", response_model=VendorEngagementDTO, dependencies=[Depends(permission_based_access(vp.INTAKE_WRITE))])
 def update_engagement(
     engagement_id: int,
     payload: VendorEngagementUpdateRequest,
@@ -307,7 +310,7 @@ def update_engagement(
 # ---------------------------------------------------------
 # Pre-Screen
 # ---------------------------------------------------------
-@router.post("/{engagement_id}/pre-screen", response_model=PreScreenResultResponse)
+@router.post("/{engagement_id}/pre-screen", response_model=PreScreenResultResponse, dependencies=[Depends(permission_based_access(vp.INTAKE_WRITE))])
 def run_pre_screen(engagement_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -339,7 +342,7 @@ def run_pre_screen(engagement_id: int, http_request: Request):
 # ---------------------------------------------------------
 # NDA Decision
 # ---------------------------------------------------------
-@router.patch("/{engagement_id}/nda-decision", response_model=NdaDecisionResponse)
+@router.patch("/{engagement_id}/nda-decision", response_model=NdaDecisionResponse, dependencies=[Depends(permission_based_access(vp.INTAKE_WRITE))])
 def set_nda_decision(engagement_id: int, payload: NdaDecisionRequest, http_request: Request):
     db = http_request.state.db
 

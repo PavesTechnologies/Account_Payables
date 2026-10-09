@@ -504,7 +504,7 @@ def test_vendor_purchase_orders_endpoint_serializes_end_to_end(monkeypatch):
 
     class _FakeAuthAndDBMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
-            request.state.user = {"user_id": "officer-1"}
+            request.state.user = {"user_id": "officer-1", "permissions": ["VENDOR_VIEW"]}
             request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
             return await call_next(request)
 

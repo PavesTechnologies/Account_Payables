@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import Depends, APIRouter, File, HTTPException, Request, UploadFile
 from sqlalchemy.exc import IntegrityError
 
 from Backend.API_Layer.interface.purchase_order_interface import (
@@ -18,6 +18,9 @@ from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.s3_utils import download_from_s3, view_from_s3
 from Backend.Business_Layer.services.purchase_order_service import PurchaseOrderService
 from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
+
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
+from Backend.API_Layer.utils import vendor_permissions as vp
 
 router = APIRouter()
 
@@ -39,7 +42,7 @@ def _get_user_id(http_request: Request) -> str:
 # ---------------------------------------------------------
 # Create Purchase Order
 # ---------------------------------------------------------
-@router.post("", response_model=PurchaseOrderResponse)
+@router.post("", response_model=PurchaseOrderResponse, dependencies=[Depends(permission_based_access(vp.PO_WRITE))])
 def create_purchase_order(payload: PurchaseOrderCreateRequest, http_request: Request):
     db = http_request.state.db
 
@@ -72,7 +75,7 @@ def create_purchase_order(payload: PurchaseOrderCreateRequest, http_request: Req
 # ---------------------------------------------------------
 # Get All Purchase Orders
 # ---------------------------------------------------------
-@router.get("", response_model=list[PurchaseOrderDTO])
+@router.get("", response_model=list[PurchaseOrderDTO], dependencies=[Depends(permission_based_access(vp.PO_READ))])
 def get_all_purchase_orders(
     http_request: Request,
     vendor_id: Optional[int] = None,
@@ -95,7 +98,7 @@ def get_all_purchase_orders(
 # Get Purchase Order By ID (includes related goods receipts and invoices
 # via eager-loaded relationships)
 # ---------------------------------------------------------
-@router.get("/{po_id}", response_model=PurchaseOrderDTO)
+@router.get("/{po_id}", response_model=PurchaseOrderDTO, dependencies=[Depends(permission_based_access(vp.PO_READ))])
 def get_purchase_order_by_id(po_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -113,7 +116,7 @@ def get_purchase_order_by_id(po_id: int, http_request: Request):
 # ---------------------------------------------------------
 # Update Purchase Order
 # ---------------------------------------------------------
-@router.put("/{po_id}", response_model=PurchaseOrderDTO)
+@router.put("/{po_id}", response_model=PurchaseOrderDTO, dependencies=[Depends(permission_based_access(vp.PO_WRITE))])
 def update_purchase_order(
     po_id: int,
     payload: PurchaseOrderUpdateRequest,
@@ -147,7 +150,7 @@ def update_purchase_order(
 # ---------------------------------------------------------
 # Update Purchase Order Status
 # ---------------------------------------------------------
-@router.patch("/{po_id}/status", response_model=PurchaseOrderDTO)
+@router.patch("/{po_id}/status", response_model=PurchaseOrderDTO, dependencies=[Depends(permission_based_access(vp.PO_WRITE))])
 def update_purchase_order_status(
     po_id: int,
     payload: PurchaseOrderStatusUpdateRequest,
@@ -174,7 +177,7 @@ def update_purchase_order_status(
 # ---------------------------------------------------------
 # Delete Purchase Order
 # ---------------------------------------------------------
-@router.delete("/{po_id}", response_model=DeletePurchaseOrderResponse)
+@router.delete("/{po_id}", response_model=DeletePurchaseOrderResponse, dependencies=[Depends(permission_based_access(vp.PO_WRITE))])
 def delete_purchase_order(po_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -209,7 +212,7 @@ def delete_purchase_order(po_id: int, http_request: Request):
 # ===========================================================
 
 
-@router.post("/{po_id}/document", response_model=UploadPurchaseOrderDocumentResponse)
+@router.post("/{po_id}/document", response_model=UploadPurchaseOrderDocumentResponse, dependencies=[Depends(permission_based_access(vp.PO_WRITE))])
 async def upload_purchase_order_document(
     po_id: int,
     http_request: Request,
@@ -249,7 +252,7 @@ async def upload_purchase_order_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{po_id}/document/view")
+@router.get("/{po_id}/document/view", dependencies=[Depends(permission_based_access(vp.PO_READ))])
 def view_purchase_order_document(po_id: int, http_request: Request):
     db = http_request.state.db
 
@@ -267,7 +270,7 @@ def view_purchase_order_document(po_id: int, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{po_id}/document/download")
+@router.get("/{po_id}/document/download", dependencies=[Depends(permission_based_access(vp.PO_READ))])
 def download_purchase_order_document(po_id: int, http_request: Request):
     db = http_request.state.db
 

@@ -1240,7 +1240,7 @@ def _engagement_client(monkeypatch, handler):
 
     class _FakeAuthAndDBMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
-            request.state.user = {"user_id": "officer-1"}
+            request.state.user = {"user_id": "officer-1", "permissions": ["VENDOR_MANAGE"]}
             request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
             return await call_next(request)
 
