@@ -8,6 +8,12 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+
+from Backend.API_Layer.middleware.permission_base_access import has_permissions
+from Backend.Business_Layer.services.ap_reporting_service import FINANCE_PERMISSIONS, APReportingService
+from Backend.Business_Layer.services.role_dashboard_service import RoleDashboardService
 
 from Backend.API_Layer.interface.dashboard_interface import DashboardActivityPageDTO, DashboardSummaryDTO
 from Backend.Business_Layer.services.dashboard_service import ACTIVITY_PAGE_SIZE, DashboardService
@@ -53,3 +59,45 @@ def get_dashboard_activity(
         raise HTTPException(status_code=422, detail=str(e))
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to load activity")
+
+
+@router.get("/finance")
+def get_finance_dashboard(http_request: Request):
+    """Finance Executive operational dashboard: what needs paying, what is overdue, what is
+    coming up, and payment-term / TDS / receipt follow-ups. PAYMENT_VIEW or PAYMENT_PROCESS
+    required; the TDS block is included only for users holding a TDS permission."""
+    user = getattr(http_request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not has_permissions(user, FINANCE_PERMISSIONS):
+        raise HTTPException(status_code=403, detail="You do not have permission to access this resource")
+    try:
+        return JSONResponse(jsonable_encoder(APReportingService(http_request.state.db).finance_dashboard(user)))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to build the finance dashboard")
+
+
+@router.get("/views")
+def get_dashboard_views(http_request: Request):
+    """The role dashboards this user may open (Management / Finance / Approvals / My work), in
+    display order - decided from the JWT permissions, so the frontend never guesses."""
+    user = getattr(http_request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return RoleDashboardService.views_for(user)
+
+
+@router.get("/view/{view_key}")
+def get_role_dashboard(view_key: str, http_request: Request):
+    """One role dashboard. Each view checks its own permissions server-side (403 otherwise)."""
+    user = getattr(http_request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return JSONResponse(jsonable_encoder(RoleDashboardService(http_request.state.db).build(view_key, user)))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to build the dashboard")

@@ -44,6 +44,10 @@ from Backend.API_Layer.utils.validation_progress import (
     skip_remaining_stages,
     update_validation_stage,
 )
+from Backend.Business_Layer.services.payment_term_compliance_service import (
+    PaymentTermComplianceService,
+    resolve_payment_term_id,
+)
 from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Business_Layer.utils import invoice_status
 from Backend.Business_Layer.utils.exceptions import (
@@ -1578,15 +1582,9 @@ class InvoiceExtractionService:
             custom_request.invoice.currency, master_dao
         )
 
-        payment_term_id = None
-
-        if custom_request.invoice.payment_terms:
-            term = master_dao.get_payment_term_by_name(
-                custom_request.invoice.payment_terms.strip()
-            )
-            payment_term_id = (
-                term.payment_term_id if term else None
-            )
+        payment_term_id = resolve_payment_term_id(
+            self.db, custom_request.invoice.payment_terms
+        )
 
         try:
             inbound_document = InboundDocument(
@@ -1635,6 +1633,16 @@ class InvoiceExtractionService:
                 updated_by=created_by,
             )
             invoice_dao.create_invoice(invoice)
+
+            # Due date from the payment terms (never the bare invoice date while terms are
+            # readable) + the payment-term compliance record - see
+            # PaymentTermComplianceService.
+            PaymentTermComplianceService(self.db).evaluate_invoice(
+                invoice,
+                created_by,
+                stated_terms_text=custom_request.invoice.payment_terms,
+                stated_due_date=custom_request.invoice.due_date,
+            )
 
             line_models, skipped_line_count = (
                 self._build_invoice_line_models(

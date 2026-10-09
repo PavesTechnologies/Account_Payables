@@ -137,6 +137,12 @@ class InvoicePaymentSummaryDTO(BaseModel):
     last_payment_mode: Optional[str] = None
     last_payment_reference: Optional[str] = None
     receipt_count: int
+    # Payment-term compliance (null until the invoice has been evaluated)
+    payment_term_status: Optional[str] = None
+    payment_term_reason: Optional[str] = None
+    due_date_verified: Optional[bool] = None
+    contractual_due_date: Optional[datetime.date] = None
+    statutory_due_date: Optional[datetime.date] = None
 
 
 class InvoicePaymentPageDTO(BaseModel):

@@ -168,6 +168,19 @@ class _FakeTdsDAO:
         return self.store.get(invoice_id)
 
 
+class _FakeTermCompliance:
+    """Stands in for PaymentTermComplianceService (tested on its own in
+    test_payment_term_compliance.py); invoice ids in ``blocked`` have unresolved terms."""
+    blocked = set()
+
+    def __init__(self, db):
+        self.db = db
+
+    def require_resolved_for_payment(self, invoice, user_id=None):
+        if invoice.invoice_id in self.blocked:
+            raise ValueError(f"Payment terms must be verified before invoice {invoice.invoice_id} can be marked ready")
+
+
 @pytest.fixture(autouse=True)
 def _patch_daos(monkeypatch):
     _FakeVendorDAO.vendors = {1}
@@ -179,6 +192,8 @@ def _patch_daos(monkeypatch):
     _FakePaymentDAO.next_payment_id = 100
     _FakePaymentDAO.next_allocation_id = 1000
     _FakeTdsDAO.store = {}
+    _FakeTermCompliance.blocked = set()
+    monkeypatch.setattr(svc, "PaymentTermComplianceService", _FakeTermCompliance)
     monkeypatch.setattr(svc, "VendorDAO", _FakeVendorDAO)
     monkeypatch.setattr(svc, "InvoiceDAO", _FakeInvoiceDAO)
     monkeypatch.setattr(svc, "PaymentDAO", _FakePaymentDAO)
@@ -519,6 +534,23 @@ def test_mark_ready_for_payment_from_approved_succeeds():
     assert db.committed == 1
     assert len(_FakeInvoiceDAO.invoice_audits) == 1
     assert _FakeInvoiceDAO.invoice_audits[0].action == "INVOICE_READY_FOR_PAYMENT"
+
+
+def test_mark_ready_for_payment_blocked_while_payment_terms_unresolved():
+    db = _FakeDB()
+    invoice = _Invoice(
+        invoice_id=1, vendor_id=1, net_amount=Decimal("1000.00"), amount_paid=Decimal("0"),
+        status=_Status(status_id=9, status_code="APPROVED"),
+    )
+    _FakeInvoiceDAO.store[1] = invoice
+    _FakeTdsDAO.store[1] = _InvoiceTds(invoice_id=1, tds_applicable=True, tds_amount=Decimal("100.00"))
+    _FakeTermCompliance.blocked = {1}
+
+    with pytest.raises(ValueError, match="Payment terms must be verified"):
+        svc.PaymentService(db).mark_ready_for_payment(1, "finance-1")
+
+    assert invoice.status_id != 13
+    assert _FakeInvoiceDAO.invoice_audits == []
 
 
 def _approved_invoice():

@@ -119,6 +119,9 @@ class VendorService:
                 raise ValueError("A vendor with this email already exists")
 
         status_id = self._resolve_status_id(vendor_data.status_id)
+        msme_registered, udyam_number, msme_category = self._validated_msme(
+            vendor_data.msme_registered, vendor_data.udyam_number, vendor_data.msme_category
+        )
 
         vendor = Vendor(
             vendor_name=vendor_name,
@@ -130,6 +133,9 @@ class VendorService:
             phone_number=phone_number,
             email=email,
             status_id=status_id,
+            msme_registered=msme_registered,
+            udyam_number=udyam_number,
+            msme_category=msme_category,
             created_by=user_id,
             updated_by=user_id,
         )
@@ -453,10 +459,24 @@ class VendorService:
         if update_data.status_id is not None:
             vendor.status_id = self._resolve_status_id(update_data.status_id)
 
+        if any(v is not None for v in (update_data.msme_registered, update_data.udyam_number, update_data.msme_category)):
+            vendor.msme_registered, vendor.udyam_number, vendor.msme_category = self._validated_msme(
+                update_data.msme_registered if update_data.msme_registered is not None else vendor.msme_registered,
+                update_data.udyam_number if update_data.udyam_number is not None else vendor.udyam_number,
+                update_data.msme_category if update_data.msme_category is not None else vendor.msme_category,
+            )
+
         vendor.updated_by = user_id
 
         after = self._snapshot(vendor)
         changed = {key: value for key, value in after.items() if before.get(key) != value}
+
+        if changed.keys() & {"payment_term_id", "msme_registered", "msme_category"}:
+            # Vendor-master terms / MSME status feed every open invoice's payment-term check.
+            from Backend.Business_Layer.services.payment_term_compliance_service import (
+                PaymentTermComplianceService,
+            )
+            PaymentTermComplianceService(self.db).recheck_open_invoices_for_vendor(vendor_id, user_id)
 
         if changed:
             self._write_audit(
@@ -1079,6 +1099,22 @@ class VendorService:
     # =========================================================
 
     @staticmethod
+    def _validated_msme(registered, udyam_number, category):
+        """MSME fields are all-or-nothing: a registered MSME needs a valid Udyam number
+        (UDYAM-XX-00-0000000) and a category; an unregistered vendor carries neither."""
+        import re
+
+        if not registered:
+            return False, None, None
+        udyam = (udyam_number or "").strip().upper() or None
+        if udyam is None or not re.fullmatch(r"UDYAM-[A-Z]{2}-\d{2}-\d{7}", udyam):
+            raise ValueError("udyam_number must look like UDYAM-XX-00-0000000 for an MSME-registered vendor")
+        category = (category or "").strip().upper() or None
+        if category not in ("MICRO", "SMALL", "MEDIUM"):
+            raise ValueError("msme_category must be MICRO, SMALL or MEDIUM for an MSME-registered vendor")
+        return True, udyam, category
+
+    @staticmethod
     def _snapshot(vendor: Vendor) -> dict:
         return {
             "vendor_name": vendor.vendor_name,
@@ -1090,6 +1126,9 @@ class VendorService:
             "phone_number": vendor.phone_number,
             "email": vendor.email,
             "status_id": vendor.status_id,
+            "msme_registered": vendor.msme_registered,
+            "udyam_number": vendor.udyam_number,
+            "msme_category": vendor.msme_category,
         }
 
     def _write_audit(

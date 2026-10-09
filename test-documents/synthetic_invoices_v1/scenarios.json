@@ -1,0 +1,4572 @@
+{
+  "set": "synthetic_invoices_v1",
+  "generator": "Backend/scripts/generate_test_invoices.py",
+  "seed": 20261009,
+  "as_of_date": "2026-10-09",
+  "buyer": {
+    "name": "Paves Global Infotech Pvt Ltd",
+    "address": [
+      "Hyderabad, Telangana, India"
+    ],
+    "state": "Telangana",
+    "state_code": "36"
+  },
+  "rules_assumed": {
+    "payment_terms": "APM_AUTOMATION_PLAN.md section 3.1 (proposed - not yet implemented)",
+    "tds": "Active TDS_RATE rules in the dev DB as of 2026-10-09; taxable base = gross - discount; vendor PAN status assumed VALID (otherwise section 206AA 20% floor applies)",
+    "tds_aggregate": "Aggregates are computed within this set only (vendor + nature, FY 2026-27); existing invoices for AWS/KEKA in the DB may raise the prior aggregate."
+  },
+  "vendors": {
+    "AWS": {
+      "vendor_code": "AWSIPL0336",
+      "vendor_id": 15,
+      "existing": true,
+      "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+      "pan": "AAJCA9880A",
+      "gstin": "07AAJCA9880A1ZL",
+      "gstin_status": "VENDOR_MASTER",
+      "state": "Delhi",
+      "state_code": "07",
+      "address": [
+        "14th Floor, International Trade Tower, Block E",
+        "Nehru Place, South Delhi",
+        "Delhi - 110019, India"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 15",
+      "msme_category": null,
+      "bank_note": "Remit as per vendor master bank details"
+    },
+    "KEKA": {
+      "vendor_code": "KTPL1020",
+      "vendor_id": 16,
+      "existing": true,
+      "vendor_name": "KEKA TECHNOLOGIES PRIVATE LIMITED",
+      "pan": "AAFCK5835K",
+      "gstin": "36AAFCK5835K1Z6",
+      "gstin_status": "VENDOR_MASTER",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Survey no. 17, Vasavi Shalom Sky City",
+        "Gachibowli, Rangareddy",
+        "Hyderabad, Telangana - 500032"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": null,
+      "msme_category": null,
+      "bank_note": "Remit as per vendor master bank details"
+    },
+    "SKYLINE": {
+      "vendor_code": "TST-001",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "existing": false,
+      "pan": "TSTFS0001T",
+      "gstin": "36TSTFS0001T1ZB",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Plot 21, Test Tech Park Road",
+        "Madhapur, Hyderabad - 500081"
+      ],
+      "entity_type": "FIRM",
+      "master_payment_term": "Net 15",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4137 - IFSC TEST0000001 (synthetic)"
+    },
+    "NIMBUS": {
+      "vendor_code": "TST-002",
+      "vendor_name": "[TEST] Nimbus Cloud Software Pvt Ltd",
+      "existing": false,
+      "pan": "TSTCN0002T",
+      "gstin": "29TSTCN0002T1ZG",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Karnataka",
+      "state_code": "29",
+      "address": [
+        "4th Floor, Test Orbit Building",
+        "Outer Ring Road, Bengaluru - 560103"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 30",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4174 - IFSC TEST0000001 (synthetic)"
+    },
+    "ARORA": {
+      "vendor_code": "TST-003",
+      "vendor_name": "[TEST] Arora & Associates, Chartered Accountants",
+      "existing": false,
+      "pan": "TSTFA0003T",
+      "gstin": "36TSTFA0003T1ZR",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Suite 5, Test Chambers, Himayatnagar",
+        "Hyderabad - 500029"
+      ],
+      "entity_type": "FIRM",
+      "master_payment_term": "Net 15",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4211 - IFSC TEST0000001 (synthetic)"
+    },
+    "MERIDIAN": {
+      "vendor_code": "TST-004",
+      "vendor_name": "[TEST] Meridian Consulting Pvt Ltd",
+      "existing": false,
+      "pan": "TSTCM0004T",
+      "gstin": "27TSTCM0004T1ZJ",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Maharashtra",
+      "state_code": "27",
+      "address": [
+        "12th Floor, Test Business Bay",
+        "Lower Parel, Mumbai - 400013"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 45",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4248 - IFSC TEST0000001 (synthetic)"
+    },
+    "OFFICEMART": {
+      "vendor_code": "TST-005",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "existing": false,
+      "pan": "TSTCO0005T",
+      "gstin": "36TSTCO0005T1ZH",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Shop 3-4, Test Market Complex",
+        "Ameerpet, Hyderabad - 500016"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 30",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4285 - IFSC TEST0000001 (synthetic)"
+    },
+    "VERTEX": {
+      "vendor_code": "TST-006",
+      "vendor_name": "[TEST] Vertex IT Hardware Pvt Ltd",
+      "existing": false,
+      "pan": "TSTCV0006T",
+      "gstin": "33TSTCV0006T1ZF",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Tamil Nadu",
+      "state_code": "33",
+      "address": [
+        "No. 88, Test Electronics Street",
+        "Guindy, Chennai - 600032"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 45",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4322 - IFSC TEST0000001 (synthetic)"
+    },
+    "CLEANPRO": {
+      "vendor_code": "TST-007",
+      "vendor_name": "[TEST] CleanPro Facility Services (Prop. R. Test Kumar)",
+      "existing": false,
+      "pan": "TSTPK0007T",
+      "gstin": "36TSTPK0007T1ZS",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "H.No 2-45, Test Colony",
+        "Kukatpally, Hyderabad - 500072"
+      ],
+      "entity_type": "INDIVIDUAL",
+      "master_payment_term": "Net 30",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4359 - IFSC TEST0000001 (synthetic)"
+    },
+    "BRIGHTSPARK": {
+      "vendor_code": "TST-008",
+      "vendor_name": "[TEST] BrightSpark Electricals Pvt Ltd",
+      "existing": false,
+      "pan": "TSTCB0008T",
+      "gstin": "36TSTCB0008T1ZR",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Unit 7, Test Industrial Estate",
+        "Balanagar, Hyderabad - 500037"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 30",
+      "msme_category": "MICRO",
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4396 - IFSC TEST0000001 (synthetic)"
+    },
+    "METROPOWER": {
+      "vendor_code": "TST-009",
+      "vendor_name": "[TEST] Metro Power & Utilities Ltd",
+      "existing": false,
+      "pan": "TSTCM0009T",
+      "gstin": "36TSTCM0009T1ZF",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Test Power House, Khairatabad",
+        "Hyderabad - 500004"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 15",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4433 - IFSC TEST0000001 (synthetic)"
+    },
+    "FIBERLINK": {
+      "vendor_code": "TST-010",
+      "vendor_name": "[TEST] FiberLink Broadband Pvt Ltd",
+      "existing": false,
+      "pan": "TSTCF0010T",
+      "gstin": "36TSTCF0010T1ZT",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "2nd Floor, Test Fiber Tower",
+        "Banjara Hills, Hyderabad - 500034"
+      ],
+      "entity_type": "COMPANY",
+      "master_payment_term": "Net 15",
+      "msme_category": null,
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4470 - IFSC TEST0000001 (synthetic)"
+    },
+    "SAIKRISHNA": {
+      "vendor_code": "TST-011",
+      "vendor_name": "[TEST] Sai Krishna Packaging Works (Prop. S. Test Rao)",
+      "existing": false,
+      "pan": "TSTPS0011T",
+      "gstin": "36TSTPS0011T1ZO",
+      "gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "state": "Telangana",
+      "state_code": "36",
+      "address": [
+        "Plot 9, Test MSME Park",
+        "Cherlapally, Hyderabad - 500051"
+      ],
+      "entity_type": "INDIVIDUAL",
+      "master_payment_term": "Net 60",
+      "msme_category": "SMALL",
+      "bank_note": "TEST BANK LTD - A/c XXXXXXXX4507 - IFSC TEST0000001 (synthetic)"
+    }
+  },
+  "proposed_purchase_categories": {
+    "ADMIN_RENT": {
+      "department": "ADMIN",
+      "tds_nature": "RENT_LAND_BUILDING"
+    },
+    "PROF_CONSULTING": {
+      "department": "FIN",
+      "tds_nature": "PROFESSIONAL_SERVICE"
+    },
+    "IT_SERVICES": {
+      "department": "IT",
+      "tds_nature": "TECHNICAL_SERVICE"
+    },
+    "ADMIN_UTILITIES": {
+      "department": "ADMIN",
+      "tds_nature": "OTHER"
+    }
+  },
+  "proposed_category_mapping_fixes": {
+    "FIN_AUDIT": "PROFESSIONAL_SERVICE",
+    "FIN_ACCOUNTING": "PROFESSIONAL_SERVICE",
+    "ADMIN_FACILITIES": "CONTRACTOR"
+  },
+  "purchase_orders": {
+    "TST-PO-0001": {
+      "vendor": "OFFICEMART",
+      "terms": "Net 30",
+      "days": 30,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0002": {
+      "vendor": "OFFICEMART",
+      "terms": "Net 30",
+      "days": 30,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0003": {
+      "vendor": "OFFICEMART",
+      "terms": "Net 45",
+      "days": 45,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0004": {
+      "vendor": "OFFICEMART",
+      "terms": null,
+      "days": null,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0005": {
+      "vendor": "OFFICEMART",
+      "terms": "Net 60",
+      "days": 60,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0006": {
+      "vendor": "SAIKRISHNA",
+      "terms": "Net 60",
+      "days": 60,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0007": {
+      "vendor": "SAIKRISHNA",
+      "terms": "Net 60",
+      "days": 60,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0008": {
+      "vendor": "SAIKRISHNA",
+      "terms": "Net 60",
+      "days": 60,
+      "basis": "INVOICE_DATE",
+      "grn": null
+    },
+    "TST-PO-0009": {
+      "vendor": "VERTEX",
+      "terms": "Net 45 from GRN date",
+      "days": 45,
+      "basis": "GRN_DATE",
+      "grn": "2026-07-20"
+    },
+    "TST-PO-0010": {
+      "vendor": "VERTEX",
+      "terms": "Net 45 from GRN date",
+      "days": 45,
+      "basis": "GRN_DATE",
+      "grn": "2026-09-12"
+    },
+    "TST-PO-0011": {
+      "vendor": "VERTEX",
+      "terms": "Net 45 from GRN date",
+      "days": 45,
+      "basis": "GRN_DATE",
+      "grn": "2026-10-08"
+    },
+    "TST-PO-0012": {
+      "vendor": "VERTEX",
+      "terms": "Net 45 from GRN date",
+      "days": 45,
+      "basis": "GRN_DATE",
+      "grn": "2026-10-09"
+    }
+  },
+  "agreements": [
+    {
+      "id": "AGR-01",
+      "vendor": "SKYLINE",
+      "title": "Office Lease Agreement",
+      "term_days": 15,
+      "clause": "The Lessee shall pay the monthly rent within fifteen (15) days of receipt of a valid invoice.",
+      "valid_from": "2026-04-01",
+      "valid_to": "2027-03-31",
+      "file": "agreements/AGR-01_Skyline_Office_Lease_Agreement.pdf"
+    },
+    {
+      "id": "AGR-02",
+      "vendor": "MERIDIAN",
+      "title": "Master Services Agreement",
+      "term_days": 45,
+      "clause": "Fees are payable within forty-five (45) days from the date of each undisputed invoice.",
+      "valid_from": "2026-01-01",
+      "valid_to": "2027-12-31",
+      "file": "agreements/AGR-02_Meridian_Master_Services_Agreement.pdf"
+    },
+    {
+      "id": "AGR-03",
+      "vendor": "NIMBUS",
+      "title": "SaaS Subscription Order Form",
+      "term_days": 30,
+      "clause": "Subscription fees are due Net 30 from the invoice date.",
+      "valid_from": "2025-07-01",
+      "valid_to": "2026-06-30",
+      "file": "agreements/AGR-03_Nimbus_SaaS_Subscription_Order_Form.pdf"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S01",
+      "file": "invoices/S01_Skyline_TST_SRL_2627_001.pdf",
+      "scenario": "Monthly office rent",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-001",
+      "invoice_date": "2026-04-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-04-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-04-01",
+          "contractual_due_date": "2026-04-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-04-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "0",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-04-12",
+            "amount": "129600.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S02",
+      "file": "invoices/S02_Skyline_TST_SRL_2627_002.pdf",
+      "scenario": "Monthly office rent",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-002",
+      "invoice_date": "2026-05-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-05-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-05-01",
+          "contractual_due_date": "2026-05-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-05-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "120000.00",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-05-14",
+            "amount": "129600.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S03",
+      "file": "invoices/S03_Skyline_TST_SRL_2627_003.pdf",
+      "scenario": "Monthly office rent",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-003",
+      "invoice_date": "2026-06-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-06-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-06-01",
+          "contractual_due_date": "2026-06-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-06-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "240000.00",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-06-15",
+            "amount": "129600.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S04",
+      "file": "invoices/S04_Skyline_TST_SRL_2627_004.pdf",
+      "scenario": "Invoice says Net 30; lease says 15 days",
+      "note": "Paid after the lease due date (late payment KPI).",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-004",
+      "invoice_date": "2026-07-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-07-31",
+          "reference_source": "AGREEMENT",
+          "validation_status": "MISMATCH",
+          "reason": "INVOICE_VS_AGREEMENT",
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-07-01",
+          "contractual_due_date": "2026-07-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-07-16",
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "360000.00",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-07-28",
+            "amount": "129600.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": false
+      }
+    },
+    {
+      "id": "S05",
+      "file": "invoices/S05_Skyline_TST_SRL_2627_005.pdf",
+      "scenario": "Scanned rent invoice, unpaid and overdue",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-005",
+      "invoice_date": "2026-08-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "scan",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-08-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-01",
+          "contractual_due_date": "2026-08-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "480000.00",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "129600.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S06",
+      "file": "invoices/S06_Skyline_TST_SRL_2627_006.pdf",
+      "scenario": "Below the 194I per-transaction threshold - no TDS",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-006",
+      "invoice_date": "2026-09-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "45000.00",
+        "discount": "0.00",
+        "taxable": "45000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "4050.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "4050.00"
+          }
+        ],
+        "tax_total": "8100.00",
+        "net": "53100.00",
+        "net_payable_after_tds": "53100.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-09-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-01",
+          "contractual_due_date": "2026-09-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-09-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "45000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "600000.00",
+          "applicable": false,
+          "reason": "per_transaction 45,000.00 below 50,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "53100.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S07",
+      "file": "invoices/S07_Skyline_TST_SRL_2627_007.pdf",
+      "scenario": "Rent ready for payment, overdue",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-007",
+      "invoice_date": "2026-09-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-09-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-01",
+          "contractual_due_date": "2026-09-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-09-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "645000.00",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "129600.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S08",
+      "file": "invoices/S08_Skyline_TST_SRL_2627_008.pdf",
+      "scenario": "Rent due within the next 7 days",
+      "note": "",
+      "vendor_key": "SKYLINE",
+      "vendor_name": "[TEST] Skyline Realty LLP",
+      "vendor_code": "TST-001",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFS0001T1ZB",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SRL-2627-008",
+      "invoice_date": "2026-10-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_RENT",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "C",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "120000.00",
+        "discount": "0.00",
+        "taxable": "120000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "10800.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "21600.00",
+        "net": "141600.00",
+        "net_payable_after_tds": "129600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payable within 15 days of invoice",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-10-16",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-01",
+          "contractual_due_date": "2026-10-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "RENT_LAND_BUILDING",
+          "expected_payment_nature": "RENT_LAND_BUILDING",
+          "nature_correction_needed": false,
+          "taxable_base": "120000.00",
+          "section": "194I",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "PER_TRANSACTION",
+          "prior_aggregate_in_set": "765000.00",
+          "applicable": true,
+          "tds_amount": "12000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "129600.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S09",
+      "file": "invoices/S09_Aws_TST_AWS_2627_0412.pdf",
+      "scenario": "Cloud usage, terms match vendor master",
+      "note": "",
+      "vendor_key": "AWS",
+      "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+      "vendor_code": "AWSIPL0336",
+      "vendor_existing": true,
+      "vendor_gstin": "07AAJCA9880A1ZL",
+      "vendor_gstin_status": "VENDOR_MASTER",
+      "invoice_number": "TST-AWS-2627-0412",
+      "invoice_date": "2026-04-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SOFTWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "85000.00",
+        "discount": "0.00",
+        "taxable": "85000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "15300.00"
+          }
+        ],
+        "tax_total": "15300.00",
+        "net": "100300.00",
+        "net_payable_after_tds": "91800.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": null,
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-04-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-04-05",
+          "contractual_due_date": "2026-04-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-04-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "85000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": true,
+          "tds_amount": "8500.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-04-18",
+            "amount": "91800.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S10",
+      "file": "invoices/S10_Aws_TST_AWS_2627_0658.pdf",
+      "scenario": "Paid 5 days late",
+      "note": "",
+      "vendor_key": "AWS",
+      "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+      "vendor_code": "AWSIPL0336",
+      "vendor_existing": true,
+      "vendor_gstin": "07AAJCA9880A1ZL",
+      "vendor_gstin_status": "VENDOR_MASTER",
+      "invoice_number": "TST-AWS-2627-0658",
+      "invoice_date": "2026-06-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SOFTWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "92000.00",
+        "discount": "0.00",
+        "taxable": "92000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "16560.00"
+          }
+        ],
+        "tax_total": "16560.00",
+        "net": "108560.00",
+        "net_payable_after_tds": "99360.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": null,
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-06-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-06-05",
+          "contractual_due_date": "2026-06-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-06-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "92000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "85000.00",
+          "applicable": true,
+          "tds_amount": "9200.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-06-25",
+            "amount": "99360.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": false
+      }
+    },
+    {
+      "id": "S11",
+      "file": "invoices/S11_Aws_TST_AWS_2627_0871.pdf",
+      "scenario": "No terms printed; due date printed (implies 15 days); partially paid",
+      "note": "",
+      "vendor_key": "AWS",
+      "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+      "vendor_code": "AWSIPL0336",
+      "vendor_existing": true,
+      "vendor_gstin": "07AAJCA9880A1ZL",
+      "vendor_gstin_status": "VENDOR_MASTER",
+      "invoice_number": "TST-AWS-2627-0871",
+      "invoice_date": "2026-08-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SOFTWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "110000.00",
+        "discount": "0.00",
+        "taxable": "110000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "19800.00"
+          }
+        ],
+        "tax_total": "19800.00",
+        "net": "129800.00",
+        "net_payable_after_tds": "118800.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": null,
+        "payment_terms": {
+          "invoice_terms_text": null,
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-08-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": "IMPLIED_FROM_PRINTED_DUE_DATE",
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-05",
+          "contractual_due_date": "2026-08-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "110000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "177000.00",
+          "applicable": true,
+          "tds_amount": "11000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PARTIALLY_PAID",
+        "payments": [
+          {
+            "payment_date": "2026-08-19",
+            "amount": "50000.00"
+          }
+        ],
+        "balance_after_payments": "68800.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S12",
+      "file": "invoices/S12_Aws_TST_AWS_2627_1093.pdf",
+      "scenario": "Awaiting approval",
+      "note": "",
+      "vendor_key": "AWS",
+      "vendor_name": "AMAZON WEB SERVICES INDIA PRIVATE LIMITED",
+      "vendor_code": "AWSIPL0336",
+      "vendor_existing": true,
+      "vendor_gstin": "07AAJCA9880A1ZL",
+      "vendor_gstin_status": "VENDOR_MASTER",
+      "invoice_number": "TST-AWS-2627-1093",
+      "invoice_date": "2026-10-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SOFTWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "98000.00",
+        "discount": "0.00",
+        "taxable": "98000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "17640.00"
+          }
+        ],
+        "tax_total": "17640.00",
+        "net": "115640.00",
+        "net_payable_after_tds": "105840.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": null,
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-10-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-05",
+          "contractual_due_date": "2026-10-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "98000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "287000.00",
+          "applicable": true,
+          "tds_amount": "9800.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PENDING_APPROVAL",
+        "payments": [],
+        "balance_after_payments": "105840.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S13",
+      "file": "invoices/S13_Keka_TST_KEKA_2627_0153.pdf",
+      "scenario": "Vendor master has no payment term",
+      "note": "Verified manually before Mark Ready.",
+      "vendor_key": "KEKA",
+      "vendor_name": "KEKA TECHNOLOGIES PRIVATE LIMITED",
+      "vendor_code": "KTPL1020",
+      "vendor_existing": true,
+      "vendor_gstin": "36AAFCK5835K1Z6",
+      "vendor_gstin_status": "VENDOR_MASTER",
+      "invoice_number": "TST-KEKA-2627-0153",
+      "invoice_date": "2026-05-10",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SOFTWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "240000.00",
+        "discount": "0.00",
+        "taxable": "240000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "21600.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "21600.00"
+          }
+        ],
+        "tax_total": "43200.00",
+        "net": "283200.00",
+        "net_payable_after_tds": "259200.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": null,
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-06-09",
+          "reference_source": "NONE",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "NO_AUTHORISED_TERMS",
+          "applied_term_days": null,
+          "suggested_term_days": 30,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-05-10",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "240000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": true,
+          "tds_amount": "24000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-06-08",
+            "amount": "259200.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S14",
+      "file": "invoices/S14_Keka_TST_KEKA_2627_0398.pdf",
+      "scenario": "Unresolved payment-term exception (blocked from Ready for Payment)",
+      "note": "",
+      "vendor_key": "KEKA",
+      "vendor_name": "KEKA TECHNOLOGIES PRIVATE LIMITED",
+      "vendor_code": "KTPL1020",
+      "vendor_existing": true,
+      "vendor_gstin": "36AAFCK5835K1Z6",
+      "vendor_gstin_status": "VENDOR_MASTER",
+      "invoice_number": "TST-KEKA-2627-0398",
+      "invoice_date": "2026-09-10",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SOFTWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "36000.00",
+        "discount": "0.00",
+        "taxable": "36000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "3240.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "3240.00"
+          }
+        ],
+        "tax_total": "6480.00",
+        "net": "42480.00",
+        "net_payable_after_tds": "38880.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": null,
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-10-10",
+          "reference_source": "NONE",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "NO_AUTHORISED_TERMS",
+          "applied_term_days": null,
+          "suggested_term_days": 30,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-10",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "36000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "240000.00",
+          "applicable": true,
+          "tds_amount": "3600.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "38880.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S15",
+      "file": "invoices/S15_Nimbus_TST_NCS_2026_0711.pdf",
+      "scenario": "Agreement expired on 2026-06-30",
+      "note": "",
+      "vendor_key": "NIMBUS",
+      "vendor_name": "[TEST] Nimbus Cloud Software Pvt Ltd",
+      "vendor_code": "TST-002",
+      "vendor_existing": false,
+      "vendor_gstin": "29TSTCN0002T1ZG",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-NCS-2026-0711",
+      "invoice_date": "2026-07-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SERVICES",
+      "department": "IT",
+      "category_exists_in_db": false,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "60000.00",
+        "discount": "0.00",
+        "taxable": "60000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "10800.00",
+        "net": "70800.00",
+        "net_payable_after_tds": "69600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-07-31",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "AGREEMENT_EXPIRED",
+          "applied_term_days": null,
+          "suggested_term_days": 30,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-07-01",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "TECHNICAL_SERVICE",
+          "expected_payment_nature": "TECHNICAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "60000.00",
+          "section": "194J",
+          "rate_percent": "2",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": true,
+          "tds_amount": "1200.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-08-05",
+            "amount": "69600.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S16",
+      "file": "invoices/S16_Nimbus_TST_NCS_2026_0907.pdf",
+      "scenario": "Invoice says Net 45; vendor master says Net 30 (scanned)",
+      "note": "",
+      "vendor_key": "NIMBUS",
+      "vendor_name": "[TEST] Nimbus Cloud Software Pvt Ltd",
+      "vendor_code": "TST-002",
+      "vendor_existing": false,
+      "vendor_gstin": "29TSTCN0002T1ZG",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-NCS-2026-0907",
+      "invoice_date": "2026-09-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SERVICES",
+      "department": "IT",
+      "category_exists_in_db": false,
+      "layout": "B",
+      "quality": "scan",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "60000.00",
+        "discount": "0.00",
+        "taxable": "60000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "10800.00"
+          }
+        ],
+        "tax_total": "10800.00",
+        "net": "70800.00",
+        "net_payable_after_tds": "69600.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 45",
+          "invoice_term_days": 45,
+          "printed_due_date": "2026-10-16",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "MISMATCH",
+          "reason": "INVOICE_VS_VENDOR_MASTER",
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-01",
+          "contractual_due_date": "2026-10-01",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-01",
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "TECHNICAL_SERVICE",
+          "expected_payment_nature": "TECHNICAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "60000.00",
+          "section": "194J",
+          "rate_percent": "2",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "60000.00",
+          "applicable": true,
+          "tds_amount": "1200.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "69600.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S17",
+      "file": "invoices/S17_Nimbus_TST_NCS_2026_1004.pdf",
+      "scenario": "Multi-page metered usage invoice; agreement expired",
+      "note": "",
+      "vendor_key": "NIMBUS",
+      "vendor_name": "[TEST] Nimbus Cloud Software Pvt Ltd",
+      "vendor_code": "TST-002",
+      "vendor_existing": false,
+      "vendor_gstin": "29TSTCN0002T1ZG",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-NCS-2026-1004",
+      "invoice_date": "2026-10-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "IT_SERVICES",
+      "department": "IT",
+      "category_exists_in_db": false,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 2,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "106960.00",
+        "discount": "0.00",
+        "taxable": "106960.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "19252.80"
+          }
+        ],
+        "tax_total": "19252.80",
+        "net": "126212.80",
+        "net_payable_after_tds": "124073.80"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-10-31",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "AGREEMENT_EXPIRED",
+          "applied_term_days": null,
+          "suggested_term_days": 30,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-01",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "TECHNICAL_SERVICE",
+          "expected_payment_nature": "TECHNICAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "106960.00",
+          "section": "194J",
+          "rate_percent": "2",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "120000.00",
+          "applicable": true,
+          "tds_amount": "2139.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "OCR_REVIEW_PENDING",
+        "payments": [],
+        "balance_after_payments": "124073.80",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S18",
+      "file": "invoices/S18_Meridian_TST_MER_0005.pdf",
+      "scenario": "Terms match agreement and vendor master",
+      "note": "",
+      "vendor_key": "MERIDIAN",
+      "vendor_name": "[TEST] Meridian Consulting Pvt Ltd",
+      "vendor_code": "TST-004",
+      "vendor_existing": false,
+      "vendor_gstin": "27TSTCM0004T1ZJ",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MER-0005",
+      "invoice_date": "2026-06-15",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "PROF_CONSULTING",
+      "department": "FIN",
+      "category_exists_in_db": false,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "350000.00",
+        "discount": "0.00",
+        "taxable": "350000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "63000.00"
+          }
+        ],
+        "tax_total": "63000.00",
+        "net": "413000.00",
+        "net_payable_after_tds": "378000.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 45",
+          "invoice_term_days": 45,
+          "printed_due_date": "2026-07-30",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 45,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-06-15",
+          "contractual_due_date": "2026-07-30",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-07-30",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "350000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": true,
+          "tds_amount": "35000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-07-28",
+            "amount": "378000.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S19",
+      "file": "invoices/S19_Meridian_TST_MER_0011.pdf",
+      "scenario": "No payment terms and no due date printed",
+      "note": "",
+      "vendor_key": "MERIDIAN",
+      "vendor_name": "[TEST] Meridian Consulting Pvt Ltd",
+      "vendor_code": "TST-004",
+      "vendor_existing": false,
+      "vendor_gstin": "27TSTCM0004T1ZJ",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MER-0011",
+      "invoice_date": "2026-08-14",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "PROF_CONSULTING",
+      "department": "FIN",
+      "category_exists_in_db": false,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "275000.00",
+        "discount": "0.00",
+        "taxable": "275000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "49500.00"
+          }
+        ],
+        "tax_total": "49500.00",
+        "net": "324500.00",
+        "net_payable_after_tds": "297000.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": null,
+          "invoice_term_days": null,
+          "printed_due_date": null,
+          "reference_source": "AGREEMENT",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "INVOICE_TERMS_MISSING",
+          "applied_term_days": null,
+          "suggested_term_days": 45,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-14",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "275000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "350000.00",
+          "applicable": true,
+          "tds_amount": "27500.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "297000.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S20",
+      "file": "invoices/S20_Meridian_TST_MER_0016.pdf",
+      "scenario": "Ambiguous terms 'as per agreed terms'",
+      "note": "",
+      "vendor_key": "MERIDIAN",
+      "vendor_name": "[TEST] Meridian Consulting Pvt Ltd",
+      "vendor_code": "TST-004",
+      "vendor_existing": false,
+      "vendor_gstin": "27TSTCM0004T1ZJ",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MER-0016",
+      "invoice_date": "2026-09-30",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "PROF_CONSULTING",
+      "department": "FIN",
+      "category_exists_in_db": false,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "180000.00",
+        "discount": "0.00",
+        "taxable": "180000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "32400.00"
+          }
+        ],
+        "tax_total": "32400.00",
+        "net": "212400.00",
+        "net_payable_after_tds": "194400.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Payment as per agreed terms",
+          "invoice_term_days": null,
+          "printed_due_date": null,
+          "reference_source": "AGREEMENT",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "INVOICE_TERMS_AMBIGUOUS",
+          "applied_term_days": null,
+          "suggested_term_days": 45,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-30",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "180000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "625000.00",
+          "applicable": true,
+          "tds_amount": "18000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PENDING_APPROVAL",
+        "payments": [],
+        "balance_after_payments": "194400.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S21",
+      "file": "invoices/S21_Arora_TST_AA_26_27_014.pdf",
+      "scenario": "Below the 194J aggregate threshold",
+      "note": "",
+      "vendor_key": "ARORA",
+      "vendor_name": "[TEST] Arora & Associates, Chartered Accountants",
+      "vendor_code": "TST-003",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFA0003T1ZR",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-AA-26-27-014",
+      "invoice_date": "2026-05-20",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "FIN_ACCOUNTING",
+      "department": "FIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "30000.00",
+        "discount": "0.00",
+        "taxable": "30000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "2700.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "2700.00"
+          }
+        ],
+        "tax_total": "5400.00",
+        "net": "35400.00",
+        "net_payable_after_tds": "35400.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-06-04",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-05-20",
+          "contractual_due_date": "2026-06-04",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-06-04",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": true,
+          "taxable_base": "30000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": false,
+          "reason": "aggregate_period 30,000.00 below 50,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-06-02",
+            "amount": "35400.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S22",
+      "file": "invoices/S22_Arora_TST_AA_26_27_031.pdf",
+      "scenario": "Audit fee crosses the 194J aggregate threshold (scanned)",
+      "note": "",
+      "vendor_key": "ARORA",
+      "vendor_name": "[TEST] Arora & Associates, Chartered Accountants",
+      "vendor_code": "TST-003",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFA0003T1ZR",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-AA-26-27-031",
+      "invoice_date": "2026-07-31",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "FIN_AUDIT",
+      "department": "FIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "scan",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "150000.00",
+        "discount": "0.00",
+        "taxable": "150000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "13500.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "13500.00"
+          }
+        ],
+        "tax_total": "27000.00",
+        "net": "177000.00",
+        "net_payable_after_tds": "162000.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-08-15",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-07-31",
+          "contractual_due_date": "2026-08-15",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-15",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": true,
+          "taxable_base": "150000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "30000.00",
+          "applicable": true,
+          "tds_amount": "15000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-08-14",
+            "amount": "162000.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S23",
+      "file": "invoices/S23_Arora_TST_AA_26_27_047.pdf",
+      "scenario": "Ready for payment and overdue",
+      "note": "",
+      "vendor_key": "ARORA",
+      "vendor_name": "[TEST] Arora & Associates, Chartered Accountants",
+      "vendor_code": "TST-003",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFA0003T1ZR",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-AA-26-27-047",
+      "invoice_date": "2026-09-15",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "FIN_ACCOUNTING",
+      "department": "FIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "40000.00",
+        "discount": "0.00",
+        "taxable": "40000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "3600.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "3600.00"
+          }
+        ],
+        "tax_total": "7200.00",
+        "net": "47200.00",
+        "net_payable_after_tds": "43200.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-09-30",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-15",
+          "contractual_due_date": "2026-09-30",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-09-30",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": true,
+          "taxable_base": "40000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "180000.00",
+          "applicable": true,
+          "tds_amount": "4000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "43200.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S24",
+      "file": "invoices/S24_Arora_TST_AA_26_27_052.pdf",
+      "scenario": "'Due on receipt' conflicts with the vendor master Net 15",
+      "note": "",
+      "vendor_key": "ARORA",
+      "vendor_name": "[TEST] Arora & Associates, Chartered Accountants",
+      "vendor_code": "TST-003",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTFA0003T1ZR",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-AA-26-27-052",
+      "invoice_date": "2026-10-03",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "FIN_ACCOUNTING",
+      "department": "FIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "25000.00",
+        "discount": "0.00",
+        "taxable": "25000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "2250.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "2250.00"
+          }
+        ],
+        "tax_total": "4500.00",
+        "net": "29500.00",
+        "net_payable_after_tds": "27000.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Due on receipt",
+          "invoice_term_days": 0,
+          "printed_due_date": "2026-10-03",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "MISMATCH",
+          "reason": "INVOICE_VS_VENDOR_MASTER",
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-03",
+          "contractual_due_date": "2026-10-18",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-18",
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": true,
+          "taxable_base": "25000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "220000.00",
+          "applicable": true,
+          "tds_amount": "2500.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PENDING_APPROVAL",
+        "payments": [],
+        "balance_after_payments": "27000.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S25",
+      "file": "invoices/S25_Officemart_TST_OMS_1187.pdf",
+      "scenario": "PO invoice with trade discount, terms match PO",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-OMS-1187",
+      "invoice_date": "2026-05-12",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0001",
+      "po_number_printed": "TST-PO-0001",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "84000.00",
+        "discount": "1680.00",
+        "taxable": "82320.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "7408.80"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "7408.80"
+          }
+        ],
+        "tax_total": "14817.60",
+        "net": "97137.60",
+        "net_payable_after_tds": "97137.60"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-06-11",
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-05-12",
+          "contractual_due_date": "2026-06-11",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-06-11",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "82320.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": false,
+          "reason": "aggregate_period 82,320.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-06-10",
+            "amount": "97137.60"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S26",
+      "file": "invoices/S26_Officemart_TST_OMS_1302.pdf",
+      "scenario": "PO invoice paid late",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-OMS-1302",
+      "invoice_date": "2026-07-08",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0002",
+      "po_number_printed": "TST-PO-0002",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "106800.00",
+        "discount": "0.00",
+        "taxable": "106800.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "9612.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "9612.00"
+          }
+        ],
+        "tax_total": "19224.00",
+        "net": "126024.00",
+        "net_payable_after_tds": "126024.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-08-07",
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-07-08",
+          "contractual_due_date": "2026-08-07",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-07",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "106800.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "82320.00",
+          "applicable": false,
+          "reason": "aggregate_period 1,89,120.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-08-20",
+            "amount": "126024.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": false
+      }
+    },
+    {
+      "id": "S27",
+      "file": "invoices/S27_Officemart_TST_OMS_1415.pdf",
+      "scenario": "Invoice says Net 30; PO says Net 45",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-OMS-1415",
+      "invoice_date": "2026-08-20",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0003",
+      "po_number_printed": "TST-PO-0003",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "50000.00",
+        "discount": "0.00",
+        "taxable": "50000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "4500.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "4500.00"
+          }
+        ],
+        "tax_total": "9000.00",
+        "net": "59000.00",
+        "net_payable_after_tds": "59000.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-09-19",
+          "reference_source": "PO",
+          "validation_status": "MISMATCH",
+          "reason": "INVOICE_VS_PO",
+          "applied_term_days": 45,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-20",
+          "contractual_due_date": "2026-10-04",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-04",
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "50000.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "189120.00",
+          "applicable": false,
+          "reason": "aggregate_period 2,39,120.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "59000.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S28",
+      "file": "invoices/S28_Officemart_TST_OMS_1528.pdf",
+      "scenario": "The PO has no payment terms",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-OMS-1528",
+      "invoice_date": "2026-09-18",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0004",
+      "po_number_printed": "TST-PO-0004",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "42000.00",
+        "discount": "0.00",
+        "taxable": "42000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "3780.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "3780.00"
+          }
+        ],
+        "tax_total": "7560.00",
+        "net": "49560.00",
+        "net_payable_after_tds": "49560.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-10-18",
+          "reference_source": "PO",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "PO_TERMS_MISSING",
+          "applied_term_days": null,
+          "suggested_term_days": 30,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-18",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "42000.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "239120.00",
+          "applicable": false,
+          "reason": "aggregate_period 2,81,120.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "49560.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S29",
+      "file": "invoices/S29_Officemart_TST_OMS_1611.jpg",
+      "scenario": "Phone photo of a PO invoice (JPG)",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-OMS-1611",
+      "invoice_date": "2026-10-06",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0005",
+      "po_number_printed": "TST-PO-0005",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "photo",
+      "pages": null,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "18750.00",
+        "discount": "0.00",
+        "taxable": "18750.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "1687.50"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "1687.50"
+          }
+        ],
+        "tax_total": "3375.00",
+        "net": "22125.00",
+        "net_payable_after_tds": "22125.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 60",
+          "invoice_term_days": 60,
+          "printed_due_date": "2026-12-05",
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 60,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-06",
+          "contractual_due_date": "2026-12-05",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-12-05",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "18750.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "281120.00",
+          "applicable": false,
+          "reason": "aggregate_period 2,99,870.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "22125.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S30",
+      "file": "invoices/S30_Saikrishna_TST_SKP_0091.pdf",
+      "scenario": "MSME (small) vendor on Net 60: the 45-day statutory limit applies",
+      "note": "",
+      "vendor_key": "SAIKRISHNA",
+      "vendor_name": "[TEST] Sai Krishna Packaging Works (Prop. S. Test Rao)",
+      "vendor_code": "TST-011",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTPS0011T1ZO",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SKP-0091",
+      "invoice_date": "2026-08-01",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0006",
+      "po_number_printed": "TST-PO-0006",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "102000.00",
+        "discount": "0.00",
+        "taxable": "102000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "6",
+            "amount": "6120.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "6",
+            "amount": "6120.00"
+          }
+        ],
+        "tax_total": "12240.00",
+        "net": "114240.00",
+        "net_payable_after_tds": "114240.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 60",
+          "invoice_term_days": 60,
+          "printed_due_date": "2026-09-30",
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 60,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-01",
+          "contractual_due_date": "2026-09-30",
+          "statutory_due_date": "2026-09-15",
+          "statutory_rule": "MSMED_S15_45_DAYS",
+          "effective_due_date": "2026-09-15",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "102000.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": false,
+          "reason": "aggregate_period 1,02,000.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "114240.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S31",
+      "file": "invoices/S31_Saikrishna_TST_SKP_0127.pdf",
+      "scenario": "MSME vendor; statutory due date comes before the contractual one",
+      "note": "",
+      "vendor_key": "SAIKRISHNA",
+      "vendor_name": "[TEST] Sai Krishna Packaging Works (Prop. S. Test Rao)",
+      "vendor_code": "TST-011",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTPS0011T1ZO",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SKP-0127",
+      "invoice_date": "2026-09-25",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0007",
+      "po_number_printed": "TST-PO-0007",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "64500.00",
+        "discount": "0.00",
+        "taxable": "64500.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "6",
+            "amount": "3870.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "6",
+            "amount": "3870.00"
+          }
+        ],
+        "tax_total": "7740.00",
+        "net": "72240.00",
+        "net_payable_after_tds": "72240.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 60",
+          "invoice_term_days": 60,
+          "printed_due_date": "2026-11-24",
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 60,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-25",
+          "contractual_due_date": "2026-11-24",
+          "statutory_due_date": "2026-11-09",
+          "statutory_rule": "MSMED_S15_45_DAYS",
+          "effective_due_date": "2026-11-09",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "64500.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "102000.00",
+          "applicable": false,
+          "reason": "aggregate_period 1,66,500.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "72240.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S32",
+      "file": "invoices/S32_Saikrishna_TST_SKP_0138.pdf",
+      "scenario": "Invoice has no terms; PO terms apply (scanned)",
+      "note": "",
+      "vendor_key": "SAIKRISHNA",
+      "vendor_name": "[TEST] Sai Krishna Packaging Works (Prop. S. Test Rao)",
+      "vendor_code": "TST-011",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTPS0011T1ZO",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-SKP-0138",
+      "invoice_date": "2026-10-02",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0008",
+      "po_number_printed": "TST-PO-0008",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "scan",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "30400.00",
+        "discount": "0.00",
+        "taxable": "30400.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "6",
+            "amount": "1824.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "6",
+            "amount": "1824.00"
+          }
+        ],
+        "tax_total": "3648.00",
+        "net": "34048.00",
+        "net_payable_after_tds": "34048.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": null,
+          "invoice_term_days": null,
+          "printed_due_date": null,
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": "INVOICE_SILENT_PO_TERMS_APPLIED",
+          "applied_term_days": 60,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-02",
+          "contractual_due_date": "2026-12-01",
+          "statutory_due_date": "2026-11-16",
+          "statutory_rule": "MSMED_S15_45_DAYS",
+          "effective_due_date": "2026-11-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "30400.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "166500.00",
+          "applicable": false,
+          "reason": "aggregate_period 1,96,900.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "OCR_REVIEW_PENDING",
+        "payments": [],
+        "balance_after_payments": "34048.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S33",
+      "file": "invoices/S33_Vertex_TST_VIT_2627_0072.pdf",
+      "scenario": "PO terms count from the GRN date",
+      "note": "",
+      "vendor_key": "VERTEX",
+      "vendor_name": "[TEST] Vertex IT Hardware Pvt Ltd",
+      "vendor_code": "TST-006",
+      "vendor_existing": false,
+      "vendor_gstin": "33TSTCV0006T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-VIT-2627-0072",
+      "invoice_date": "2026-07-10",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0009",
+      "po_number_printed": "TST-PO-0009",
+      "purchase_category": "IT_HARDWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "407500.00",
+        "discount": "0.00",
+        "taxable": "407500.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "73350.00"
+          }
+        ],
+        "tax_total": "73350.00",
+        "net": "480850.00",
+        "net_payable_after_tds": "480850.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 45 from GRN date",
+          "invoice_term_days": 45,
+          "printed_due_date": null,
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 45,
+          "suggested_term_days": null,
+          "due_basis": "GRN_DATE",
+          "basis_date": "2026-07-20",
+          "contractual_due_date": "2026-09-03",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-09-03",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "407500.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": false,
+          "reason": "aggregate_period 4,07,500.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-09-01",
+            "amount": "480850.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S34",
+      "file": "invoices/S34_Vertex_TST_VIT_2627_0118.pdf",
+      "scenario": "Two-page PO invoice, partially paid",
+      "note": "",
+      "vendor_key": "VERTEX",
+      "vendor_name": "[TEST] Vertex IT Hardware Pvt Ltd",
+      "vendor_code": "TST-006",
+      "vendor_existing": false,
+      "vendor_gstin": "33TSTCV0006T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-VIT-2627-0118",
+      "invoice_date": "2026-09-05",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0010",
+      "po_number_printed": "TST-PO-0010",
+      "purchase_category": "IT_HARDWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 2,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "345000.00",
+        "discount": "0.00",
+        "taxable": "345000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "62100.00"
+          }
+        ],
+        "tax_total": "62100.00",
+        "net": "407100.00",
+        "net_payable_after_tds": "407100.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 45 from GRN date",
+          "invoice_term_days": 45,
+          "printed_due_date": null,
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 45,
+          "suggested_term_days": null,
+          "due_basis": "GRN_DATE",
+          "basis_date": "2026-09-12",
+          "contractual_due_date": "2026-10-27",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-27",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "345000.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "407500.00",
+          "applicable": false,
+          "reason": "aggregate_period 7,52,500.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PARTIALLY_PAID",
+        "payments": [
+          {
+            "payment_date": "2026-10-01",
+            "amount": "150000.00"
+          }
+        ],
+        "balance_after_payments": "257100.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S35",
+      "file": "invoices/S35_Vertex_TST_VIT_2627_0131.pdf",
+      "scenario": "'45 days from delivery' must be read as GRN basis; GRN is after the invoice date",
+      "note": "",
+      "vendor_key": "VERTEX",
+      "vendor_name": "[TEST] Vertex IT Hardware Pvt Ltd",
+      "vendor_code": "TST-006",
+      "vendor_existing": false,
+      "vendor_gstin": "33TSTCV0006T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-VIT-2627-0131",
+      "invoice_date": "2026-09-28",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0011",
+      "po_number_printed": "TST-PO-0011",
+      "purchase_category": "IT_HARDWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "185000.00",
+        "discount": "0.00",
+        "taxable": "185000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "33300.00"
+          }
+        ],
+        "tax_total": "33300.00",
+        "net": "218300.00",
+        "net_payable_after_tds": "218300.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "45 days from delivery",
+          "invoice_term_days": 45,
+          "printed_due_date": null,
+          "reference_source": "PO",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 45,
+          "suggested_term_days": null,
+          "due_basis": "GRN_DATE",
+          "basis_date": "2026-10-08",
+          "contractual_due_date": "2026-11-22",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-11-22",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "185000.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "752500.00",
+          "applicable": false,
+          "reason": "aggregate_period 9,37,500.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PENDING_APPROVAL",
+        "payments": [],
+        "balance_after_payments": "218300.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S36",
+      "file": "invoices/S36_Vertex_TST_VIT_2627_0140.pdf",
+      "scenario": "PO number misprinted (letter O instead of zero): PO not matched",
+      "note": "",
+      "vendor_key": "VERTEX",
+      "vendor_name": "[TEST] Vertex IT Hardware Pvt Ltd",
+      "vendor_code": "TST-006",
+      "vendor_existing": false,
+      "vendor_gstin": "33TSTCV0006T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-VIT-2627-0140",
+      "invoice_date": "2026-10-07",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0012",
+      "po_number_printed": "TST-PO-OO12",
+      "purchase_category": "IT_HARDWARE",
+      "department": "IT",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "152000.00",
+        "discount": "0.00",
+        "taxable": "152000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "27360.00"
+          }
+        ],
+        "tax_total": "27360.00",
+        "net": "179360.00",
+        "net_payable_after_tds": "179360.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 45 from GRN date",
+          "invoice_term_days": 45,
+          "printed_due_date": null,
+          "reference_source": "PO",
+          "validation_status": "REVIEW_REQUIRED",
+          "reason": "PO_NOT_MATCHED",
+          "applied_term_days": null,
+          "suggested_term_days": 45,
+          "due_basis": "GRN_DATE",
+          "basis_date": "2026-10-09",
+          "contractual_due_date": null,
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": null,
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "PURCHASE_OF_GOODS",
+          "expected_payment_nature": "PURCHASE_OF_GOODS",
+          "nature_correction_needed": false,
+          "taxable_base": "152000.00",
+          "section": "194Q",
+          "rate_percent": "0.1",
+          "threshold": "5000000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "937500.00",
+          "applicable": false,
+          "reason": "aggregate_period 10,89,500.00 below 50,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "OCR_REVIEW_PENDING",
+        "payments": [],
+        "balance_after_payments": "179360.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S37",
+      "file": "invoices/S37_Cleanpro_TST_CFS_06_26.pdf",
+      "scenario": "Individual contractor; 194C 1% once the aggregate passes 1,00,000",
+      "note": "",
+      "vendor_key": "CLEANPRO",
+      "vendor_name": "[TEST] CleanPro Facility Services (Prop. R. Test Kumar)",
+      "vendor_code": "TST-007",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTPK0007T1ZS",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-CFS/06/26",
+      "invoice_date": "2026-06-30",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_FACILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "45000.00",
+        "discount": "0.00",
+        "taxable": "45000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "4050.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "4050.00"
+          }
+        ],
+        "tax_total": "8100.00",
+        "net": "53100.00",
+        "net_payable_after_tds": "53100.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-07-30",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-06-30",
+          "contractual_due_date": "2026-07-30",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-07-30",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "CONTRACTOR",
+          "nature_correction_needed": true,
+          "taxable_base": "45000.00",
+          "section": "194C",
+          "rate_percent": "1",
+          "threshold": "100000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": false,
+          "reason": "aggregate_period 45,000.00 below 1,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-07-25",
+            "amount": "53100.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S38",
+      "file": "invoices/S38_Cleanpro_TST_CFS_07_26.pdf",
+      "scenario": "Individual contractor; 194C 1% once the aggregate passes 1,00,000",
+      "note": "",
+      "vendor_key": "CLEANPRO",
+      "vendor_name": "[TEST] CleanPro Facility Services (Prop. R. Test Kumar)",
+      "vendor_code": "TST-007",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTPK0007T1ZS",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-CFS/07/26",
+      "invoice_date": "2026-07-31",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_FACILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "scan",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "45000.00",
+        "discount": "0.00",
+        "taxable": "45000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "4050.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "4050.00"
+          }
+        ],
+        "tax_total": "8100.00",
+        "net": "53100.00",
+        "net_payable_after_tds": "53100.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-08-30",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-07-31",
+          "contractual_due_date": "2026-08-30",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-30",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "CONTRACTOR",
+          "nature_correction_needed": true,
+          "taxable_base": "45000.00",
+          "section": "194C",
+          "rate_percent": "1",
+          "threshold": "100000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "45000.00",
+          "applicable": false,
+          "reason": "aggregate_period 90,000.00 below 1,00,000.00",
+          "tds_amount": "0.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-08-29",
+            "amount": "53100.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S39",
+      "file": "invoices/S39_Cleanpro_TST_CFS_08_26.pdf",
+      "scenario": "Individual contractor; 194C 1% once the aggregate passes 1,00,000",
+      "note": "",
+      "vendor_key": "CLEANPRO",
+      "vendor_name": "[TEST] CleanPro Facility Services (Prop. R. Test Kumar)",
+      "vendor_code": "TST-007",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTPK0007T1ZS",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-CFS/08/26",
+      "invoice_date": "2026-08-31",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_FACILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "E",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "45000.00",
+        "discount": "0.00",
+        "taxable": "45000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "4050.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "4050.00"
+          }
+        ],
+        "tax_total": "8100.00",
+        "net": "53100.00",
+        "net_payable_after_tds": "52650.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-09-30",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-31",
+          "contractual_due_date": "2026-09-30",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-09-30",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "CONTRACTOR",
+          "nature_correction_needed": true,
+          "taxable_base": "45000.00",
+          "section": "194C",
+          "rate_percent": "1",
+          "threshold": "100000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "90000.00",
+          "applicable": true,
+          "tds_amount": "450.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "52650.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S40",
+      "file": "invoices/S40_Brightspark_TST_BSE_2627_019.pdf",
+      "scenario": "MSME (micro) company contractor, 194C 2%, partially paid",
+      "note": "",
+      "vendor_key": "BRIGHTSPARK",
+      "vendor_name": "[TEST] BrightSpark Electricals Pvt Ltd",
+      "vendor_code": "TST-008",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCB0008T1ZR",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-BSE-2627-019",
+      "invoice_date": "2026-08-10",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_FACILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "125000.00",
+        "discount": "0.00",
+        "taxable": "125000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "11250.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "11250.00"
+          }
+        ],
+        "tax_total": "22500.00",
+        "net": "147500.00",
+        "net_payable_after_tds": "145000.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 30",
+          "invoice_term_days": 30,
+          "printed_due_date": "2026-09-09",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-10",
+          "contractual_due_date": "2026-09-09",
+          "statutory_due_date": "2026-09-09",
+          "statutory_rule": "MSMED_S15_45_DAYS",
+          "effective_due_date": "2026-09-09",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "CONTRACTOR",
+          "nature_correction_needed": true,
+          "taxable_base": "125000.00",
+          "section": "194C",
+          "rate_percent": "2",
+          "threshold": "100000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "0",
+          "applicable": true,
+          "tds_amount": "2500.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PARTIALLY_PAID",
+        "payments": [
+          {
+            "payment_date": "2026-09-05",
+            "amount": "60000.00"
+          }
+        ],
+        "balance_after_payments": "85000.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S41",
+      "file": "invoices/S41_Brightspark_TST_BSE_2627_027.pdf",
+      "scenario": "MSME vendor prints Net 60 (above the 45-day limit); vendor master says Net 30",
+      "note": "",
+      "vendor_key": "BRIGHTSPARK",
+      "vendor_name": "[TEST] BrightSpark Electricals Pvt Ltd",
+      "vendor_code": "TST-008",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCB0008T1ZR",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-BSE-2627-027",
+      "invoice_date": "2026-09-22",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_FACILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "38000.00",
+        "discount": "0.00",
+        "taxable": "38000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "3420.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "3420.00"
+          }
+        ],
+        "tax_total": "6840.00",
+        "net": "44840.00",
+        "net_payable_after_tds": "44080.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 60",
+          "invoice_term_days": 60,
+          "printed_due_date": "2026-11-21",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "MISMATCH",
+          "reason": "INVOICE_VS_VENDOR_MASTER",
+          "applied_term_days": 30,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-22",
+          "contractual_due_date": "2026-10-22",
+          "statutory_due_date": "2026-10-22",
+          "statutory_rule": "MSMED_S15_45_DAYS",
+          "effective_due_date": "2026-10-22",
+          "blocks_ready_for_payment": true
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "CONTRACTOR",
+          "nature_correction_needed": true,
+          "taxable_base": "38000.00",
+          "section": "194C",
+          "rate_percent": "2",
+          "threshold": "100000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "125000.00",
+          "applicable": true,
+          "tds_amount": "760.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "APPROVED",
+        "payments": [],
+        "balance_after_payments": "44080.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S42",
+      "file": "invoices/S42_Metropower_TST_MPU_0826_55021.pdf",
+      "scenario": "Utility bill: GST-exempt, due date printed, no terms text",
+      "note": "",
+      "vendor_key": "METROPOWER",
+      "vendor_name": "[TEST] Metro Power & Utilities Ltd",
+      "vendor_code": "TST-009",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCM0009T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MPU-0826-55021",
+      "invoice_date": "2026-08-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_UTILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "D",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "26637.00",
+        "discount": "0.00",
+        "taxable": "26637.00",
+        "taxes": [],
+        "tax_total": "0",
+        "net": "26637.00",
+        "net_payable_after_tds": "26637.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": null,
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-08-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": "IMPLIED_FROM_PRINTED_DUE_DATE",
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-08-05",
+          "contractual_due_date": "2026-08-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "OTHER",
+          "nature_correction_needed": false,
+          "taxable_base": "26637.00",
+          "applicable": false,
+          "reason": "No active TDS rule for nature OTHER"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-08-18",
+            "amount": "26637.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S43",
+      "file": "invoices/S43_Metropower_TST_MPU_0926_55021.pdf",
+      "scenario": "Utility bill: GST-exempt, due date printed, no terms text",
+      "note": "",
+      "vendor_key": "METROPOWER",
+      "vendor_name": "[TEST] Metro Power & Utilities Ltd",
+      "vendor_code": "TST-009",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCM0009T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MPU-0926-55021",
+      "invoice_date": "2026-09-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_UTILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "D",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "29018.00",
+        "discount": "0.00",
+        "taxable": "29018.00",
+        "taxes": [],
+        "tax_total": "0",
+        "net": "29018.00",
+        "net_payable_after_tds": "29018.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": null,
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-09-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": "IMPLIED_FROM_PRINTED_DUE_DATE",
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-09-05",
+          "contractual_due_date": "2026-09-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-09-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "OTHER",
+          "nature_correction_needed": false,
+          "taxable_base": "29018.00",
+          "applicable": false,
+          "reason": "No active TDS rule for nature OTHER"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "29018.00",
+        "overdue_as_of": "2026-10-09",
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S44",
+      "file": "invoices/S44_Metropower_TST_MPU_1026_55021.png",
+      "scenario": "Utility bill: GST-exempt, due date printed, no terms text",
+      "note": "",
+      "vendor_key": "METROPOWER",
+      "vendor_name": "[TEST] Metro Power & Utilities Ltd",
+      "vendor_code": "TST-009",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCM0009T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MPU-1026-55021",
+      "invoice_date": "2026-10-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_UTILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "D",
+      "quality": "png",
+      "pages": null,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "27607.00",
+        "discount": "0.00",
+        "taxable": "27607.00",
+        "taxes": [],
+        "tax_total": "0",
+        "net": "27607.00",
+        "net_payable_after_tds": "27607.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": null,
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-10-20",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": "IMPLIED_FROM_PRINTED_DUE_DATE",
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-10-05",
+          "contractual_due_date": "2026-10-20",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-10-20",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "OTHER",
+          "nature_correction_needed": false,
+          "taxable_base": "27607.00",
+          "applicable": false,
+          "reason": "No active TDS rule for nature OTHER"
+        }
+      },
+      "e2e_target": {
+        "final_state": "READY_FOR_PAYMENT",
+        "payments": [],
+        "balance_after_payments": "27607.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S45",
+      "file": "invoices/S45_Fiberlink_TST_FLB_Q2_0456.pdf",
+      "scenario": "Quarterly broadband bill",
+      "note": "",
+      "vendor_key": "FIBERLINK",
+      "vendor_name": "[TEST] FiberLink Broadband Pvt Ltd",
+      "vendor_code": "TST-010",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCF0010T1ZT",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-FLB-Q2-0456",
+      "invoice_date": "2026-07-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_UTILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "D",
+      "quality": "clean",
+      "pages": 1,
+      "special": null,
+      "special_ref": null,
+      "amounts": {
+        "gross": "18000.00",
+        "discount": "0.00",
+        "taxable": "18000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "1620.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "1620.00"
+          }
+        ],
+        "tax_total": "3240.00",
+        "net": "21240.00",
+        "net_payable_after_tds": "21240.00"
+      },
+      "expected": {
+        "intake": "CREATED_OCR_REVIEW_PENDING",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 15",
+          "invoice_term_days": 15,
+          "printed_due_date": "2026-07-16",
+          "reference_source": "VENDOR_MASTER",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 15,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-07-01",
+          "contractual_due_date": "2026-07-16",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-07-16",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "OTHER",
+          "expected_payment_nature": "OTHER",
+          "nature_correction_needed": false,
+          "taxable_base": "18000.00",
+          "applicable": false,
+          "reason": "No active TDS rule for nature OTHER"
+        }
+      },
+      "e2e_target": {
+        "final_state": "PAID",
+        "payments": [
+          {
+            "payment_date": "2026-07-10",
+            "amount": "21240.00"
+          }
+        ],
+        "balance_after_payments": "0.00",
+        "overdue_as_of": null,
+        "paid_on_time": true
+      }
+    },
+    {
+      "id": "S46",
+      "file": "invoices/S46_DUPLICATE_OF_S43_Metropower_TST_MPU_0926_55021.pdf",
+      "scenario": "Byte-identical re-upload of S43",
+      "note": "",
+      "vendor_key": "METROPOWER",
+      "vendor_name": "[TEST] Metro Power & Utilities Ltd",
+      "vendor_code": "TST-009",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCM0009T1ZF",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-MPU-0926-55021",
+      "invoice_date": "2026-09-05",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_UTILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": "DUP_FILE",
+      "special_ref": "S43",
+      "amounts": {
+        "gross": "29018.00",
+        "discount": "0.00",
+        "taxable": "29018.00",
+        "taxes": [],
+        "tax_total": "0",
+        "net": "29018.00",
+        "net_payable_after_tds": null
+      },
+      "expected": {
+        "intake": "DUPLICATE_FILE (same SHA-256 as an earlier upload; not processed)",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": null,
+        "tds": null
+      },
+      "e2e_target": {
+        "final_state": "REJECTED_AT_INTAKE",
+        "payments": [],
+        "balance_after_payments": null,
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S47",
+      "file": "invoices/S47_Officemart_TST_OMS_1415.pdf",
+      "scenario": "Same vendor + invoice number as S27, re-scanned with a different layout",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-OMS-1415",
+      "invoice_date": "2026-08-20",
+      "invoice_type": "PO",
+      "po_number": "TST-PO-0003",
+      "po_number_printed": "TST-PO-0003",
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "B",
+      "quality": "scan",
+      "pages": 1,
+      "special": "DUP_INVOICE",
+      "special_ref": "S27",
+      "amounts": {
+        "gross": "50000.00",
+        "discount": "0.00",
+        "taxable": "50000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "4500.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "4500.00"
+          }
+        ],
+        "tax_total": "9000.00",
+        "net": "59000.00",
+        "net_payable_after_tds": null
+      },
+      "expected": {
+        "intake": "DUPLICATE_INVOICE (vendor + invoice number already exists; not created)",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": null,
+        "tds": null
+      },
+      "e2e_target": {
+        "final_state": "REJECTED_AT_INTAKE",
+        "payments": [],
+        "balance_after_payments": null,
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S48",
+      "file": "invoices/S48_Meridian_TSTMER0005.pdf",
+      "scenario": "Possible duplicate of S18 (same normalised number and amount, date +3 days)",
+      "note": "Reviewer confirms it duplicates S18 and rejects it.",
+      "vendor_key": "MERIDIAN",
+      "vendor_name": "[TEST] Meridian Consulting Pvt Ltd",
+      "vendor_code": "TST-004",
+      "vendor_existing": false,
+      "vendor_gstin": "27TSTCM0004T1ZJ",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TSTMER0005",
+      "invoice_date": "2026-06-18",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "PROF_CONSULTING",
+      "department": "FIN",
+      "category_exists_in_db": false,
+      "layout": "B",
+      "quality": "clean",
+      "pages": 1,
+      "special": "POSSIBLE_DUP",
+      "special_ref": "S18",
+      "amounts": {
+        "gross": "350000.00",
+        "discount": "0.00",
+        "taxable": "350000.00",
+        "taxes": [
+          {
+            "type": "IGST",
+            "rate": "18",
+            "amount": "63000.00"
+          }
+        ],
+        "tax_total": "63000.00",
+        "net": "413000.00",
+        "net_payable_after_tds": "378000.00"
+      },
+      "expected": {
+        "intake": "CREATED_WITH_POSSIBLE_DUPLICATE_FLAG",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": {
+          "invoice_terms_text": "Net 45",
+          "invoice_term_days": 45,
+          "printed_due_date": "2026-08-02",
+          "reference_source": "AGREEMENT",
+          "validation_status": "COMPLIANT",
+          "reason": null,
+          "applied_term_days": 45,
+          "suggested_term_days": null,
+          "due_basis": "INVOICE_DATE",
+          "basis_date": "2026-06-18",
+          "contractual_due_date": "2026-08-02",
+          "statutory_due_date": null,
+          "statutory_rule": null,
+          "effective_due_date": "2026-08-02",
+          "blocks_ready_for_payment": false
+        },
+        "tds": {
+          "mapped_payment_nature": "PROFESSIONAL_SERVICE",
+          "expected_payment_nature": "PROFESSIONAL_SERVICE",
+          "nature_correction_needed": false,
+          "taxable_base": "350000.00",
+          "section": "194J",
+          "rate_percent": "10",
+          "threshold": "50000",
+          "threshold_type": "AGGREGATE_PERIOD",
+          "prior_aggregate_in_set": "350000.00",
+          "applicable": true,
+          "tds_amount": "35000.00"
+        }
+      },
+      "e2e_target": {
+        "final_state": "REJECTED",
+        "payments": [],
+        "balance_after_payments": "378000.00",
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S49",
+      "file": "invoices/S49_Officemart_TST_QTN_0442.pdf",
+      "scenario": "Quotation, not an invoice",
+      "note": "",
+      "vendor_key": "OFFICEMART",
+      "vendor_name": "[TEST] Officemart Supplies Pvt Ltd",
+      "vendor_code": "TST-005",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCO0005T1ZH",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-QTN-0442",
+      "invoice_date": "2026-09-02",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_OFFICE",
+      "department": "ADMIN",
+      "category_exists_in_db": true,
+      "layout": "A",
+      "quality": "clean",
+      "pages": 1,
+      "special": "NOT_INVOICE",
+      "special_ref": null,
+      "amounts": {
+        "gross": "359000.00",
+        "discount": "0.00",
+        "taxable": "359000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "32310.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "32310.00"
+          }
+        ],
+        "tax_total": "64620.00",
+        "net": "423620.00",
+        "net_payable_after_tds": null
+      },
+      "expected": {
+        "intake": "NEEDS_ATTENTION / NOT_AN_INVOICE (quotation, no invoice number)",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": null,
+        "tds": null
+      },
+      "e2e_target": {
+        "final_state": "REJECTED_AT_INTAKE",
+        "payments": [],
+        "balance_after_payments": null,
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    },
+    {
+      "id": "S50",
+      "file": "invoices/S50_Fiberlink_TST_FLB_Q3_0511.pdf",
+      "scenario": "Corrupt / truncated PDF",
+      "note": "",
+      "vendor_key": "FIBERLINK",
+      "vendor_name": "[TEST] FiberLink Broadband Pvt Ltd",
+      "vendor_code": "TST-010",
+      "vendor_existing": false,
+      "vendor_gstin": "36TSTCF0010T1ZT",
+      "vendor_gstin_status": "PLACEHOLDER_CHECKSUM_INVALID",
+      "invoice_number": "TST-FLB-Q3-0511",
+      "invoice_date": "2026-10-01",
+      "invoice_type": "NON_PO",
+      "po_number": null,
+      "po_number_printed": null,
+      "purchase_category": "ADMIN_UTILITIES",
+      "department": "ADMIN",
+      "category_exists_in_db": false,
+      "layout": "D",
+      "quality": "clean",
+      "pages": null,
+      "special": "CORRUPT",
+      "special_ref": null,
+      "amounts": {
+        "gross": "18000.00",
+        "discount": "0.00",
+        "taxable": "18000.00",
+        "taxes": [
+          {
+            "type": "CGST",
+            "rate": "9",
+            "amount": "1620.00"
+          },
+          {
+            "type": "SGST",
+            "rate": "9",
+            "amount": "1620.00"
+          }
+        ],
+        "tax_total": "3240.00",
+        "net": "21240.00",
+        "net_payable_after_tds": null
+      },
+      "expected": {
+        "intake": "FAILED_INVALID_FILE (unreadable PDF; not retried)",
+        "intake_precondition": "Vendor must be onboarded (with an approved GSTIN) first; until then expect NEEDS_ATTENTION / VENDOR_NOT_FOUND.",
+        "payment_terms": null,
+        "tds": null
+      },
+      "e2e_target": {
+        "final_state": "REJECTED_AT_INTAKE",
+        "payments": [],
+        "balance_after_payments": null,
+        "overdue_as_of": null,
+        "paid_on_time": null
+      }
+    }
+  ]
+}

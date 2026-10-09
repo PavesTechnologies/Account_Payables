@@ -106,7 +106,9 @@ def gstin_checksum_valid(gstin: str) -> bool:
     if len(cleaned) != 15 or not is_valid_gstin_format(cleaned):
         return False
 
-    factor = 2
+    # Weights alternate 1, 2, 1, 2, ... from the leftmost character (the standard GSTN
+    # check-digit scheme); starting at 2 rejected every real GSTIN.
+    factor = 1
     total = 0
     for char in cleaned[:14]:
         if char not in _GSTIN_CODE_CHARS:

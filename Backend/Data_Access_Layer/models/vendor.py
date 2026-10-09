@@ -30,6 +30,7 @@ class Vendor(Base):
         Index('idx_vendor_country', 'country_id'),
         Index('idx_vendor_status', 'status_id'),
         Index('idx_vendor_email', 'email'),
+        CheckConstraint("msme_category IS NULL OR msme_category IN ('MICRO', 'SMALL', 'MEDIUM')", name='vendor_msme_category_chk'),
         {'schema': 'ap'}
     )
  
@@ -47,6 +48,11 @@ class Vendor(Base):
     status_id: Mapped[Optional[int]] = mapped_column(Integer)
     created_by: Mapped[Optional[str]] = mapped_column(String(100))
     updated_by: Mapped[Optional[str]] = mapped_column(String(100))
+    # MSME classification (migration_payment_term_compliance.sql). Only MICRO/SMALL
+    # suppliers get the MSMED Act s.15 statutory payment limit.
+    msme_registered: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    udyam_number: Mapped[Optional[str]] = mapped_column(String(19))
+    msme_category: Mapped[Optional[str]] = mapped_column(String(10))
  
     country: Mapped['Country'] = relationship('Country', back_populates='vendor')
     currency: Mapped[Optional['Currency']] = relationship('Currency', back_populates='vendor')

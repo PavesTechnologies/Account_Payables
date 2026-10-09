@@ -84,6 +84,9 @@ class PurchaseOrderCreateRequest(BaseModel):
     expected_delivery_date: Optional[datetime.date] = None
     delivery_location: Optional[str] = None
     payment_terms: Optional[str] = None
+    # Structured payment term (ap.payment_term); the free-text payment_terms above is kept and
+    # parsed when this is not set.
+    payment_term_id: Optional[int] = None
     delivery_terms: Optional[str] = None
     subtotal: Optional[decimal.Decimal] = None
     tax_amount: Optional[decimal.Decimal] = None
@@ -100,6 +103,9 @@ class PurchaseOrderUpdateRequest(BaseModel):
     expected_delivery_date: Optional[datetime.date] = None
     delivery_location: Optional[str] = None
     payment_terms: Optional[str] = None
+    # Structured payment term (ap.payment_term); the free-text payment_terms above is kept and
+    # parsed when this is not set.
+    payment_term_id: Optional[int] = None
     delivery_terms: Optional[str] = None
     subtotal: Optional[decimal.Decimal] = None
     tax_amount: Optional[decimal.Decimal] = None
@@ -143,6 +149,7 @@ class PurchaseOrderDTO(BaseModel):
     expected_delivery_date: Optional[datetime.date]
     delivery_location: Optional[str]
     payment_terms: Optional[str]
+    payment_term_id: Optional[int] = None
     delivery_terms: Optional[str]
     subtotal: Optional[decimal.Decimal]
     tax_amount: Optional[decimal.Decimal]

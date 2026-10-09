@@ -39,6 +39,7 @@ from Backend.Business_Layer.services.payment_service import (
     _INVOICE_PAYABLE_STATUSES,
 )
 from Backend.Business_Layer.services.tds_determination_service import require_tds_verified
+from Backend.Data_Access_Layer.dao.payment_term_dao import PaymentTermDAO
 from Backend.Data_Access_Layer.dao.payment_dao import PAYMENT_PENDING_CODES
 from Backend.Data_Access_Layer.models.audit import AuditLog
 from Backend.Data_Access_Layer.models.payment import Payment, PaymentDocument, PaymentInvoice
@@ -222,7 +223,20 @@ class PaymentTrackingService:
         for invoice, vendor_name, status, tds in rows:
             net_payable = self.payment_service._net_payable(invoice)
             result.append(invoice_payment_summary(invoice, vendor_name, status, tds, by_invoice.get(invoice.invoice_id, []), net_payable, today))
+        self._attach_payment_terms(result)
         return result
+
+    def _attach_payment_terms(self, summaries: list[dict]) -> None:
+        """Adds each invoice's payment-term compliance status (PaymentTermComplianceService) so the
+        payment screens can badge exceptions and explain a blocked Mark Ready for Payment."""
+        records = PaymentTermDAO(self.db).get_records([s["invoice_id"] for s in summaries])
+        for summary in summaries:
+            record = records.get(summary["invoice_id"])
+            summary["payment_term_status"] = record.validation_status if record else None
+            summary["payment_term_reason"] = record.reason_code if record else None
+            summary["due_date_verified"] = bool(record.due_date_verified) if record else None
+            summary["contractual_due_date"] = record.contractual_due_date if record else None
+            summary["statutory_due_date"] = record.statutory_due_date if record else None
 
     def list_ready_for_payment(self, search=None, status=None, vendor_id=None, due_from=None, due_to=None,
                                overdue_only=False, page=1, page_size=20) -> dict:
@@ -270,6 +284,7 @@ class PaymentTrackingService:
             summary["status_code"] in _INVOICE_PAYABLE_STATUSES and summary["remaining_amount"] > 0
         )
         summary["payments"] = [payment_record_view(a) for a in allocations]
+        self._attach_payment_terms([summary])
         return summary
 
     # =========================================================

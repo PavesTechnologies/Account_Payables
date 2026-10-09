@@ -20,6 +20,7 @@ import datetime
 from decimal import Decimal
 from typing import List, Optional
 
+from Backend.Business_Layer.services.payment_term_compliance_service import PaymentTermComplianceService
 from Backend.API_Layer.interface.payment_interface import PaymentCreateRequest
 from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount, require_tds_verified
@@ -205,6 +206,9 @@ class PaymentService:
                 )
 
             require_tds_verified(invoice_id, self.tds_dao.get_invoice_tds_by_invoice_id(invoice_id))
+            # Payment terms must be COMPLIANT or verified by Finance (plan decision D1) - an
+            # added control alongside approval and TDS, never a replacement for either.
+            PaymentTermComplianceService(self.db).require_resolved_for_payment(invoice, user_id)
 
             ready_status = self.invoice_dao.get_status_by_code(STATUS_CODE_READY_FOR_PAYMENT)
             if ready_status is None:

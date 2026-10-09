@@ -246,12 +246,26 @@ class _FakeInboundDocumentDAO:
     _store = {}
 
 
+class _FakeTermCompliance:
+    calls = []
+
+    def __init__(self, db):
+        self.db = db
+
+    def evaluate_invoice(self, invoice, user_id=None, **stated):
+        type(self).calls.append((invoice, user_id, stated))
+
+
 @pytest.fixture(autouse=True)
 def _patch_daos(monkeypatch):
     _FakeInvoiceDAO.instances = []
     monkeypatch.setattr(svc, "InvoiceDAO", _FakeInvoiceDAO)
     monkeypatch.setattr(svc, "MasterDAO", _FakeMasterDAO)
     monkeypatch.setattr(svc, "InboundDocumentDAO", _FakeInboundDocumentDAO)
+    # Payment-term compliance has its own tests (test_payment_term_compliance.py); here it only
+    # has to be invoked once per review with what the reviewer stated.
+    _FakeTermCompliance.calls = []
+    monkeypatch.setattr(svc, "PaymentTermComplianceService", _FakeTermCompliance)
     monkeypatch.setattr(svc.notifications, "notify_vendor_not_found", lambda *a, **k: None)
     # Default: automatic vendor onboarding is not eligible, so a vendor-not-matched
     # FinalResponse exercises the existing manual-fallback path unless a test

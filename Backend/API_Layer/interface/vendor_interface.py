@@ -165,6 +165,11 @@ class VendorCreateRequest(BaseModel):
     phone_number: Optional[str] = None
     email: Optional[str] = None
     status_id: Optional[int] = None
+    # MSME (Udyam) classification - MICRO/SMALL suppliers get the MSMED Act s.15
+    # statutory payment limit on their invoices.
+    msme_registered: Optional[bool] = None
+    udyam_number: Optional[str] = None
+    msme_category: Optional[str] = None
     # When provided, signals a GST-verified registration for this request only
     # (re-verified via the existing GSTIN lookup service): vendor_name/PAN
     # skip the stricter MANUAL_VENDOR format rules since GST data is
@@ -182,6 +187,11 @@ class VendorUpdateRequest(BaseModel):
     phone_number: Optional[str] = None
     email: Optional[str] = None
     status_id: Optional[int] = None
+    # MSME (Udyam) classification - MICRO/SMALL suppliers get the MSMED Act s.15
+    # statutory payment limit on their invoices.
+    msme_registered: Optional[bool] = None
+    udyam_number: Optional[str] = None
+    msme_category: Optional[str] = None
 
 
 class VendorStatusUpdateRequest(BaseModel):
@@ -204,6 +214,9 @@ class VendorDTO(BaseModel):
     phone_number: Optional[str]
     email: Optional[str]
     status_id: Optional[int]
+    msme_registered: bool = False
+    udyam_number: Optional[str] = None
+    msme_category: Optional[str] = None
     created_at: datetime.datetime
     updated_at: datetime.datetime
     created_by: Optional[str]

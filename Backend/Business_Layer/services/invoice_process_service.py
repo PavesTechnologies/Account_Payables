@@ -57,6 +57,7 @@ from Backend.API_Layer.interface.invoice_process_interface import (
     UploadPageSummary,
 )
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor
+from Backend.Business_Layer.services.payment_term_compliance_service import PaymentTermComplianceService
 from Backend.Business_Layer.services.notification_events import APNotificationEvents
 from Backend.Data_Access_Layer.dao.inbound_document_dao import InboundDocumentDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
@@ -619,8 +620,13 @@ def apply_ocr_review(
         )
 
     try:
+        # What the reviewer says the invoice states (payment-term compliance input). A value
+        # only counts when it was actually entered/changed - invoice.due_date already holds the
+        # computed effective due date, and echoing it back must not become the "printed" date.
+        stated_terms = {}
         if inbound_document.invoice_id is None:
             invoice = _create_invoice_from_review(inbound_document, review, invoice_dao, user_id)
+            stated_terms = _stated_terms_from_review(review, None, None, db)
             inbound_document.invoice_id = invoice.invoice_id
             inbound_document.vendor_id = invoice.vendor_id
             invoice_dao.create_audit_log(
@@ -649,6 +655,9 @@ def apply_ocr_review(
                     f"Invoice {invoice.invoice_id} cannot be edited while in status {current_code}"
                 )
             was_returned = current_code == invoice_status.STATUS_CODE_RETURNED_FOR_REVIEW
+            stated_terms = _stated_terms_from_review(
+                review, getattr(invoice, "due_date", None), getattr(invoice, "payment_term_id", None), db
+            )
             _apply_review_updates(invoice, review, invoice_dao, user_id)
             for issue in invoice_dao.get_open_invoice_issues(invoice.invoice_id):
                 issue.resolved_by = user_id
@@ -683,6 +692,7 @@ def apply_ocr_review(
             )
 
         _resolve_approval_context(invoice, db)
+        PaymentTermComplianceService(db).evaluate_invoice(invoice, user_id, **stated_terms)
 
         db.commit()
         db.refresh(invoice)
@@ -690,6 +700,19 @@ def apply_ocr_review(
     except Exception:
         db.rollback()
         raise
+
+
+def _stated_terms_from_review(review: InvoiceOCRReviewRequest, current_due_date, current_term_id, db) -> dict:
+    """evaluate_invoice() kwargs for what the reviewer entered: a changed due date is the
+    invoice's printed due date; a changed payment term overrides the OCR-read terms text."""
+    stated = {}
+    if review.due_date is not None and review.due_date != current_due_date:
+        stated["stated_due_date"] = review.due_date
+    if review.payment_term_id is not None and review.payment_term_id != current_term_id:
+        term = MasterDAO(db).get_payment_term_by_id(review.payment_term_id)
+        if term is not None:
+            stated["stated_terms_text"] = f"Net {term.due_days}" if term.due_days else term.term_name
+    return stated
 
 
 def _resolve_approval_context(invoice: Invoice, db) -> None:

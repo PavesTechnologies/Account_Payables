@@ -14,6 +14,7 @@ from Backend.Data_Access_Layer.models.purchase import (
     Quotation,
 )
 from Backend.Data_Access_Layer.models.purchase_order import PurchaseOrder, PurchaseOrderLine
+from Backend.Business_Layer.services.payment_term_compliance_service import resolve_payment_term_id
 from Backend.Business_Layer.services.rfq_service import RFQ_STATUS_MODULE
 from Backend.Business_Layer.utils import pr_workflow_events as events
 from Backend.Business_Layer.services.notification_events import APNotificationEvents
@@ -557,6 +558,11 @@ class ProcurementService:
             subtotal=quoted_total,
             tax_amount=0,
             total_amount=quoted_total,
+            # The selected quotation's agreed payment terms carry onto the PO - they are what
+            # payment-term compliance checks the PO invoices against (free text kept, plus the
+            # matching payment_term row when the text is a definite number of days).
+            payment_terms=selected_quotation.payment_terms,
+            payment_term_id=resolve_payment_term_id(self.db, selected_quotation.payment_terms),
         )
         self.po_dao.create_purchase_order(purchase_order)
         purchase_order.po_number = f"PO-{purchase_order.po_id:06d}"

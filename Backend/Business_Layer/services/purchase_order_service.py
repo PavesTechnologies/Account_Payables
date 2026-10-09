@@ -45,6 +45,7 @@ class PurchaseOrderService:
             raise ValueError("Quotation not found for the given quotation_id")
 
         status_id = self._resolve_status_id(data.status_id)
+        self._require_payment_term(data.payment_term_id)
 
         purchase_order = PurchaseOrder(
             po_number=po_number,
@@ -57,6 +58,7 @@ class PurchaseOrderService:
             expected_delivery_date=data.expected_delivery_date,
             delivery_location=data.delivery_location,
             payment_terms=data.payment_terms,
+            payment_term_id=data.payment_term_id,
             delivery_terms=data.delivery_terms,
             subtotal=data.subtotal,
             tax_amount=data.tax_amount,
@@ -147,8 +149,14 @@ class PurchaseOrderService:
         if data.delivery_location is not None:
             purchase_order.delivery_location = data.delivery_location
 
+        terms_before = (purchase_order.payment_terms, purchase_order.payment_term_id)
+
         if data.payment_terms is not None:
             purchase_order.payment_terms = data.payment_terms
+
+        if data.payment_term_id is not None:
+            self._require_payment_term(data.payment_term_id)
+            purchase_order.payment_term_id = data.payment_term_id
 
         if data.delivery_terms is not None:
             purchase_order.delivery_terms = data.delivery_terms
@@ -176,6 +184,15 @@ class PurchaseOrderService:
                 changed_by=user_id,
                 old_values={key: before.get(key) for key in changed},
                 new_values=changed,
+            )
+
+        if (purchase_order.payment_terms, purchase_order.payment_term_id) != terms_before:
+            # Open invoices against this PO compare their terms with it - re-check them.
+            from Backend.Business_Layer.services.payment_term_compliance_service import (
+                PaymentTermComplianceService,
+            )
+            PaymentTermComplianceService(self.db).recheck_open_invoices_for_vendor(
+                purchase_order.vendor_id, user_id
             )
 
         self.db.commit()
@@ -304,6 +321,14 @@ class PurchaseOrderService:
             raise ValueError("po_number is required for a purchase order")
         return po_number.strip()
 
+    def _require_payment_term(self, payment_term_id: Optional[int]) -> None:
+        if payment_term_id is None:
+            return
+        from Backend.Data_Access_Layer.dao.payment_term_dao import PaymentTermDAO
+
+        if PaymentTermDAO(self.db).get_payment_term(payment_term_id) is None:
+            raise ValueError("Payment term not found for the given payment_term_id")
+
     def _resolve_status_id(self, status_id: Optional[int]) -> Optional[int]:
         if status_id is not None:
             status = self.po_dao.get_status_by_id(status_id)
@@ -334,6 +359,7 @@ class PurchaseOrderService:
             ),
             "delivery_location": purchase_order.delivery_location,
             "payment_terms": purchase_order.payment_terms,
+            "payment_term_id": purchase_order.payment_term_id,
             "delivery_terms": purchase_order.delivery_terms,
             "subtotal": (
                 str(purchase_order.subtotal) if purchase_order.subtotal is not None else None

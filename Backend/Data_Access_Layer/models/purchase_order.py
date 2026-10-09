@@ -24,6 +24,7 @@ class PurchaseOrder(Base):
         ForeignKeyConstraint(['quotation_id'], ['ap.quotation.id'], name='fk_po_quotation'),
         ForeignKeyConstraint(['status_id'], ['ap.status_master.status_id'], name='fk_po_status'),
         ForeignKeyConstraint(['vendor_id'], ['ap.vendor.vendor_id'], name='fk_po_vendor'),
+        ForeignKeyConstraint(['payment_term_id'], ['ap.payment_term.payment_term_id'], name='fk_po_payment_term'),
         PrimaryKeyConstraint('id', name='purchase_order_pkey'),
         UniqueConstraint('po_number', name='purchase_order_po_number_key'),
         Index('idx_po_pr', 'pr_id'),
@@ -51,6 +52,9 @@ class PurchaseOrder(Base):
     delivery_location: Mapped[Optional[str]] = mapped_column(String(255))
     payment_terms: Mapped[Optional[str]] = mapped_column(Text)
     delivery_terms: Mapped[Optional[str]] = mapped_column(Text)
+    # Structured payment term (migration_payment_term_compliance.sql); when NULL the
+    # free-text payment_terms above is parsed instead.
+    payment_term_id: Mapped[Optional[int]] = mapped_column(Integer)
 
     pr: Mapped['PurchaseRequisition'] = relationship('PurchaseRequisition', back_populates='purchase_order')
     quotation: Mapped[Optional['Quotation']] = relationship('Quotation', back_populates='purchase_order')
