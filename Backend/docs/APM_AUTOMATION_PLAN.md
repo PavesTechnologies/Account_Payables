@@ -708,7 +708,11 @@ Decisions (2026-10-10): **ZIP or several files**, **25 per batch**, invoices **s
 - TDS is now determined automatically after every OCR review (single review route too; never overwrites DETERMINED / VERIFIED).
 - Fix: review queue items carry `invoice_type` / department / category, so the review modal shows the NON_PO fields.
 
-**Next - Step B (approved 2026-10-10):** PO auto-link + configurable 2/3-way match tolerances; matched PO invoices auto-reviewed and sent for approval; below a configured amount auto-approved (Finance still verifies before payment); switch and settings managed by `AP_AUTOMATION_MANAGE` (Finance Manager); touchless-rate KPI.
+**Step B - touchless PO invoices (built 2026-10-10, no schema change):**
+- `ap_automation_service.py`: for a bulk / email PO invoice waiting for review - link the extracted PO number to the vendor's OPEN PO (normalised exact match) and lines to PO lines (confident matches only); controls: validation passed, no open issues, 2/3-way match within tolerance (`MatchingService.match_invoice` gained optional tolerances - defaults unchanged), GRN when required, no line billed beyond ordered / received across invoices, approval policy matches. Pass -> `apply_ocr_review` -> TDS -> `send_for_approval` as `AP_AUTOMATION`; net ≤ `AP_AUTO_APPROVE_MAX_AMOUNT` (INR only, 0 = never) -> `InvoiceApprovalService.auto_approve` (steps APPROVED, approvers SKIPPED, `INVOICE_AUTO_APPROVED` audit; Finance still verifies TDS before ready-for-payment).
+- Outcomes (AUTO_APPROVED / AUTO_SENT / REVIEWED_NOT_SENT / EXCEPTION + reasons) in `audit_log` (`AP_AUTOMATION_RESULT`); shown on the batch page and the Review & Send workbench (which also gained a blocking PO-match check and a Re-check button).
+- Runs after each bulk / email invoice is created, and every email-runner cycle re-checks waiting PO invoices (late GRNs).
+- Settings in `system_configuration` (defaults in code, OFF): `AP_AUTOMATION_ENABLED`, `AP_MATCH_PRICE_TOLERANCE_PCT` 1, `AP_MATCH_PRICE_TOLERANCE_AMOUNT` 100, `AP_MATCH_QTY_TOLERANCE` 0, `AP_AUTO_REQUIRE_GRN` true, `AP_AUTO_APPROVE_MAX_AMOUNT` 0. API `/ap-automation` (settings / stats / run: `AP_AUTOMATION_MANAGE`; per-invoice re-check also `INVOICE_OCR_REVIEW`). UI `/accounts-payable/automation` (sidebar "AP Automation"). Touchless rate on the Management dashboard.
 
 ## 7. Decisions needed
 

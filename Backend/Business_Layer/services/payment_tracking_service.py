@@ -394,6 +394,8 @@ class PaymentTrackingService:
                     "payment_mode": mode,
                     "reference_number": reference,
                     "status_code": STATUS_CODE_CLEARED,
+                    "entry_mode": getattr(data, "entry_mode", None) or "MANUAL",
+                    **({"edited_fields": list(data.edited_fields)[:10]} if getattr(data, "edited_fields", None) else {}),
                 },
             ))
             self.payment_service._apply_cleared_allocation(

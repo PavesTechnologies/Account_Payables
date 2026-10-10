@@ -71,6 +71,25 @@ def auto_determine_tds(db, invoice_id: int, user_id: str) -> Optional[str]:
     return f"TDS needs review: {problem}" if problem else None
 
 
+def _load_automation(db, invoices, ids):
+    """(automation service or None, evaluate_match, latest outcomes). A failure here only hides the
+    automation info - the workbench itself keeps working."""
+    try:
+        from Backend.Business_Layer.services.ap_automation_service import APAutomationService, evaluate_match
+        from Backend.Data_Access_Layer.dao.ap_automation_dao import APAutomationDAO
+        automation = APAutomationService(db) if any(i.po_id for i in invoices) else None
+        return automation, evaluate_match, APAutomationDAO(db).latest_results(ids)
+    except Exception:
+        logger.exception("Could not load AP automation details for the workbench")
+        return None, None, {}
+
+
+def _automation_view(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not result:
+        return None
+    return {"outcome": result.get("outcome"), "reasons": result.get("reasons") or [], "at": result.get("at")}
+
+
 class InvoiceReviewAutomationService:
     def __init__(self, db):
         self.db = db
@@ -105,6 +124,8 @@ class InvoiceReviewAutomationService:
         departments = self.dao.departments()
         categories = self.dao.categories()
         policy = ApprovalPolicyService(self.db)
+        # Step B: PO invoices show their 2/3-way match result and the latest automation outcome.
+        automation, evaluate_match, outcomes = _load_automation(self.db, invoices, ids)
 
         out = []
         for invoice, vendor_name, status_code, currency_code in rows:
@@ -129,6 +150,12 @@ class InvoiceReviewAutomationService:
                 checks.append(_check("coding", True, f"{coding['department_name']} / {coding['purchase_category_name']}"))
             else:
                 checks.append(_check("coding", False, "Choose department and purchase category"))
+            if invoice.invoice_type == "PO" and invoice.po_id and automation is not None:
+                try:
+                    reasons = evaluate_match(automation._match(invoice.invoice_id), automation.settings)
+                except Exception as exc:  # a broken PO must not break the list
+                    reasons = [f"Could not match against the PO: {exc}"]
+                checks.append(_check("match", not reasons, "PO match within tolerance" if not reasons else reasons[0]))
             if coding["department_id"] and coding["purchase_category_id"]:
                 try:
                     matched = policy.match_policy(coding["department_id"], coding["purchase_category_id"],
@@ -161,6 +188,7 @@ class InvoiceReviewAutomationService:
                 **coding,
                 "checks": checks,
                 "ready": all(c["ok"] for c in checks if c["blocking"]),
+                "automation": _automation_view(outcomes.get(invoice.invoice_id)),
             })
         return out
 

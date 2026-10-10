@@ -56,7 +56,17 @@ class MatchingService:
         self.po_dao = PurchaseOrderDAO(db)
         self.grn_dao = GoodsReceiptDAO(db)
 
-    def match_invoice(self, invoice_id: int) -> MatchResult:
+    def match_invoice(
+        self,
+        invoice_id: int,
+        price_tolerance_pct: Optional[Decimal] = None,
+        price_tolerance_amount: Optional[Decimal] = None,
+        quantity_tolerance: Optional[Decimal] = None,
+    ) -> MatchResult:
+        """Tolerances are optional and only used by AP automation (ap_automation_service.py):
+        a unit-price difference is accepted when it is within BOTH price_tolerance_pct (% of the PO
+        unit price) and price_tolerance_amount - i.e. whichever is lower. Omitting them keeps the
+        original fixed 0.01 tolerances, so every existing caller is unchanged."""
         invoice = self.invoice_dao.get_invoice_by_id(invoice_id)
         if invoice is None:
             raise ValueError(f"Invoice {invoice_id} not found")
@@ -131,8 +141,18 @@ class MatchingService:
             quantity_variance = invoice_line.quantity - (baseline_quantity if baseline_quantity is not None else po_line.quantity)
             price_variance = invoice_line.unit_price - po_line.unit_price
 
-            has_qty_variance = abs(quantity_variance) > QUANTITY_VARIANCE_TOLERANCE
-            has_price_variance = abs(price_variance) > PRICE_VARIANCE_TOLERANCE
+            qty_limit = quantity_tolerance if quantity_tolerance is not None else QUANTITY_VARIANCE_TOLERANCE
+            price_limit = PRICE_VARIANCE_TOLERANCE
+            if price_tolerance_pct is not None or price_tolerance_amount is not None:
+                limits = []
+                if price_tolerance_pct is not None:
+                    limits.append(abs(po_line.unit_price or Decimal("0")) * price_tolerance_pct / Decimal("100"))
+                if price_tolerance_amount is not None:
+                    limits.append(price_tolerance_amount)
+                price_limit = max(min(limits), PRICE_VARIANCE_TOLERANCE)  # never stricter than rounding
+
+            has_qty_variance = abs(quantity_variance) > qty_limit
+            has_price_variance = abs(price_variance) > price_limit
 
             if has_grn and received_quantity is None:
                 line_status = LineMatchStatus.NO_GRN_RECEIPT_FOUND

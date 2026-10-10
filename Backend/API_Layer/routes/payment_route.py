@@ -18,7 +18,9 @@ from Backend.API_Layer.interface.payment_interface import (
 )
 from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 from Backend.API_Layer.utils.file_validation import validate_upload_file
-from Backend.API_Layer.utils.s3_utils import download_from_s3, view_from_s3
+from Backend.API_Layer.utils.s3_utils import delete_from_s3, download_from_s3, upload_to_s3, view_from_s3
+from Backend.API_Layer.utils.receipt_extraction_fields import extract_receipt_from_s3
+from Backend.Business_Layer.services.payment_receipt_extraction_service import PaymentReceiptExtractionService
 from Backend.Business_Layer.services.payment_service import PaymentService
 from Backend.Business_Layer.services.payment_tracking_service import PaymentNotFoundError, PaymentTrackingService
 from Backend.Business_Layer.utils.exceptions import InvalidUploadFile, UnsupportedFileType
@@ -178,6 +180,41 @@ def record_payment(invoice_id: int, payload: RecordPaymentRequest, http_request:
         return PaymentTrackingService(db).record_payment(invoice_id, payload, _get_user_id(http_request))
     except Exception as e:
         _tracking_error(e, db)
+
+
+@router.post(
+    "/invoice/{invoice_id}/receipt/extract",
+    dependencies=[Depends(permission_based_access(["PAYMENT_PROCESS"]))],
+)
+async def extract_payment_receipt(invoice_id: int, http_request: Request, file: UploadFile = File(...)):
+    """Phase 4: read a payment receipt / bank advice and return suggested Record Payment values
+    with warnings. Records nothing - the user reviews the form and submits it through
+    POST /invoice/{invoice_id}/record, then attaches the same file as the receipt."""
+    db = http_request.state.db
+    content = await file.read()
+    try:
+        validate_upload_file(file, content)
+    except (UnsupportedFileType, InvalidUploadFile) as e:
+        raise HTTPException(status_code=415 if isinstance(e, UnsupportedFileType) else 400, detail=str(e))
+    try:
+        PaymentTrackingService(db).get_invoice_payments(invoice_id)  # 404 before spending a Textract call
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
+    stored = upload_to_s3(filename=file.filename or "receipt", content=content, content_type=file.content_type,
+                          prefix="payments/receipt-extraction/")
+    try:
+        extracted = await extract_receipt_from_s3(stored["filepath"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="The receipt could not be read. Enter the payment details manually.") from e
+    finally:
+        try:
+            delete_from_s3(stored["filepath"])  # temporary copy; the receipt is attached after recording
+        except Exception:
+            pass
+    try:
+        return PaymentReceiptExtractionService(db).suggest(invoice_id, extracted)
+    except Exception as e:
+        _tracking_error(e, db, rollback=False)
 
 
 @router.post(

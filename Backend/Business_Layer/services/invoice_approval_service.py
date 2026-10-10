@@ -201,6 +201,41 @@ class InvoiceApprovalService:
         self.db.commit()
         return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
 
+    def auto_approve(self, invoice_id: int, actor: str, reason: str) -> InvoiceApproval:
+        """AP automation (ap_automation_service.py): completes an invoice's just-created approval
+        workflow without a human decision - only for a PO invoice that passed every touchless
+        control and is at or below the configured auto-approval amount. Every step is marked
+        APPROVED and its assigned approvers SKIPPED (they never decided), the invoice moves to
+        APPROVED and the same approved / TDS-verification notifications go out, so Finance still
+        verifies TDS before the invoice can be marked ready for payment."""
+        instance = self._require_active_instance(invoice_id)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for step in sorted(instance.steps, key=lambda s: s.level_number):
+            for approver in self.approval_dao.get_approvers_for_step(step.id):
+                approver.status = "SKIPPED"
+                approver.decided_at = now
+                approver.comments = f"Auto-approved by AP automation: {reason}"[:500]
+            step.status = "APPROVED"
+            step.started_at = step.started_at or now
+            step.completed_at = now
+
+        instance.status = "APPROVED"
+        instance.completed_at = now
+        approved_status = self._require_invoice_status(STATUS_CODE_APPROVED)
+        invoice = self.invoice_dao.get_invoice_by_id_locked(instance.invoice_id)
+        invoice.status_id = approved_status.status_id
+        invoice.updated_by = str(actor)
+
+        self._record_audit(
+            instance.invoice_id, "INVOICE_AUTO_APPROVED", actor,
+            {"invoice_approval_id": instance.invoice_approval_id, "reason": reason},
+        )
+        events = APNotificationEvents(self.db)
+        events.invoice_approved(invoice, actor)
+        events.tds_verification_required(invoice, actor)
+        self.db.commit()
+        return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
+
     def reject(self, invoice_id: int, user_id, comments: str) -> InvoiceApproval:
         if not comments or not comments.strip():
             raise ValueError("A comment is required to reject an invoice")

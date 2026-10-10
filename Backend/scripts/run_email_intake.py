@@ -62,6 +62,7 @@ def main(argv=None) -> int:
                 print(json.dumps({"status": "ok", "mode": "execute" if args.execute else "dry-run",
                                   "examined": report.examined, "already_imported": report.already_imported,
                                   "skipped": report.skipped, "imported": report.imported,
+                                  "automation_rechecked": report.automation_rechecked,
                                   "errors": report.errors}, indent=2, default=str))
         except Exception as exc:  # keep the loop alive; a single bad run must not stop intake
             logging.exception("Email intake run failed")

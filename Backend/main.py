@@ -17,6 +17,7 @@ from Backend.API_Layer.routes import (
     invoice_bulk_upload_route,
     email_intake_route,
     invoice_review_workbench_route,
+    ap_automation_route,
     master_route,
     payment_route,
     payment_terms_route,
@@ -24,6 +25,7 @@ from Backend.API_Layer.routes import (
     tds_route,
     tds_config_route,
     tds_tracking_route,
+    tds_challan_route,
     dashboard_route,
     procurement_route,
     procurement_admin_route,
@@ -145,6 +147,7 @@ api_router.include_router(invoice_extraction_route.router, tags=["Invoice Extrac
 api_router.include_router(invoice_bulk_upload_route.router, tags=["Invoice Bulk Upload"], prefix="/invoice-bulk-upload")
 api_router.include_router(email_intake_route.router, tags=["Email Intake"], prefix="/email-intake")
 api_router.include_router(invoice_review_workbench_route.router, tags=["Invoice Review Workbench"], prefix="/invoice-review")
+api_router.include_router(ap_automation_route.router, tags=["AP Automation"], prefix="/ap-automation")
 api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake")
 api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"
@@ -156,6 +159,8 @@ api_router.include_router(payment_terms_route.terms_router, tags=["Payment Terms
 api_router.include_router(payment_terms_route.agreement_router, tags=["Vendor Agreements"], prefix="/vendor-agreements")
 api_router.include_router(tds_config_route.router, tags=["TDS Configuration"], prefix="/tds/config")
 api_router.include_router(tds_tracking_route.router, tags=["TDS Tracking"], prefix="/tds/tracking")
+api_router.include_router(tds_challan_route.challan_router, tags=["TDS Challans"], prefix="/tds/challans")
+api_router.include_router(tds_challan_route.filing_router, tags=["TDS Filings"], prefix="/tds/filings")
 api_router.include_router(dashboard_route.router, tags=["Dashboard"], prefix="/dashboard")
 api_router.include_router(reports_route.router, tags=["Reports"], prefix="/reports")
 api_router.include_router(invoice_details_route.router, tags=["Invoice Details"], prefix="/invoice-details")

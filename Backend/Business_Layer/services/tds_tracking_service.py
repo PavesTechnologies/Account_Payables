@@ -261,7 +261,7 @@ class TdsTrackingService:
 
         return self._record(invoice_id, ACTION_DEDUCTION, TRACKING_STATUS_DEDUCTED, "INVOICE_TDS_DEDUCTION_RECORDED", data, user_id, apply)
 
-    def record_deposit(self, invoice_id: int, data, user_id) -> dict:
+    def record_deposit(self, invoice_id: int, data, user_id, commit: bool = True) -> Optional[dict]:
         def apply(tracking, invoice, errors):
             date = self._date(data.deposit_date, "TDS Payment Date", errors)
             if date and tracking.deduction_date and date < tracking.deduction_date:
@@ -274,9 +274,9 @@ class TdsTrackingService:
                 tracking.deposit_date, tracking.challan_number, tracking.bsr_code = date, challan, bsr
             return {"deposit_date": date, "challan_number": challan, "bsr_code": bsr}
 
-        return self._record(invoice_id, ACTION_DEPOSIT, TRACKING_STATUS_DEPOSITED, "INVOICE_TDS_DEPOSIT_RECORDED", data, user_id, apply)
+        return self._record(invoice_id, ACTION_DEPOSIT, TRACKING_STATUS_DEPOSITED, "INVOICE_TDS_DEPOSIT_RECORDED", data, user_id, apply, commit)
 
-    def record_filing(self, invoice_id: int, data, user_id) -> dict:
+    def record_filing(self, invoice_id: int, data, user_id, commit: bool = True) -> Optional[dict]:
         def apply(tracking, invoice, errors):
             date = self._date(data.filing_date, "Filing Date", errors)
             if date and tracking.deposit_date and date < tracking.deposit_date:
@@ -286,9 +286,12 @@ class TdsTrackingService:
                 tracking.filing_date, tracking.filing_reference = date, reference
             return {"filing_date": date, "filing_reference": reference}
 
-        return self._record(invoice_id, ACTION_FILING, TRACKING_STATUS_FILED, "INVOICE_TDS_FILING_RECORDED", data, user_id, apply)
+        return self._record(invoice_id, ACTION_FILING, TRACKING_STATUS_FILED, "INVOICE_TDS_FILING_RECORDED", data, user_id, apply, commit)
 
-    def _record(self, invoice_id, action, target_status, audit_action, data, user_id, apply) -> dict:
+    def _record(self, invoice_id, action, target_status, audit_action, data, user_id, apply, commit: bool = True) -> Optional[dict]:
+        """commit=False (shared challan / quarterly filing, Phase 5): run the same checks and writes
+        but leave the transaction to the caller, so a challan covering many invoices is recorded for
+        all of them or for none. Errors are raised without a rollback in that mode."""
         try:
             invoice, _, _, tds, _, _, _ = self._require_row(invoice_id)
             if tds.determination_status != DETERMINATION_STATUS_VERIFIED:
@@ -329,10 +332,13 @@ class TdsTrackingService:
                 new_values=_jsonable({**new_values, "tracking_status": target_status, "remarks": remarks,
                                       "correction": current == target_status}),
             ))
+            if not commit:
+                return None
             self.db.commit()
             return self.get_tds_detail(invoice_id)
         except Exception:
-            self.db.rollback()
+            if commit:
+                self.db.rollback()
             raise
 
     def _get_or_create_tracking(self, invoice_id: int, user_id) -> InvoiceTdsTracking:

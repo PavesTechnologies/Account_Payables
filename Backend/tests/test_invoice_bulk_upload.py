@@ -261,6 +261,8 @@ def env(monkeypatch):
     monkeypatch.setattr(svc, "InvoiceExtractionService", FakeIntake)
     monkeypatch.setattr(svc, "ExtractedInvoiceResponse", _Extracted)
     monkeypatch.setattr(svc, "_semaphores", __import__("weakref").WeakKeyDictionary())
+    calls.automation = []
+    monkeypatch.setattr(svc, "_run_automation", lambda db, invoice_id, po: calls.automation.append((invoice_id, po)))
     return calls
 
 

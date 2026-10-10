@@ -200,3 +200,34 @@ def test_line_not_linked_to_po_line_is_incomplete():
 
     assert result.overall_status == OverallMatchStatus.INCOMPLETE
     assert result.lines[0].status == LineMatchStatus.NO_PO_LINE_LINKED
+
+
+# ---------------------------------------------------------------------------
+# Optional tolerances (AP automation, Step B) - defaults keep the fixed 0.01.
+# ---------------------------------------------------------------------------
+def _priced(invoice_price, po_price="1000.00", qty="10"):
+    _FakePurchaseOrderDAO.store[1] = _PO(po_id=1, po_number="PO-1", purchase_order_line=[_POLine(11, Decimal(qty), Decimal(po_price))])
+    _FakeInvoiceDAO.store[7] = _Invoice(7, po_id=1, invoice_line=[_InvoiceLine(71, 1, "Laptop", Decimal(qty), Decimal(invoice_price), po_line_id=11)])
+
+
+def test_without_tolerances_a_small_price_difference_is_a_variance():
+    _priced("1005.00")
+    assert svc.MatchingService(db=object()).match_invoice(7).overall_status == OverallMatchStatus.VARIANCE_DETECTED
+
+
+def test_price_tolerance_is_the_lower_of_percent_and_amount():
+    service = svc.MatchingService(db=object())
+    _priced("1009.00")  # 0.9% and 9.00 -> within 1% (=10.00) and within 100
+    assert service.match_invoice(7, Decimal("1"), Decimal("100")).overall_status == OverallMatchStatus.MATCHED
+    _priced("1011.00")  # 1.1% -> beyond 1%
+    assert service.match_invoice(7, Decimal("1"), Decimal("100")).overall_status == OverallMatchStatus.VARIANCE_DETECTED
+    _priced("50090.00", po_price="50000.00")  # 0.18% but 90 > ... amount cap 50 is lower than 1% (500)
+    assert service.match_invoice(7, Decimal("1"), Decimal("50")).overall_status == OverallMatchStatus.VARIANCE_DETECTED
+
+
+def test_quantity_tolerance():
+    _priced("1000.00")
+    _FakeInvoiceDAO.store[7].invoice_line[0].quantity = Decimal("11")
+    service = svc.MatchingService(db=object())
+    assert service.match_invoice(7, quantity_tolerance=Decimal("0")).overall_status == OverallMatchStatus.VARIANCE_DETECTED
+    assert service.match_invoice(7, quantity_tolerance=Decimal("1")).overall_status == OverallMatchStatus.MATCHED

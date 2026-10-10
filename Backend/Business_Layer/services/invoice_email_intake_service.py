@@ -84,6 +84,7 @@ class RunReport:
     imported: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     disabled: bool = False  # the UI switch (EMAIL_INTAKE_ENABLED) is off - nothing was read
+    automation_rechecked: int = 0  # waiting PO invoices re-checked by AP automation this run
 
 
 # ======================================================================
@@ -225,6 +226,20 @@ async def run_once(execute: bool, client: Optional[GraphMailClient] = None, conf
     return report
 
 
+def _automation_sweep() -> int:
+    """Step B: re-check waiting PO invoices on every scheduled run (a goods receipt recorded after
+    the invoice arrived turns an exception into a touchless invoice). No-op while automation is off."""
+    from Backend.Business_Layer.services.ap_automation_service import APAutomationService  # avoid import cycle
+    db = SessionLocal()
+    try:
+        return len(APAutomationService(db).sweep())
+    except Exception:
+        logger.exception("AP automation sweep failed")
+        return 0
+    finally:
+        db.close()
+
+
 def try_lock(db) -> bool:
     return bool(db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK_KEY}).scalar())
 
@@ -257,6 +272,7 @@ async def run_locked(execute: bool) -> Optional[RunReport]:
                 settings.record_run({"status": "ok", "examined": report.examined, "imported": len(report.imported),
                                      "errors": len(report.errors)})
                 lock_db.commit()
+                report.automation_rechecked = _automation_sweep()
             return report
         finally:
             unlock(lock_db)

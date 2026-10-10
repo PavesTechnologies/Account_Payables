@@ -286,6 +286,17 @@ class RoleDashboardService:
     # =================================================================
     # Management (CEO / Chief Product Officer): position, outflow, efficiency
     # =================================================================
+    def _touchless(self) -> Optional[Dict[str, Any]]:
+        """Step B: share of bulk / email PO invoices processed without a person (last 30 days)."""
+        try:
+            from Backend.Business_Layer.services.ap_automation_service import APAutomationService
+            stats = APAutomationService(self.db).stats(30)
+        except Exception:
+            return None
+        if not stats["processed"]:
+            return None
+        return {k: stats[k] for k in ("processed", "auto_approved", "auto_sent", "exceptions", "touchless_rate")}
+
     def _management(self, user) -> Dict[str, Any]:
         today = self.today
         base = BASE_CURRENCY
@@ -394,6 +405,7 @@ class RoleDashboardService:
                 "sample": len(end_to_end),
                 "pending_approvals": sum(r["count"] for r in bottleneck_rows),
                 "bottlenecks": bottleneck_rows[:LIST_LIMIT],
+                "touchless": self._touchless(),
             },
             "compliance": [
                 {"key": "term_exceptions", "label": "Payment-term exceptions", "count": dashboard["term_exception_count"],

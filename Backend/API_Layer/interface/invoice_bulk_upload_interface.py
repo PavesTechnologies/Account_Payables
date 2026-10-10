@@ -51,6 +51,7 @@ class BatchItem(BaseModel):
     vendor_gstin: Optional[str] = None
     is_valid: Optional[bool] = None
     validation_issues: List[str] = Field(default_factory=list)
+    automation: Optional[dict] = None
     started_at: Optional[datetime.datetime] = None
     completed_at: Optional[datetime.datetime] = None
 

@@ -80,6 +80,9 @@ class RecordPaymentRequest(BaseModel):
     payment_mode: str                 # one of GET /payment/metadata payment_modes[].value
     reference_number: str             # UTR / transaction / cheque number
     remarks: Optional[str] = None
+    # Phase 4 audit only: how the form was filled, and which auto-filled fields the user changed.
+    entry_mode: Optional[str] = Field(None, pattern="^(MANUAL|RECEIPT_EXTRACTED)$")
+    edited_fields: Optional[List[str]] = None
 
 
 class PaymentDocumentDTO(BaseModel):

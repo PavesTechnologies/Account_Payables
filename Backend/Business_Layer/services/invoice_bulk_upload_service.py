@@ -252,10 +252,22 @@ class InvoiceBulkUploadService:
         for item in items:
             counts[item.status] = counts.get(item.status, 0) + 1
         numbers = self.dao.invoice_numbers([i.invoice_id for i in items if i.invoice_id])
+        automation = self._automation_results([i.invoice_id for i in items if i.invoice_id and i.status == ITEM_CREATED])
         return {
             **self._batch_summary(batch, counts),
-            "items": [self._item_view(i, numbers) for i in items],
+            "items": [{**self._item_view(i, numbers), "automation": automation.get(i.invoice_id)} for i in items],
         }
+
+    def _automation_results(self, invoice_ids) -> Dict[int, Dict[str, Any]]:
+        if not invoice_ids:
+            return {}
+        try:
+            from Backend.Data_Access_Layer.dao.ap_automation_dao import APAutomationDAO
+            return {k: {"outcome": v.get("outcome"), "reasons": v.get("reasons") or []}
+                    for k, v in APAutomationDAO(self.db).latest_results(invoice_ids).items()}
+        except Exception:
+            logger.exception("Could not load automation results")
+            return {}
 
     @staticmethod
     def _batch_summary(batch: InvoiceUploadBatch, counts: Dict[str, int]) -> Dict[str, Any]:
@@ -417,6 +429,14 @@ def _validate_and_create(db, item_id: int, extracted: ExtractedInvoiceResponse, 
                 validation=validation)
         return
     _finish(db, item_id, ITEM_CREATED, invoice_id=result["invoice_id"], validation=validation)
+    # Step B: touchless PO invoices (no-op while AP_AUTOMATION_ENABLED is off; never raises).
+    po_number = getattr(getattr(extracted, "reference", None), "po_number", None)
+    _run_automation(db, result["invoice_id"], po_number)
+
+
+def _run_automation(db, invoice_id: int, po_number: Optional[str]) -> None:
+    from Backend.Business_Layer.services.ap_automation_service import run_after_create  # avoid import cycle
+    run_after_create(db, invoice_id, po_number)
 
 
 async def process_item(item_id: int, actor: str) -> None:

@@ -46,6 +46,7 @@ class WorkbenchRow(BaseModel):
     coding_source: Optional[str] = None
     checks: List[Check]
     ready: bool
+    automation: Optional[dict] = None
 
 
 class WorkbenchCounts(BaseModel):

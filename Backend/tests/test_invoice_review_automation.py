@@ -106,6 +106,7 @@ def world(monkeypatch):
     monkeypatch.setattr(svc.invoice_process_service, "apply_ocr_review", fake_review)
     monkeypatch.setattr(svc, "auto_determine_tds", fake_tds)
     monkeypatch.setattr(svc, "InvoiceApprovalService", FakeApproval)
+    monkeypatch.setattr(svc, "_load_automation", lambda db, invoices, ids: (None, None, {}))
     return calls
 
 
