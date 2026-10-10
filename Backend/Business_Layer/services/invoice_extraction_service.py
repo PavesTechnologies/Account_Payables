@@ -53,6 +53,7 @@ from Backend.Business_Layer.utils import invoice_status
 from Backend.Business_Layer.utils.exceptions import (
     DuplicateInvoiceError,
     FieldExtractionError,
+    VendorNotMatchedError,
 )
 from Backend.config.env_loader import get_env_var
 
@@ -1547,7 +1548,7 @@ class InvoiceExtractionService:
         if vendor_details is None or not vendor_details.get(
             "vendor_id"
         ):
-            raise FieldExtractionError(
+            raise VendorNotMatchedError(
                 "Vendor could not be matched for GSTIN "
                 f"'{extracted.vendor.gstin}' / name "
                 f"'{extracted.vendor.name}' - invoice cannot be "

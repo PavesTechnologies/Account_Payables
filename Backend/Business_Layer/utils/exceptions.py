@@ -23,6 +23,12 @@ class FieldExtractionError(InvoiceProcessingError):
     """Raised when field extraction cannot proceed (e.g. no pages/text available)."""
 
 
+class VendorNotMatchedError(FieldExtractionError):
+    """Raised by create_invoice when the extracted vendor GSTIN/name matches no vendor. A
+    FieldExtractionError subclass, so existing callers (the single-upload route's 400) are
+    unchanged; bulk upload uses it to mark the file "vendor not found" and allow a retry."""
+
+
 class ValidationFailure(InvoiceProcessingError):
     """Raised when business validation cannot be performed (not for validation failures,
 

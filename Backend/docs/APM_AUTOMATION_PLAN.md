@@ -678,6 +678,23 @@ The generic "all statuses" Overview is replaced by role views. `GET /apm/dashboa
 
 ---
 
+### 6.4 Phase 3 implementation notes (bulk upload)
+
+Decisions (2026-10-10): **ZIP or several files**, **25 per batch**, invoices **saved straight to OCR review**, new permission **`INVOICE_BULK_UPLOAD`**, email intake next (3b).
+
+**Principle:** the single upload stays the source of truth. The worker calls, per file, exactly what the Invoice Upload page drives: `upload_to_s3` → `extract_invoice_from_s3` → `InvoiceExtractionService.validate_invoice` → `create_invoice`, and (like "Save for Manual Review") creates whatever the validation result. Bulk adds only batch tracking, a concurrency limit and retry safety. Review, approval, payment terms, TDS and payment are untouched.
+
+- **Only change to existing code:** `create_invoice` raises `VendorNotMatchedError`, a new `FieldExtractionError` subclass, for an unmatched vendor (the single route still returns the same 400).
+- **Tables** (`migration_invoice_bulk_upload.sql` + rollback, additive): `invoice_upload_batch`, `invoice_upload_batch_item`. `create_all` creates them (empty) on the next backend start; the migration is idempotent.
+- **API** `/invoice-bulk-upload` (all `INVOICE_BULK_UPLOAD`): `POST` (files or one ZIP, 202), `GET /batches`, `GET /batches/{id}`, `POST /batches/{id}/retry`, `POST /items/{id}/retry|skip`, `GET /limits`.
+- **Item results:** CREATED · VENDOR_NOT_FOUND · DUPLICATE (same file SHA-256 in the batch / already created, or existing vendor + invoice number) · FAILED (invalid file, upload, extraction, create) · SKIPPED.
+- **Retry safety:** atomic QUEUED→PROCESSING claim; Textract output stored on the item so retries do not re-extract; a retry first looks for an invoice already created from the same S3 object (crash between commit and status update); `PROCESSING` older than 15 min shows as *stalled* and is retryable. Startup auto-recovery was **not** added (it would mean DB work at import time); "Retry" resumes a batch instead.
+- **Concurrency:** 2 files per backend process (`BULK_UPLOAD_CONCURRENCY`).
+- **ZIP safety:** one ZIP only, no nested ZIPs, no password-protected ZIPs, ≤ 25 invoice files, every member read with a hard 10 MB cap (header sizes not trusted), folder paths dropped, OS clutter ignored; PDF/image signature checked.
+- **Not done (deviation from 3.6):** "possible duplicate" fuzzy flagging (D10) - the single upload has no such check, so bulk does not either; reviewers still see exact duplicates.
+- **UI:** "Bulk Upload" button on Invoice Management and the single-upload page; `/invoices/bulk-upload` (drop zone + batch history) and `/invoices/bulk-upload/:id` (live progress, per-file result, retry / skip / onboard vendor / open invoice).
+- **Tests:** `test_invoice_bulk_upload.py` (23), `InvoiceBulkUpload.test.jsx` (6).
+
 ## 7. Decisions needed
 
 Answered so far:
