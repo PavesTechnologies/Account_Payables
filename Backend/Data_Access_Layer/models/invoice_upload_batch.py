@@ -13,7 +13,7 @@ exactly, same as every other model in this package.
 from typing import Optional, TYPE_CHECKING
 import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, SmallInteger, String, Text, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, PrimaryKeyConstraint, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +55,9 @@ class InvoiceUploadBatch(Base):
                         name="invoice_upload_batch_status_chk"),
         Index("idx_invoice_upload_batch_created", "created_at"),
         Index("idx_invoice_upload_batch_uploaded_by", "uploaded_by"),
+        # One batch per email message, even if two intake runners overlap.
+        Index("uq_invoice_upload_batch_source_ref", "source_type", "source_reference", unique=True,
+              postgresql_where=text("source_reference IS NOT NULL")),
         {"schema": "ap"},
     )
 
@@ -66,8 +69,13 @@ class InvoiceUploadBatch(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text("now()"))
     # ZIP file name, "<n> files", or (email intake) the message subject.
     source_name: Mapped[Optional[str]] = mapped_column(String(255))
-    # Email intake only: sender + provider message id, so a message is never ingested twice.
+    # Email intake only: the message's internetMessageId, so a message is never ingested twice.
     source_reference: Mapped[Optional[str]] = mapped_column(String(500))
+    email_from: Mapped[Optional[str]] = mapped_column(String(320))
+    email_subject: Mapped[Optional[str]] = mapped_column(String(500))
+    email_received_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    # False when the sender matches no vendor's email - shown as a warning to reviewers.
+    sender_known: Mapped[Optional[bool]] = mapped_column(Boolean)
     uploaded_by: Mapped[Optional[str]] = mapped_column(String(100))
     uploaded_by_name: Mapped[Optional[str]] = mapped_column(String(200))
     started_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))

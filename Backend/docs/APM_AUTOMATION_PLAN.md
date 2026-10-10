@@ -695,6 +695,21 @@ Decisions (2026-10-10): **ZIP or several files**, **25 per batch**, invoices **s
 - **UI:** "Bulk Upload" button on Invoice Management and the single-upload page; `/invoices/bulk-upload` (drop zone + batch history) and `/invoices/bulk-upload/:id` (live progress, per-file result, retry / skip / onboard vendor / open invoice).
 - **Tests:** `test_invoice_bulk_upload.py` (23), `InvoiceBulkUpload.test.jsx` (6).
 
+### 6.5 Phase 3b and Step A implementation notes (2026-10-10)
+
+**Email intake (3b):** `Backend/scripts/run_email_intake.py` (dry run by default, `--execute`, `--loop`), Graph read-only client `graph_mail_client.py`, `invoice_email_intake_service.py`. One batch per email (unique `source_reference`), go-live `EMAIL_INTAKE_START_DATE` required, `VENDOR_EMAIL` = only those senders, otherwise invoice-like subject / file name + "unknown sender" flag. Advisory lock against overlapping runners.
+- **Switch:** `EMAIL_INTAKE_ENABLED` in `system_configuration` (OFF by default, seeded by the migration), toggled on the Bulk Upload page by `EMAIL_INTAKE_MANAGE` (audited); `GET/PUT /email-intake/status`. Runner records `EMAIL_INTAKE_LAST_RUN`.
+- **`READ_MAIL_ACCESS`** now guards `/intake/graph-token`, `/intake/mails`, `/intake/send-mail` (in-process `send_mail` used by notifications unaffected).
+
+**Step A - review workbench:** `/invoices/review-workbench` ("Review & Send"), API `/invoice-review` (`GET /workbench?stage=to_review|reviewed`, `POST /bulk-review`, `POST /bulk-send`, max 25).
+- NON_PO coding suggestion: vendor's primary `vendor_category_mapping` → vendor's last coded NON_PO invoice (active + category belongs to department); PO: from the PR.
+- Readiness (re-checked on the server): validation passed on upload (bulk/email only - single uploads are reviewed on their own), no open issues, coding, approval policy matches; TDS for the reviewed stage.
+- Bulk action per invoice: `apply_ocr_review` → `auto_determine_tds` (only if not determined) → `send_for_approval`; independent results SENT / REVIEWED / SKIPPED / FAILED. Sending needs `INVOICE_SEND_FOR_APPROVAL`, else review only.
+- TDS is now determined automatically after every OCR review (single review route too; never overwrites DETERMINED / VERIFIED).
+- Fix: review queue items carry `invoice_type` / department / category, so the review modal shows the NON_PO fields.
+
+**Next - Step B (approved 2026-10-10):** PO auto-link + configurable 2/3-way match tolerances; matched PO invoices auto-reviewed and sent for approval; below a configured amount auto-approved (Finance still verifies before payment); switch and settings managed by `AP_AUTOMATION_MANAGE` (Finance Manager); touchless-rate KPI.
+
 ## 7. Decisions needed
 
 Answered so far:

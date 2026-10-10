@@ -56,6 +56,7 @@ from Backend.API_Layer.interface.review_queue_interface import ReviewQueueRespon
 from Backend.API_Layer.utils.file_validation import validate_upload_file
 from Backend.API_Layer.utils.response_utils import success_response
 from Backend.Business_Layer.services.matching_service import MatchingService
+from Backend.Business_Layer.services.invoice_review_automation_service import auto_determine_tds
 from Backend.Business_Layer.utils.vendor_matcher import match_vendor as vendor_matcher
 from Backend.API_Layer.utils.s3_utils import upload_to_s3
 logger = logging.getLogger(__name__)
@@ -308,8 +309,13 @@ def ocr_review(
         logger.exception("ocr-review failed for inbound_document_id=%s", inbound_document_id)
         raise HTTPException(status_code=500, detail="OCR review failed unexpectedly")
 
+    # Step A automation: determine TDS right after review (only when not determined yet - a
+    # person's correction is never overwritten). Best-effort: the review itself is already saved.
+    tds_problem = auto_determine_tds(db, invoice.invoice_id, user_id)
+
     return success_response(
-        data={"invoice_id": invoice.invoice_id, "status_id": invoice.status_id},
+        data={"invoice_id": invoice.invoice_id, "status_id": invoice.status_id,
+              "tds_ready": tds_problem is None, "tds_message": tds_problem},
         message="Invoice review completed; moved to OCR_REVIEWED.",
     )
 

@@ -1,5 +1,5 @@
 -- Bulk invoice upload tracking (APM_AUTOMATION_PLAN.md Phase 3):
---   * ap.invoice_upload_batch       one bulk upload (ZIP or several files; later, one email)
+--   * ap.invoice_upload_batch       one bulk upload (ZIP or several files) or one intake email
 --   * ap.invoice_upload_batch_item  one file in a batch and its processing outcome
 --
 -- Orchestration only - invoices are still created by the single-upload operations, so no
@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS ap.invoice_upload_batch (
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     source_name       VARCHAR(255),
     source_reference  VARCHAR(500),
+    email_from        VARCHAR(320),
+    email_subject     VARCHAR(500),
+    email_received_at TIMESTAMPTZ,
+    sender_known      BOOLEAN,
     uploaded_by       VARCHAR(100),
     uploaded_by_name  VARCHAR(200),
     started_at        TIMESTAMPTZ,
@@ -32,6 +36,14 @@ CREATE TABLE IF NOT EXISTS ap.invoice_upload_batch (
 );
 CREATE INDEX IF NOT EXISTS idx_invoice_upload_batch_created ON ap.invoice_upload_batch (created_at);
 CREATE INDEX IF NOT EXISTS idx_invoice_upload_batch_uploaded_by ON ap.invoice_upload_batch (uploaded_by);
+-- Email intake (Phase 3b) columns - also added here in case create_all made the table first.
+ALTER TABLE ap.invoice_upload_batch ADD COLUMN IF NOT EXISTS email_from VARCHAR(320);
+ALTER TABLE ap.invoice_upload_batch ADD COLUMN IF NOT EXISTS email_subject VARCHAR(500);
+ALTER TABLE ap.invoice_upload_batch ADD COLUMN IF NOT EXISTS email_received_at TIMESTAMPTZ;
+ALTER TABLE ap.invoice_upload_batch ADD COLUMN IF NOT EXISTS sender_known BOOLEAN;
+-- One batch per email message, even if two intake runners overlap.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_upload_batch_source_ref
+    ON ap.invoice_upload_batch (source_type, source_reference) WHERE source_reference IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ap.invoice_upload_batch_item (
     item_id               SERIAL       NOT NULL,
@@ -68,5 +80,10 @@ CREATE INDEX IF NOT EXISTS idx_invoice_upload_batch_item_batch ON ap.invoice_upl
 CREATE INDEX IF NOT EXISTS idx_invoice_upload_batch_item_status ON ap.invoice_upload_batch_item (status);
 CREATE INDEX IF NOT EXISTS idx_invoice_upload_batch_item_sha ON ap.invoice_upload_batch_item (file_sha256);
 CREATE INDEX IF NOT EXISTS idx_invoice_upload_batch_item_path ON ap.invoice_upload_batch_item (file_path);
+
+-- Email intake on/off switch (Phase 3b) - OFF until turned on from the Bulk Upload page.
+INSERT INTO ap.system_configuration (config_key, config_value, data_type, description, updated_at)
+VALUES ('EMAIL_INTAKE_ENABLED', 'false', 'BOOLEAN', 'Email invoice intake from the AP mailbox (on/off)', now())
+ON CONFLICT (config_key) DO NOTHING;
 
 COMMIT;

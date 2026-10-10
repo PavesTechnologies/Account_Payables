@@ -148,3 +148,26 @@ def expand_upload(files: Iterable[Tuple[str, Optional[str], bytes]]) -> Tuple[Li
     candidates = [_candidate(posixpath.basename((name or "invoice").replace("\\", "/")), content)
                   for name, _, content in files]
     return candidates, f"{len(candidates)} file" + ("" if len(candidates) == 1 else "s")
+
+
+def expand_attachments(files: Iterable[Tuple[str, Optional[str], bytes]]) -> List[CandidateFile]:
+    """Email intake: an email may carry loose invoices and/or several ZIPs. Unlike a manual upload
+    nothing is rejected as a whole - a bad ZIP becomes one FAILED file with the reason, and files
+    beyond the batch limit are recorded as FAILED ("upload the rest manually"), so the AP team
+    always sees everything the email contained."""
+    out: List[CandidateFile] = []
+    for name, content_type, content in files:
+        name = posixpath.basename((name or "attachment").replace("\\", "/"))
+        if is_zip(name, content_type):
+            try:
+                out.extend(_zip_members(name, content))
+            except BulkUploadRejected as exc:
+                out.append(CandidateFile(file_name=name[:255], content=content, content_type="application/zip",
+                                         sha256=hashlib.sha256(content).hexdigest() if content else None,
+                                         problem=str(exc)))
+        else:
+            out.append(_candidate(name, content))
+    for extra in out[MAX_FILES_PER_BATCH:]:
+        extra.problem = (f"The email has more than {MAX_FILES_PER_BATCH} invoice files; "
+                         "this one was not processed - upload it manually.")
+    return out

@@ -15,6 +15,8 @@ from Backend.API_Layer.routes import (
     invoice_process_route,
     invoice_extraction_route,
     invoice_bulk_upload_route,
+    email_intake_route,
+    invoice_review_workbench_route,
     master_route,
     payment_route,
     payment_terms_route,
@@ -141,6 +143,8 @@ api_router.include_router(
 )
 api_router.include_router(invoice_extraction_route.router, tags=["Invoice Extraction"], prefix="/invoice-extract")
 api_router.include_router(invoice_bulk_upload_route.router, tags=["Invoice Bulk Upload"], prefix="/invoice-bulk-upload")
+api_router.include_router(email_intake_route.router, tags=["Email Intake"], prefix="/email-intake")
+api_router.include_router(invoice_review_workbench_route.router, tags=["Invoice Review Workbench"], prefix="/invoice-review")
 api_router.include_router(intake_route.router, tags=["Intake"], prefix="/intake")
 api_router.include_router(
     invoice_process_route.router, tags=["Invoice Processing"], prefix="/invoice"

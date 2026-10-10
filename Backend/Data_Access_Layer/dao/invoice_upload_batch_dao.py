@@ -12,6 +12,7 @@ from sqlalchemy import func, update
 
 from Backend.Data_Access_Layer.models.inbound_document import InboundDocument
 from Backend.Data_Access_Layer.models.invoice import Invoice
+from Backend.Data_Access_Layer.models.vendor import Vendor
 from Backend.Data_Access_Layer.models.invoice_upload_batch import (
     BATCH_COMPLETED,
     BATCH_NEEDS_ATTENTION,
@@ -51,9 +52,11 @@ class InvoiceUploadBatchDAO:
     def get_batch(self, batch_id: int) -> Optional[InvoiceUploadBatch]:
         return self.db.query(InvoiceUploadBatch).filter(InvoiceUploadBatch.batch_id == batch_id).first()
 
-    def list_batches(self, uploaded_by: Optional[str], status: Optional[str], offset: int, limit: int
-                     ) -> Tuple[List[InvoiceUploadBatch], int]:
+    def list_batches(self, uploaded_by: Optional[str], status: Optional[str], offset: int, limit: int,
+                     source_type: Optional[str] = None) -> Tuple[List[InvoiceUploadBatch], int]:
         query = self.db.query(InvoiceUploadBatch)
+        if source_type:
+            query = query.filter(InvoiceUploadBatch.source_type == source_type)
         if uploaded_by:
             query = query.filter(InvoiceUploadBatch.uploaded_by == uploaded_by)
         if status:
@@ -170,3 +173,14 @@ class InvoiceUploadBatchDAO:
         rows = (self.db.query(Invoice.invoice_id, Invoice.invoice_number, Invoice.vendor_id)
                 .filter(Invoice.invoice_id.in_(list(invoice_ids))).all())
         return {r[0]: (r[1], r[2]) for r in rows}
+
+    # ------------------------------------------------------------------
+    # Email intake
+    # ------------------------------------------------------------------
+    def batch_for_source(self, source_type: str, source_reference: str) -> Optional[InvoiceUploadBatch]:
+        return (self.db.query(InvoiceUploadBatch)
+                .filter(InvoiceUploadBatch.source_type == source_type,
+                        InvoiceUploadBatch.source_reference == source_reference).first())
+
+    def vendor_emails(self) -> List[str]:
+        return [r[0] for r in self.db.query(Vendor.email).filter(Vendor.email.isnot(None)).all() if r[0]]

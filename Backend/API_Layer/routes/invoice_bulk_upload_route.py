@@ -73,11 +73,12 @@ def list_batches(
     request: Request,
     mine: bool = Query(True, description="Only batches I uploaded"),
     status: Optional[str] = Query(None),
+    source_type: Optional[str] = Query(None, pattern="^(MANUAL_UPLOAD|EMAIL)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
     user_id, _ = _user(request)
-    rows, total = InvoiceBulkUploadService(request.state.db).list_batches(user_id if mine else None, status, page, page_size)
+    rows, total = InvoiceBulkUploadService(request.state.db).list_batches(user_id if mine else None, status, page, page_size, source_type)
     return BatchList(items=[BatchSummary(**r) for r in rows], total=total, page=page, page_size=page_size)
 
 

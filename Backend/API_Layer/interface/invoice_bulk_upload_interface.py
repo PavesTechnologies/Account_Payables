@@ -25,6 +25,10 @@ class BatchSummary(BaseModel):
     created_at: datetime.datetime
     started_at: Optional[datetime.datetime] = None
     completed_at: Optional[datetime.datetime] = None
+    email_from: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_received_at: Optional[datetime.datetime] = None
+    sender_known: Optional[bool] = None
     counts: BatchCounts
 
 

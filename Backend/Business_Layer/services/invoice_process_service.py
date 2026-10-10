@@ -901,6 +901,10 @@ def get_review_queue(db, skip: int = 0, limit: int = 50) -> tuple[list, int, int
                 "net_amount": record.net_amount,
                 "extraction_confidence": None,
                 "created_at": record.created_at,
+                # Pre-fill for the review form (it otherwise hides the NON_PO department fields).
+                "invoice_type": getattr(record, "invoice_type", None),
+                "department_id": getattr(record, "department_id", None),
+                "purchase_category_id": getattr(record, "purchase_category_id", None),
             })
         else:
             items.append({

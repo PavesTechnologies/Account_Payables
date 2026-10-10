@@ -21,6 +21,9 @@ class ReviewQueueItem(BaseModel):
     net_amount: Optional[decimal.Decimal] = None
     extraction_confidence: Optional[decimal.Decimal] = None
     created_at: datetime.datetime
+    invoice_type: Optional[str] = None
+    department_id: Optional[int] = None
+    purchase_category_id: Optional[int] = None
 
 
 class ReviewQueueResponse(BaseModel):

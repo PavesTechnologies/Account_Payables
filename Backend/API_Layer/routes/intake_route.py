@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 import requests
 import smtplib
 import time
@@ -6,15 +6,21 @@ import traceback
 from email.message import EmailMessage
 from Backend.config.env_loader import get_env_var
 from Backend.API_Layer.utils.s3_utils import upload_to_s3, view_from_s3, download_from_s3
+from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 
 router = APIRouter()
+
+# Mailbox routes (Graph token / list mails / send mail) expose the company mailbox, so over HTTP they
+# need READ_MAIL_ACCESS. get_graph_token() and send_mail() are also called in-process (notifications)
+# - the HTTP gate does not affect those calls.
+_READ_MAIL = ["READ_MAIL_ACCESS"]
 
 EMAIL_USER = get_env_var("EMAIL_USER")
 EMAIL_PASSWORD = get_env_var("EMAIL_PASSWORD")
 EMAIL_HOST = get_env_var("EMAIL_HOST")
 EMAIL_PORT = int(get_env_var("EMAIL_PORT"))
 
-@router.get("/graph-token")
+@router.get("/graph-token", dependencies=[Depends(permission_based_access(_READ_MAIL))])
 def get_graph_token():
 
     tenant_id = get_env_var("TENANT_ID")
@@ -40,7 +46,7 @@ def get_graph_token():
 
     return response.json()
 
-@router.get("/mails")
+@router.get("/mails", dependencies=[Depends(permission_based_access(_READ_MAIL))])
 def get_mails():
 
     token = get_graph_token()["access_token"]
@@ -68,7 +74,7 @@ def get_mails():
 
     return response.json()
 
-@router.post("/send-mail")
+@router.post("/send-mail", dependencies=[Depends(permission_based_access(_READ_MAIL))])
 # def send_mail(message: dict, to_address:str):
 #     token = get_graph_token()["access_token"]
 #     sender_address = get_env_var("MAIL_ADDRESS")  # Replace with your sender address

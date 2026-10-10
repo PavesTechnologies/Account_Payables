@@ -139,8 +139,9 @@ class _FakeDAO:
 
     refresh_batch_status = InvoiceUploadBatchDAO.refresh_batch_status
 
-    def list_batches(self, uploaded_by, status, offset, limit):
-        rows = [b for b in self.s.batches.values() if (not uploaded_by or b.uploaded_by == uploaded_by)]
+    def list_batches(self, uploaded_by, status, offset, limit, source_type=None):
+        rows = [b for b in self.s.batches.values() if (not uploaded_by or b.uploaded_by == uploaded_by)
+                and (not source_type or b.source_type == source_type)]
         return rows[offset:offset + limit], len(rows)
 
     def mark_batch_started(self, batch_id):
@@ -176,6 +177,12 @@ class _FakeDAO:
 
     def invoice_for_file_path(self, path):
         return self.s.inbound.get(path)
+
+    def batch_for_source(self, source_type, reference):
+        return next((b for b in self.s.batches.values() if b.source_type == source_type and b.source_reference == reference), None)
+
+    def vendor_emails(self):
+        return ["billing@acme.example", "accounts@vendorco.in", "someone@gmail.com"]
 
     def invoice_numbers(self, ids):
         return {i: (f"INV-{i}", 7) for i in ids}
@@ -253,7 +260,7 @@ def env(monkeypatch):
     monkeypatch.setattr(svc, "upload_to_s3", fake_upload)
     monkeypatch.setattr(svc, "InvoiceExtractionService", FakeIntake)
     monkeypatch.setattr(svc, "ExtractedInvoiceResponse", _Extracted)
-    monkeypatch.setattr(svc, "_semaphores", {})
+    monkeypatch.setattr(svc, "_semaphores", __import__("weakref").WeakKeyDictionary())
     return calls
 
 

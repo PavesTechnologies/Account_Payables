@@ -9,4 +9,6 @@ BEGIN;
 DROP TABLE IF EXISTS ap.invoice_upload_batch_item;
 DROP TABLE IF EXISTS ap.invoice_upload_batch;
 
+DELETE FROM ap.system_configuration WHERE config_key IN ('EMAIL_INTAKE_ENABLED', 'EMAIL_INTAKE_LAST_RUN');
+
 COMMIT;

@@ -24,6 +24,7 @@ import asyncio
 import datetime
 import logging
 import re
+import weakref
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -102,13 +103,14 @@ class InvoiceBulkUploadService:
 
     def create_batch(self, candidates: List[CandidateFile], source_name: str, user_id: str,
                      user_name: Optional[str] = None, source_type: str = SOURCE_MANUAL_UPLOAD,
-                     source_reference: Optional[str] = None) -> int:
+                     source_reference: Optional[str] = None, email: Optional[Dict[str, Any]] = None) -> int:
         """Records the batch, uploads every acceptable file to S3 and leaves it QUEUED for the
         worker. Rejected / duplicate files are recorded too (never sent to Textract) so the uploader
         sees why each file was not processed. Returns batch_id."""
         batch = self.dao.add_batch(InvoiceUploadBatch(
             source_type=source_type, source_name=source_name, source_reference=source_reference,
             total_files=len(candidates), uploaded_by=user_id, uploaded_by_name=user_name,
+            **(email or {}),
         ))
         seen: Dict[str, InvoiceUploadBatchItem] = {}
         to_upload = []
@@ -235,8 +237,9 @@ class InvoiceBulkUploadService:
     # ------------------------------------------------------------------
     # Read side
     # ------------------------------------------------------------------
-    def list_batches(self, uploaded_by: Optional[str], status: Optional[str], page: int, page_size: int):
-        rows, total = self.dao.list_batches(uploaded_by, status, (page - 1) * page_size, page_size)
+    def list_batches(self, uploaded_by: Optional[str], status: Optional[str], page: int, page_size: int,
+                     source_type: Optional[str] = None):
+        rows, total = self.dao.list_batches(uploaded_by, status, (page - 1) * page_size, page_size, source_type)
         counts = self.dao.status_counts([b.batch_id for b in rows])
         return [self._batch_summary(b, counts.get(b.batch_id, {})) for b in rows], total
 
@@ -267,6 +270,10 @@ class InvoiceBulkUploadService:
             "created_at": batch.created_at,
             "started_at": batch.started_at,
             "completed_at": batch.completed_at,
+            "email_from": batch.email_from,
+            "email_subject": batch.email_subject,
+            "email_received_at": batch.email_received_at,
+            "sender_known": batch.sender_known,
             "counts": {
                 "queued": counts.get(ITEM_QUEUED, 0) + counts.get(ITEM_PROCESSING, 0),
                 "created": counts.get(ITEM_CREATED, 0),
@@ -308,15 +315,16 @@ class InvoiceBulkUploadService:
 # ======================================================================
 # Worker side: one file at a time through the single-upload operations
 # ======================================================================
-_semaphores: Dict[int, asyncio.Semaphore] = {}
+_semaphores: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
 
 
 def _semaphore() -> asyncio.Semaphore:
-    # One limiter per event loop (the backend runs one loop per process).
+    # One limiter per event loop: the API runs one loop per process; the email runner starts a new
+    # loop per run, and a semaphore must never be shared across loops.
     loop = asyncio.get_running_loop()
-    sem = _semaphores.get(id(loop))
+    sem = _semaphores.get(loop)
     if sem is None:
-        sem = _semaphores[id(loop)] = asyncio.Semaphore(CONCURRENCY)
+        sem = _semaphores[loop] = asyncio.Semaphore(CONCURRENCY)
     return sem
 
 
