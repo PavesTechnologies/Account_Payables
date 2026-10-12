@@ -81,7 +81,7 @@ class RecordPaymentRequest(BaseModel):
     reference_number: str             # UTR / transaction / cheque number
     remarks: Optional[str] = None
     # Phase 4 audit only: how the form was filled, and which auto-filled fields the user changed.
-    entry_mode: Optional[str] = Field(None, pattern="^(MANUAL|RECEIPT_EXTRACTED)$")
+    entry_mode: Optional[str] = Field(None, pattern="^(MANUAL|RECEIPT_EXTRACTED|BULK_IMPORT)$")
     edited_fields: Optional[List[str]] = None
 
 

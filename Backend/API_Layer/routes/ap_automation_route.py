@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from Backend.API_Layer.middleware.permission_base_access import permission_based_access
 from Backend.Business_Layer.services.ap_automation_service import APAutomationService
 from Backend.Business_Layer.services.ap_automation_settings_service import AP_AUTOMATION_MANAGE, APAutomationSettingsService
+from Backend.Business_Layer.services.sharepoint_import_service import SharePointImportSettings
 
 router = APIRouter()
 
@@ -113,3 +114,21 @@ def run_invoice(invoice_id: int, request: Request):
     if result is None:
         raise HTTPException(status_code=409, detail="Only PO invoices waiting for review can be re-checked.")
     return result
+
+
+# ======================================================================
+# Daily SharePoint pickup of payment / TDS sheets (bulk import, 6.7)
+# ======================================================================
+class SharePointToggle(BaseModel):
+    enabled: bool
+
+
+@router.get("/sharepoint-import", dependencies=[Depends(permission_based_access(_MANAGE))])
+def get_sharepoint_import(request: Request):
+    return SharePointImportSettings(request.state.db).status()
+
+
+@router.put("/sharepoint-import", dependencies=[Depends(permission_based_access(_MANAGE))])
+def set_sharepoint_import(body: SharePointToggle, request: Request):
+    user_id, name = _user(request)
+    return SharePointImportSettings(request.state.db).set_enabled(body.enabled, user_id, name)

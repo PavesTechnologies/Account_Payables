@@ -47,6 +47,37 @@ SOURCE_VENDOR_MAPPING = "VENDOR_MAPPING"
 SOURCE_LAST_INVOICE = "LAST_INVOICE"
 
 
+DUPLICATE_WINDOW_DAYS = 7
+
+
+def _norm_number(value: Optional[str]) -> str:
+    """'INV-001', 'inv 001', 'INV/001' -> 'INV001' (leading zeros of the digit part kept)."""
+    import re as _re
+    return _re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+
+def possible_duplicates(invoices, others) -> Dict[int, str]:
+    """invoice_id -> reason, for invoices that look like another live invoice of the same vendor:
+    same number once punctuation / case is ignored, or the same amount within 7 days. Exact
+    duplicates (same vendor + number) are already rejected at creation (D10: create and flag)."""
+    import datetime as _dt
+    out: Dict[int, str] = {}
+    for inv in invoices:
+        for other_id, vendor_id, number, amount, invoice_date in others:
+            if other_id == inv.invoice_id or vendor_id != inv.vendor_id:
+                continue
+            if _norm_number(number) and _norm_number(number) == _norm_number(inv.invoice_number):
+                out[inv.invoice_id] = f"Possible duplicate of {number} (same invoice number)"
+                break
+            if (amount is not None and inv.net_amount is not None and Decimal(amount) == Decimal(inv.net_amount)
+                    and invoice_date and inv.invoice_date
+                    and abs((invoice_date - inv.invoice_date).days) <= DUPLICATE_WINDOW_DAYS):
+                days = abs((invoice_date - inv.invoice_date).days)
+                out[inv.invoice_id] = f"Possible duplicate of {number} (same amount, {days} day{'s' if days != 1 else ''} apart)"
+                break
+    return out
+
+
 def _check(key: str, ok: bool, message: str, blocking: bool = True) -> Dict[str, Any]:
     return {"key": key, "ok": ok, "blocking": blocking, "message": message}
 
@@ -124,6 +155,7 @@ class InvoiceReviewAutomationService:
         departments = self.dao.departments()
         categories = self.dao.categories()
         policy = ApprovalPolicyService(self.db)
+        duplicates = self._duplicates(invoices) if stage == STAGE_TO_REVIEW else {}
         # Step B: PO invoices show their 2/3-way match result and the latest automation outcome.
         automation, evaluate_match, outcomes = _load_automation(self.db, invoices, ids)
 
@@ -144,6 +176,8 @@ class InvoiceReviewAutomationService:
                 open_issues = issues.get(invoice.invoice_id, 0)
                 checks.append(_check("issues", open_issues == 0,
                                      "No open issues" if open_issues == 0 else f"{open_issues} open issue(s) to resolve"))
+            if invoice.invoice_id in duplicates:
+                checks.append(_check("duplicate", False, duplicates[invoice.invoice_id] + " - review on its own"))
             if invoice.invoice_type == "PO" and not invoice.po_id:
                 checks.append(_check("coding", False, "PO number not linked to a purchase order - review on its own"))
             elif coding["department_id"] and coding["purchase_category_id"]:
@@ -191,6 +225,21 @@ class InvoiceReviewAutomationService:
                 "automation": _automation_view(outcomes.get(invoice.invoice_id)),
             })
         return out
+
+    def _duplicates(self, invoices) -> Dict[int, str]:
+        dated = [i for i in invoices if getattr(i, "invoice_date", None)]
+        if not dated:
+            return {}
+        import datetime as _dt
+        window = _dt.timedelta(days=DUPLICATE_WINDOW_DAYS)
+        try:
+            others = self.dao.vendor_invoices_near(list({i.vendor_id for i in dated}),
+                                                   min(i.invoice_date for i in dated) - window,
+                                                   max(i.invoice_date for i in dated) + window)
+        except Exception:
+            logger.exception("Possible-duplicate check failed")
+            return {}
+        return possible_duplicates(dated, others)
 
     @staticmethod
     def _valid_pair(dept, cat, departments, categories) -> bool:

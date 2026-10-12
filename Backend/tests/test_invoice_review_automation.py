@@ -311,3 +311,32 @@ def test_dao_queries_compile_against_the_real_models(monkeypatch):
     dao.vendor_mappings([1]); dao.last_coded_non_po([1], [2]); dao.po_coding([1]); dao.departments(); dao.categories()
     assert len(compiled) == 10
     assert "vendor_category_mapping" in " ".join(compiled) and "purchase_requisition" in " ".join(compiled)
+
+
+# ======================================================================
+# Possible duplicates (D10: create and flag)
+# ======================================================================
+def test_possible_duplicates_rules():
+    a = _inv(1, vendor=1, amount="5000")
+    a.invoice_number, a.invoice_date = "INV-001", datetime.date(2026, 10, 1)
+    b = _inv(2, vendor=1, amount="7000")
+    b.invoice_number, b.invoice_date = "B-77", datetime.date(2026, 10, 1)
+    c = _inv(3, vendor=2, amount="5000")
+    c.invoice_number, c.invoice_date = "C-1", datetime.date(2026, 10, 1)
+    others = [
+        (10, 1, "inv 001", Decimal("4000"), datetime.date(2026, 9, 1)),   # same number, other format
+        (11, 1, "B-99", Decimal("7000"), datetime.date(2026, 10, 4)),     # same amount 3 days apart
+        (12, 2, "C-9", Decimal("5000"), datetime.date(2026, 10, 20)),     # same amount but 19 days apart
+        (3, 2, "C-1", Decimal("5000"), datetime.date(2026, 10, 1)),       # itself
+    ]
+    out = svc.possible_duplicates([a, b, c], others)
+    assert out == {1: "Possible duplicate of inv 001 (same invoice number)", 2: "Possible duplicate of B-99 (same amount, 3 days apart)"}
+
+
+def test_possible_duplicate_blocks_bulk_review(world, monkeypatch):
+    inv = _inv(1, dept=10, cat=101)
+    _DAO.invoices = [inv]
+    _DAO.uploads = {1: (VALID, 3, "MANUAL_UPLOAD", None)}
+    monkeypatch.setattr(_DAO, "vendor_invoices_near", lambda self, ids, f, t: [(9, 1, "INV-1", Decimal("1000"), datetime.date(2026, 10, 2))], raising=False)
+    row = _rows()[1]
+    assert row["ready"] is False and "Possible duplicate of INV-1" in _check(row, "duplicate")["message"]

@@ -18,7 +18,26 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 BRAND = "0A0082"
-_MONEY_FORMAT = "#,##0.00"
+# Indian digit grouping (12,34,567.89): lakh / crore sections, then the usual thousands.
+_MONEY_FORMAT = r'[>=10000000]##\,##\,##\,##0.00;[>=100000]##\,##\,##0.00;##,##0.00'
+INDIAN_MONEY_FORMAT = _MONEY_FORMAT
+
+
+def indian_amount(value) -> str:
+    """1234567.5 -> '12,34,567.50' (negative values keep their sign)."""
+    amount = Decimal(str(value)).quantize(Decimal("0.01"))
+    sign = "-" if amount < 0 else ""
+    whole, _, fraction = f"{abs(amount):.2f}".partition(".")
+    if len(whole) > 3:
+        head, tail = whole[:-3], whole[-3:]
+        groups = []
+        while len(head) > 2:
+            groups.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            groups.insert(0, head)
+        whole = ",".join(groups + [tail])
+    return f"{sign}{whole}.{fraction}"
 _DATE_FORMAT = "DD-MM-YYYY"
 
 
@@ -26,7 +45,7 @@ def _display(value, kind: str) -> str:
     if value is None or value == "":
         return ""
     if kind == "money":
-        return f"{Decimal(str(value)):,.2f}"
+        return indian_amount(value)
     if kind == "date" and isinstance(value, (datetime.date, datetime.datetime)):
         return value.strftime("%d-%m-%Y")
     if kind == "number" and isinstance(value, Decimal):

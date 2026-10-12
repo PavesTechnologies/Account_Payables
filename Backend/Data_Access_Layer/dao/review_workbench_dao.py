@@ -112,3 +112,14 @@ class ReviewWorkbenchDAO:
 
     def categories(self) -> Dict[int, Tuple[str, bool, int]]:
         return {c.id: (c.name, c.is_active, c.department_id) for c in self.db.query(PurchaseCategory).all()}
+
+    def vendor_invoices_near(self, vendor_ids: Sequence[int], date_from, date_to) -> List[tuple]:
+        """(invoice_id, vendor_id, invoice_number, net_amount, invoice_date) of the vendors' live
+        invoices in a date window - for possible-duplicate checks (rejected / failed ones excluded)."""
+        if not vendor_ids:
+            return []
+        return (self.db.query(Invoice.invoice_id, Invoice.vendor_id, Invoice.invoice_number, Invoice.net_amount, Invoice.invoice_date)
+                .join(StatusMaster, StatusMaster.status_id == Invoice.status_id)
+                .filter(Invoice.vendor_id.in_(list(vendor_ids)), Invoice.invoice_date >= date_from, Invoice.invoice_date <= date_to,
+                        ~StatusMaster.status_code.in_(["REJECTED", "OCR_FAILED"]))
+                .all())
