@@ -283,6 +283,16 @@ def test_determine_applicable_above_threshold():
     assert "194J" in row.determination_reason or "Professional" in row.determination_reason
 
 
+def test_determine_base_excludes_gst_on_an_extracted_invoice():
+    # extraction stores gross_amount = net_amount = the GST-inclusive total (Rs 2,83,200 = 2,40,000 + 18%)
+    service, _, invoice, _ = _default_setup(gross=Decimal("283200.00"))
+    invoice.tax_amount = Decimal("43200.00")
+    row = service.determine(invoice.invoice_id, user_id="5100007")
+
+    assert row.taxable_base == Decimal("240000.00")
+    assert row.tds_amount == Decimal("24000.00")
+
+
 def test_determine_not_applicable_no_mapping():
     invoice = _invoice(purchase_category_id=None)
     vendor = _vendor()

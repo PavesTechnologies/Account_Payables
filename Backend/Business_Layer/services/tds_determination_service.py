@@ -196,8 +196,15 @@ def _taxable_base(invoice) -> Decimal:
     """TDS base = invoice value excluding GST/other indirect tax - deliberately
     NOT invoice.net_amount (which includes tax_amount) and NOT a single global
     formula reused blindly; this is the one Phase 1 policy function, easy to
-    special-case per rule/scenario later without touching every caller."""
-    base = (invoice.gross_amount or Decimal("0")) - (invoice.discount_amount or Decimal("0"))
+    special-case per rule/scenario later without touching every caller.
+
+    Invoices created from extraction store gross_amount = net_amount = the GST-inclusive grand
+    total, so the base is net_amount (already after discount) less tax_amount. Without a
+    net_amount, gross less discount is taken as the pre-tax value."""
+    if invoice.net_amount is not None:
+        base = invoice.net_amount - (invoice.tax_amount or Decimal("0"))
+    else:
+        base = (invoice.gross_amount or Decimal("0")) - (invoice.discount_amount or Decimal("0"))
     return base if base > 0 else Decimal("0")
 
 

@@ -78,6 +78,16 @@ class GoodsReceiptDAO:
         self.db.flush()
         return line
 
+    def get_lines_by_po_id(self, po_id: int) -> List[GoodsReceiptLine]:
+        """Every received line across all GRNs of a PO (3-way match input)."""
+        return (
+            self.db.query(GoodsReceiptLine)
+            .join(GoodsReceipt, GoodsReceipt.grn_id == GoodsReceiptLine.grn_id)
+            .filter(GoodsReceipt.po_id == po_id)
+            .order_by(GoodsReceiptLine.grn_id)
+            .all()
+        )
+
     def delete_goods_receipt_lines(self, grn_id: int) -> None:
         self.db.query(GoodsReceiptLine).filter(
             GoodsReceiptLine.grn_id == grn_id
