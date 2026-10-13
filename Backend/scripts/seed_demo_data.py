@@ -45,7 +45,8 @@ PREVIEW_DIR = ROOT / "test-documents" / "demo_v1"
 EXPECTED_DATABASE = "accounts_payable"
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
-AS_OF = dt.date(2026, 10, 12)
+BASE_AS_OF = dt.date(2026, 10, 12)   # the story is written as of this day; --as-of moves it forward
+AS_OF = BASE_AS_OF
 FOOTER = "DEMO DOCUMENT - generated for the Paves APM product demonstration - not a tax invoice"
 
 # --- people (UMS user ids) -------------------------------------------------------------
@@ -130,6 +131,7 @@ class Story:
     comment: str = "Verified against usage / contract - approved."
     decision: str = "APPROVE"        # APPROVE | REJECT | SEND_BACK (at level 1)
     terms_override: Optional[str] = None  # Finance verifies a payment-term mismatch with this remark
+    resubmit: Optional[Tuple[int, str]] = None  # after a send-back: (business days later, approver's comment)
     title: str = ""
 
 
@@ -186,12 +188,17 @@ def build_stories() -> List[Story]:
                 comment=f"Data platform spend for {usage} approved.", title=f"AWS data platform {usage}")
             if m.month in aws_pays and m.month <= 8:
                 data.pays = [(aws_pays[m.month], "FULL", f"AWS data platform {usage}")]
-            elif m.month == 9:
-                data.target, data.decision = "RETURNED_FOR_REVIEW", "SEND_BACK"
-                data.comment = ("Includes Redshift charges for the eu-west cluster decommissioned on 14 Aug. "
-                                "Please obtain a credit note or confirmation from DevOps before resubmitting.")
-            else:
-                data.target, data.uploader, data.upload = "OCR_REVIEW_PENDING", KALASAGAR, dt.date(2026, 10, 9)
+            elif m.month == 9:  # sent back, confirmed by DevOps, resubmitted and paid on time
+                data.decision, data.approve_days = "SEND_BACK", [1]
+                data.comment = ("Includes Redshift charges for the eu-west cluster - was it not decommissioned "
+                                "on 14 Aug? Please confirm with DevOps before resubmitting.")
+                data.resubmit = (1, "DevOps confirmed the eu-west cluster ran until 31 Aug for the data migration; "
+                                    "charges are valid - approved.")
+                data.pays = [(aws_pays[9], "FULL", f"AWS data platform {usage}")]
+            else:  # October: sent back, not yet due
+                data.target, data.decision, data.approve_days = "RETURNED_FOR_REVIEW", "SEND_BACK", [2]
+                data.comment = ("Includes a Redshift reserved-node purchase (28 Sep) that IT has not approved. "
+                                "Please get a credit note or the approval mail before resubmitting.")
             s.append(data)
 
     # AWS Professional Services - migration engagement on PO (Net 30)
@@ -200,11 +207,12 @@ def build_stories() -> List[Story]:
                    target="PAID", uploader=VENKATESH, upload=dt.date(2026, 6, 16), layout="B", po="PO-AWS-PS",
                    approvers=[AJAY], comment="Assessment report accepted by IT (GRN recorded) - approved.",
                    pays=[(dt.date(2026, 7, 14), "FULL", "AWS ProServe milestone 1")], title="AWS ProServe - assessment"))
-    s.append(Story(key="AWS-PS-2", vendor="AWS", inv_no="AWSPS26-000502", inv_date=dt.date(2026, 8, 20),
+    s.append(Story(key="AWS-PS-2", vendor="AWS", inv_no="AWSPS26-000502", inv_date=dt.date(2026, 9, 25),
                    lines=[L("Landing zone implementation", "998313", 1, 300000)], terms="Net 30 days", term_days=30,
-                   target="PARTIALLY_PAID", uploader=VENKATESH, upload=dt.date(2026, 8, 21), layout="B", po="PO-AWS-PS",
-                   approvers=[SAMBI, MOHAN], comment="Landing zone delivered; release 50% now, balance on UAT sign-off.",
-                   pays=[(dt.date(2026, 9, 18), D("170000.00"), "Milestone 2 - 50% released; balance on UAT sign-off")],
+                   target="PARTIALLY_PAID", uploader=VENKATESH, upload=dt.date(2026, 9, 28), layout="B", po="PO-AWS-PS",
+                   approve_days=[1], approvers=[SAMBI, MOHAN],
+                   comment="Landing zone delivered; release 50% now, balance (due 25 Oct) on UAT sign-off.",
+                   pays=[(dt.date(2026, 10, 9), D("160000.00"), "Milestone 2 - 50% released; balance on UAT sign-off")],
                    title="AWS ProServe - landing zone"))
 
     # ---- KEKA: HRMS subscription on agreement (Net 30), billed on the 1st ------------------
@@ -307,6 +315,27 @@ def build_stories() -> List[Story]:
     return s
 
 
+# 26Q returns: (quarter, deductions from, to, filed on) - filed when the run date is past that day.
+QUARTERS = [(1, dt.date(2026, 4, 1), dt.date(2026, 6, 30), dt.date(2026, 7, 28)),
+            (2, dt.date(2026, 7, 1), dt.date(2026, 9, 30), dt.date(2026, 10, 28)),
+            (3, dt.date(2026, 10, 1), dt.date(2026, 12, 31), dt.date(2027, 1, 27))]
+
+
+def shift_story(stories: List[Story], days: int) -> None:
+    """Moves every story date (and the purchase orders) forward by whole weeks, so weekdays and
+    "due in N days" stay as written while the demo runs on a later date."""
+    if not days:
+        return
+    move = dt.timedelta(days=days)
+    for st in stories:
+        st.inv_date, st.upload = st.inv_date + move, st.upload + move
+        st.pays = [(on + move, amount, remarks) for on, amount, remarks in st.pays]
+    for p in PURCHASES:
+        for k in ("pr_on", "approve_on", "quote_on", "po_on"):
+            p[k] = p[k] + move
+        p["grns"] = [(on + move, qty) for on, qty in p["grns"]]
+
+
 # Purchase orders: PR -> quotation -> PO -> GRNs (story dates).
 PURCHASES = [
     dict(key="PO-AWS-PS", vendor="AWS", requester=AJAY, pr_on=dt.date(2026, 5, 20), approve_on=dt.date(2026, 5, 21),
@@ -314,7 +343,7 @@ PURCHASES = [
          justification="Cloud migration of the client-delivery platform: readiness assessment and landing zone.",
          lines=[("Migration readiness assessment", "EA", 1, 150000), ("Landing zone implementation", "EA", 1, 300000)],
          grns=[(dt.date(2026, 6, 12), {"Migration readiness assessment": 1}),
-               (dt.date(2026, 8, 18), {"Landing zone implementation": 1})]),
+               (dt.date(2026, 9, 22), {"Landing zone implementation": 1})]),
     dict(key="PO-KEKA-HIRE", vendor="KEKA", requester=AJAY, pr_on=dt.date(2026, 5, 12), approve_on=dt.date(2026, 5, 13),
          quote_on=dt.date(2026, 5, 15), po_on=dt.date(2026, 5, 18), quote_no="KEKA-Q-26-0091",
          justification="Applicant tracking for the FY26-27 hiring plan (HR request HR-0042).",
@@ -776,7 +805,7 @@ class Seeder:
                 fields.update(invoice_type="NON_PO", department_id=story.dept, purchase_category_id=story.cat)
             apply_ocr_review(inv.inbound_document_id, InvoiceOCRReviewRequest(**fields), db, story.uploader)
             note = auto_determine_tds(db, invoice_id, story.uploader)
-            if story.nature:
+            if story.nature and status != "RETURNED_FOR_REVIEW":
                 TDSDeterminationService(db).determine(invoice_id, story.uploader, payment_nature_code=story.nature)
                 note = None
             corrected = sorted(k for k in fields if k not in ("invoice_type", "po_id", "department_id",
@@ -798,7 +827,7 @@ class Seeder:
         finally:
             db.close()
 
-    def decide(self, story: Story, level: int):
+    def decide(self, story: Story, level: int, after_resubmit: bool = False):
         from Backend.Business_Layer.services.invoice_approval_service import InvoiceApprovalService
         invoice_id = self.invoice_ids.get(story.key)
         db = self.session()
@@ -817,6 +846,9 @@ class Seeder:
             if actor is None:
                 return "no eligible approver"
             service = InvoiceApprovalService(db)
+            if after_resubmit:
+                service.approve(invoice_id, actor, story.resubmit[1])
+                return f"approved after resubmission by {NAMES.get(actor, actor)}"
             if level == 1 and story.decision == "REJECT":
                 service.reject(invoice_id, actor, story.comment)
                 return f"rejected by {NAMES.get(actor, actor)}"
@@ -946,24 +978,27 @@ class Seeder:
         finally:
             db.close()
 
-    def file_q1(self):
+    def file_quarter(self, quarter: int, start: dt.date, end: dt.date, filed_on: dt.date):
         from Backend.Business_Layer.services.tds_challan_service import TdsChallanService
         db = self.session()
         try:
             ids = [r[0] for r in self.q(db, """select invoice_id from ap.invoice_tds_tracking
                                               where tracking_status = 'TDS_DEPOSITED'
-                                                and deduction_date between '2026-04-01' and '2026-06-30'
-                                              order by invoice_id""")]
-            ack = "452017286620714"
+                                                and deduction_date between :a and :b order by invoice_id""",
+                                        a=start, b=end)]
+            if not ids:
+                return "nothing deposited for the quarter"
+            ack = f"45201{filed_on:%m%d}{quarter}66207{len(ids):02d}"[:15]
             doc = render_sheet("FORM 26Q - PROVISIONAL RECEIPT", "Quarterly TDS statement (other than salary)", [
-                ("Deductor", "Paves Global Infotech Pvt Ltd"), ("Financial year", "2026-27"), ("Quarter", "Q1 (Apr - Jun)"),
-                ("Token / acknowledgement no.", ack), ("Date of filing", "28 Jul 2026"), ("Deductee records", str(len(ids)))])
+                ("Deductor", "Paves Global Infotech Pvt Ltd"), ("Financial year", "2026-27"),
+                ("Quarter", f"Q{quarter} ({start:%b} - {end:%b})"), ("Token / acknowledgement no.", ack),
+                ("Date of filing", f"{filed_on:%d %b %Y}"), ("Deductee records", str(len(ids)))])
             result = TdsChallanService(db).create_filing({
-                "form_type": "26Q", "financial_year": "2026-27", "quarter": 1, "acknowledgement_no": ack,
-                "filing_date": dt.date(2026, 7, 28), "is_revision": False,
-                "remarks": "Q1 26Q filed through TIN-FC; challans matched in OLTAS."},
-                ids, BINDU, (f"26Q-Q1-{ack}.pdf", doc, "application/pdf"))
-            return f"Q1 26Q filed for {len(ids)} invoices (filing #{result.get('filing_id', '?')})"
+                "form_type": "26Q", "financial_year": "2026-27", "quarter": quarter, "acknowledgement_no": ack,
+                "filing_date": filed_on, "is_revision": False,
+                "remarks": f"Q{quarter} 26Q filed through TIN-FC; challans matched in OLTAS."},
+                ids, BINDU, (f"26Q-Q{quarter}-{ack}.pdf", doc, "application/pdf"))
+            return f"Q{quarter} 26Q filed for {len(ids)} invoices (filing #{result.get('filing_id', '?')})"
         finally:
             db.close()
 
@@ -1020,6 +1055,13 @@ class Seeder:
                     break
             if st.target in ("REJECTED", "RETURNED_FOR_REVIEW"):
                 continue
+            if st.decision == "SEND_BACK" and st.resubmit:
+                again = bd(last, st.resubmit[0])
+                add(at(again, 11, 5 + jitter), f"{st.key}: resubmitted by AP", lambda st=st: self.review(st))
+                add(at(again, 11, 9 + jitter), f"{st.key}: sent for approval again", lambda st=st: self.send(st))
+                last = bd(again, 1)
+                add(at(last, 10, 25 + jitter), f"{st.key}: approval after resubmission",
+                    lambda st=st: self.decide(st, 1, after_resubmit=True))
             verify_day = bd(last, 1)
             if st.pays and verify_day >= st.pays[0][0]:
                 verify_day = last
@@ -1033,11 +1075,19 @@ class Seeder:
                 add(at(on, 16, 0 + jitter), f"{st.key}: payment {n + 1}",
                     lambda st=st, n=n, on=on, a=amount, r=remarks: self.pay(st, n, on, a, r))
 
-        for n, month in enumerate(dt.date(2026, m, 1) for m in range(4, 10)):
-            deposit_on = bd(dt.date(month.year, month.month + 1, 6), 0)
+        month, n = dt.date(2026, 4, 1), 0
+        while True:  # each month's TDS is deposited by the 7th of the next month
+            nxt = (month + dt.timedelta(days=32)).replace(day=1)
+            deposit_on = bd(nxt.replace(day=6), 0)
+            if deposit_on > AS_OF:
+                break
             add(at(deposit_on, 11, 45), f"TDS challans for {month:%b %Y}",
                 lambda month=month, d=deposit_on, n=n: self.challans(month, d, 21400 + n * 13))
-        add(at(dt.date(2026, 7, 28), 15, 30), "Q1 26Q return filed", self.file_q1)
+            month, n = nxt, n + 1
+        for quarter, start, end, filed_on in QUARTERS:  # 26Q filed a few days before the due date
+            if filed_on <= AS_OF - dt.timedelta(days=1):
+                add(at(filed_on, 15, 30), f"Q{quarter} 26Q return filed",
+                    lambda q=quarter, a=start, b=end, f=filed_on: self.file_quarter(q, a, b, f))
         late = [e.label for e in ev if e.ts.date() > AS_OF]
         if late:
             raise ValueError(f"Story events after {AS_OF}: {late}")
@@ -1084,7 +1134,17 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Seed the APM client-demo dataset.")
     parser.add_argument("--execute", action="store_true", help="Build the dataset (default: dry run).")
     parser.add_argument("--no-backdate", action="store_true", help="Keep real timestamps on every row.")
+    parser.add_argument("--as-of", type=dt.date.fromisoformat, default=None,
+                        help="Demo date (YYYY-MM-DD, default today). The story moves forward in whole weeks.")
     args = parser.parse_args(argv)
+
+    global AS_OF
+    as_of = args.as_of or max(dt.date.today(), BASE_AS_OF)
+    if as_of < BASE_AS_OF:
+        print(json.dumps({"error": f"--as-of must be on or after {BASE_AS_OF}"}))
+        return 1
+    shift_days = (as_of - BASE_AS_OF).days // 7 * 7
+    AS_OF = BASE_AS_OF + dt.timedelta(days=shift_days)
 
     from dotenv import load_dotenv
     load_dotenv(ENV_FILE)  # S3 / Textract / GST-lookup settings, as the backend loads them
@@ -1092,6 +1152,7 @@ def main(argv=None) -> int:
     from Backend.Data_Access_Layer.utils.database import engine
 
     stories = build_stories()
+    shift_story(stories, shift_days)
     seeder = Seeder(engine, Restamper(engine, enabled=not args.no_backdate and args.execute) if args.execute
                     else None)
     db = seeder.session()
@@ -1110,6 +1171,7 @@ def main(argv=None) -> int:
         db.close()
 
     report = {"mode": "execute" if args.execute else "dry-run", "database": database,
+              "as_of": str(AS_OF), "shifted_days": shift_days,
               "existing_invoices": existing, **plan_report(stories, seeder.vendors)}
     if not args.execute:
         PREVIEW_DIR.mkdir(parents=True, exist_ok=True)

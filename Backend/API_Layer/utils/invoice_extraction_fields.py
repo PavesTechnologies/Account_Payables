@@ -997,6 +997,32 @@ def parse_summary_fields(
 # Parse line items
 # ============================================================
 
+def _apply_price(values: Dict[str, Any], price: float) -> None:
+    """Places Textract's PRICE (the line total) next to UNIT_PRICE / AMOUNT.
+
+    Some layouts label the rate column PRICE: when a separate line total
+    already equals quantity x PRICE, PRICE is the rate. Otherwise PRICE is
+    the line total, and a missing rate is derived from it and the quantity
+    (20 licences, PRICE 18,000 -> rate 900)."""
+    quantity = values.get("quantity")
+    line_total = values.get("line_total")
+    if (
+        values.get("unit_price") is None
+        and line_total is not None
+        and quantity
+        and abs(price * quantity - line_total) <= 1
+    ):
+        values["unit_price"] = price
+        return
+    if line_total is None:
+        values["line_total"] = price
+        line_total = price
+    if values.get("unit_price") is None:
+        values["unit_price"] = (
+            round(line_total / quantity, 2) if quantity else line_total
+        )
+
+
 def parse_line_items(
     groups: List[Dict[str, Any]]
 ) -> List[InvoiceLine]:
@@ -1013,6 +1039,7 @@ def parse_line_items(
         ):
 
             values = {}
+            price = None
 
             for field in item.get(
                 "LineItemExpenseFields",
@@ -1092,14 +1119,17 @@ def parse_line_items(
 
                     values["unit"] = value
 
-                elif field_type in {
-                    "UNIT_PRICE",
-                    "PRICE",
-                }:
+                elif field_type == "UNIT_PRICE":
 
                     values["unit_price"] = (
                         normalize_number(value)
                     )
+
+                elif field_type == "PRICE":
+
+                    # Textract PRICE = the line's total price (UNIT_PRICE is
+                    # the rate); resolved against quantity below.
+                    price = normalize_number(value)
 
                 elif field_type == "DISCOUNT":
 
@@ -1208,6 +1238,9 @@ def parse_line_items(
                     values["cess_rate"] = (
                         normalize_number(value)
                     )
+
+            if price is not None:
+                _apply_price(values, price)
 
             if values:
 

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from Backend.API_Layer.middleware.permission_base_access import has_permissions
 from Backend.Business_Layer.services.ap_reporting_service import FINANCE_PERMISSIONS, APReportingService
+from Backend.Business_Layer.services.action_center_service import ActionCenterService
 from Backend.Business_Layer.services.role_dashboard_service import RoleDashboardService
 
 from Backend.API_Layer.interface.dashboard_interface import DashboardActivityPageDTO, DashboardSummaryDTO
@@ -85,6 +86,20 @@ def get_dashboard_views(http_request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
     return RoleDashboardService.views_for(user)
+
+
+@router.get("/actions")
+def get_action_center(http_request: Request):
+    """Action Center: one prioritised to-do list across every AP area this user works in, each item
+    linking to the filtered list where the work is done, plus "all clear" areas and quick actions.
+    Built from the same role dashboards, so it always agrees with them."""
+    user = getattr(http_request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        return JSONResponse(jsonable_encoder(ActionCenterService(http_request.state.db).build(user)))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to build the action center")
 
 
 @router.get("/view/{view_key}")
