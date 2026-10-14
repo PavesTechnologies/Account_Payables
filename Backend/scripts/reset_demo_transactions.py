@@ -40,7 +40,7 @@ CLEARED_TABLES = [
     "payment", "payment_invoice", "payment_document",
     "inbound_document", "invoice_upload_batch", "invoice_upload_batch_item",
     "bulk_import_job", "bulk_import_row", "notification", "recurring_occurrence", "invoice_gst", "vendor_note", "invoice_assignment", "payment_run", "payment_run_item",
-    "gstr2b_entry", "gstr2b_import",
+    "gstr2b_entry", "gstr2b_import", "accounting_export_item", "accounting_export",
 ]
 
 # Audit rows are kept for vendors and configuration; these table names go.
@@ -53,7 +53,7 @@ FILE_COLUMNS = [
     ("goods_receipt", "file_path"), ("quotation", "file_url"),
     ("tds_challan", "file_path"), ("tds_return_filing", "file_path"),
     ("invoice_upload_batch_item", "file_path"), ("bulk_import_job", "file_path"),
-    ("bulk_import_row", "document_path"), ("vendor_note", "file_path"), ("gstr2b_import", "file_path"),
+    ("bulk_import_row", "document_path"), ("vendor_note", "file_path"), ("gstr2b_import", "file_path"), ("accounting_export", "file_path"),
 ]
 
 # Spot-checked before and after: these counts must not change.

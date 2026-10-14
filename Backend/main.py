@@ -30,6 +30,7 @@ from Backend.API_Layer.routes import (
     recurring_route,
     gst_itc_route,
     gstr2b_route,
+    accounting_export_route,
     vendor_note_route,
     work_assignment_route,
     vendor_bank_verification_route,
@@ -173,6 +174,7 @@ api_router.include_router(bulk_import_route.router, tags=["Bulk Import"], prefix
 api_router.include_router(recurring_route.router, tags=["Recurring Invoices"], prefix="/recurring-schedules")
 api_router.include_router(gst_itc_route.router, tags=["GST Input Credit"], prefix="/gst/itc")
 api_router.include_router(gstr2b_route.router, tags=["GSTR-2B Reconciliation"], prefix="/gst/gstr2b")
+api_router.include_router(accounting_export_route.router, tags=["Accounting Export"], prefix="/accounting-export")
 api_router.include_router(vendor_note_route.router, tags=["Credit / Debit Notes"], prefix="/vendor-notes")
 api_router.include_router(work_assignment_route.router, tags=["Work Assignment"], prefix="/work-assignment")
 api_router.include_router(vendor_bank_verification_route.router, tags=["Vendor Bank Verification"], prefix="/vendor-bank-verification")

@@ -478,6 +478,12 @@ class APReportingService:
         ("tds_register", {"title": "TDS register", "period": "range", "permissions": TDS_PERMISSIONS}),
         ("payment_term_exceptions", {"title": "Payment-term exceptions", "period": "as_of",
                                      "permissions": TERM_PERMISSIONS}),
+        ("msme_payments", {"title": "MSME payments - MSMED Act s.15 / s.16 interest", "period": "range",
+                           "permissions": FINANCE_PERMISSIONS}),
+        ("msme_43bh", {"title": "MSME s.43B(h) disallowance (financial year of the To date)", "period": "range",
+                       "permissions": FINANCE_PERMISSIONS}),
+        ("msme_form1", {"title": "MSME Form-1 (half year of the To date)", "period": "range",
+                        "permissions": FINANCE_PERMISSIONS}),
     ])
 
     def report_summary(self, user, date_from: Optional[datetime.date] = None, date_to: Optional[datetime.date] = None,
@@ -782,6 +788,59 @@ class APReportingService:
         ], "rows": rows, "notes": [
             "Deposit due: 7th of the month after deduction (30 April for March); quarterly statement: "
             "31 Jul / 31 Oct / 31 Jan / 31 May. Configurable in system configuration."]}
+
+    def _report_msme_payments(self, date_from=None, date_to=None, vendor_id=None, **_):
+        from Backend.Business_Layer.services.msme_compliance_service import MsmeComplianceService
+        svc = MsmeComplianceService(self.db, today=self.today)
+        rows = [svc.invoice_status(inv) for inv in svc.invoices(date_from, date_to) if vendor_id in (None, inv.vendor_id)]
+        return {"columns": [
+            _col("invoice_number", "Invoice"), _col("vendor_name", "Vendor"), _col("msme_category", "MSME"),
+            _col("udyam_number", "Udyam no."), _col("invoice_date", "Invoice date", "date"),
+            _col("statutory_due_date", "Pay by (s.15)", "date"), _col("status", "Status"), _col("paid_on", "Paid on", "date"),
+            _col("days_late", "Days late", "int"), _col("currency_code", "Cur."), _col("amount_due", "Amount due", "money"),
+            _col("paid", "Paid", "money"), _col("outstanding", "Outstanding", "money"),
+            _col("late_amount", "Paid / due late", "money"), _col("interest_s16", "Interest s.16 (est.)", "money"),
+        ], "rows": rows, "notes": [
+            "Micro and small enterprises only (vendor master: MSME registered + category). Pay by = the agreed date, at most "
+            "45 days (15 days without an agreement) - MSMED Act s.15.",
+            f"Interest s.16: compound, monthly rests, 3 x RBI bank rate ({svc.bank_rate()}% - system configuration "
+            "MSME_BANK_RATE). It is not tax-deductible (s.23) and must be disclosed in the financial statements.",
+            "Amount due = invoice - TDS - applied notes."]}
+
+    def _report_msme_43bh(self, date_to=None, vendor_id=None, **_):
+        from Backend.Business_Layer.services.msme_compliance_service import MsmeComplianceService, fy_bounds
+        start, end = fy_bounds(date_to or self.today)
+        rows = [r for r in MsmeComplianceService(self.db, today=self.today).s43bh(start, end)
+                if vendor_id is None or r["vendor_id"] == vendor_id]
+        return {"columns": [
+            _col("invoice_number", "Invoice"), _col("vendor_name", "Vendor"), _col("msme_category", "MSME"),
+            _col("invoice_date", "Invoice date", "date"), _col("statutory_due_date", "Pay by (s.15)", "date"),
+            _col("outcome", "Outcome"), _col("currency_code", "Cur."), _col("unpaid_at_year_end", "Unpaid at year end", "money"),
+            _col("paid_in_time_after_year_end", "Paid in time after year end", "money"),
+            _col("disallowed", "Disallowed", "money"), _col("at_risk", "At risk", "money"),
+        ], "rows": rows, "notes": [
+            f"FY {start.year}-{str(end.year)[2:]} ({start:%d %b %Y} - {end:%d %b %Y}). Income-tax s.43B(h): a sum payable to a micro "
+            "or small enterprise is deductible in this year only if paid within the MSMED s.15 time limit; otherwise it is "
+            "deductible in the year it is actually paid.",
+            "Invoices fully paid within the year are not listed (deductible this year). Share with the tax auditor (Form 3CD clause 26).",
+            "Amounts are the sums payable to the supplier (invoice - TDS - notes); the tax auditor confirms the expense portion."]
+            + ([f"The year is still running - 'unpaid at year end' is what is unpaid today ({self.today:%d %b %Y}); pay the "
+                "at-risk invoices by their s.15 date to keep the deduction."] if self.today <= end else [])}
+
+    def _report_msme_form1(self, date_to=None, vendor_id=None, **_):
+        from Backend.Business_Layer.services.msme_compliance_service import MsmeComplianceService, half_year
+        start, end, due = half_year(date_to or self.today)
+        rows = [r for r in MsmeComplianceService(self.db, today=self.today).form1(end) if vendor_id is None or r["vendor_id"] == vendor_id]
+        return {"columns": [
+            _col("vendor_name", "Supplier"), _col("pan", "PAN"), _col("udyam_number", "Udyam no."), _col("msme_category", "MSME"),
+            _col("invoice_number", "Invoice"), _col("invoice_date", "Invoice date", "date"), _col("due_from", "Due from", "date"),
+            _col("days_outstanding", "Days beyond limit", "int"), _col("reason", "Reason for delay"),
+            _col("currency_code", "Cur."), _col("amount_due", "Amount due", "money"),
+        ], "rows": rows, "notes": [
+            f"Half year {start:%d %b %Y} - {end:%d %b %Y}; MSME Form-1 is due on the MCA portal by {due:%d %b %Y}.",
+            "Lists dues to micro / small suppliers still unpaid at the half-year end beyond the s.15 limit (45 days). "
+            "Edit 'Reason for delay' in the exported file before filing." if rows else
+            "Nothing outstanding beyond the s.15 limit - no Form-1 needed for this half year."]}
 
     def _report_payment_term_exceptions(self, vendor_id=None, department_id=None, **_):
         rows = []

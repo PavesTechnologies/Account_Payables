@@ -213,6 +213,13 @@ class ActionCenterService:
             out.append(_action("msme", "payments", "critical", f"{_plural(n, 'MSME invoice')} at the statutory deadline",
                                "MSMED Act: pay within the statutory limit (max 45 days) to avoid interest and tax disallowance.",
                                n, "/accounts-payable/payments/ready", "Pay MSME vendors", amount))
+        form1 = self._msme_form1()
+        if form1 and form1.get("invoices"):
+            out.append(_action("msme_form1", "payments", "high",
+                               f"File MSME Form-1 by {form1['due']:%d %b} ({_plural(form1['suppliers'], 'supplier')})",
+                               f"Dues to micro / small suppliers unpaid beyond 45 days at {form1['period_end']:%d %b %Y} must be "
+                               "reported to the MCA. Run the MSME Form-1 report for the figures.", form1["invoices"],
+                               "/accounts-payable/reports", "Open reports", form1["amount"]))
         n, amount, _ = card("term_exceptions")
         if n:
             out.append(_action("terms", "payments", "high", f"Resolve {_plural(n, 'payment-term exception')}",
@@ -355,6 +362,17 @@ class ActionCenterService:
                                "Looks like a blocked credit under s.17(5) (food, cabs, club, works contract) - confirm or override.",
                                s["review"], link, "Review"))
         return out
+
+    def _msme_form1(self) -> Optional[dict]:
+        try:
+            from Backend.Business_Layer.services.msme_compliance_service import MsmeComplianceService
+            return MsmeComplianceService(self.dashboards.db, today=self.today).attention()
+        except Exception:
+            try:
+                self.dashboards.db.rollback()
+            except Exception:
+                pass
+            return None
 
     def _gstr2b(self) -> Optional[dict]:
         try:
