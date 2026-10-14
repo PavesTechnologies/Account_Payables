@@ -1,4 +1,5 @@
 from Backend.Business_Layer.services.tds_determination_service import compute_payable_amount
+from Backend.Business_Layer.services.vendor_note_service import applied_notes_total, applied_notes_totals
 from Backend.Data_Access_Layer.dao.invoice_details_dao import InvoiceDetailsDAO
 from Backend.Data_Access_Layer.dao.invoice_dao import InvoiceDAO
 from Backend.Data_Access_Layer.dao.tds_dao import TdsDAO
@@ -7,6 +8,7 @@ from Backend.API_Layer.interface.invoice_details_interface import InvoiceDetails
 
 class InvoiceDetailsService:
     def __init__(self, db):
+        self.db = db
         self.invoice_details_dao = InvoiceDetailsDAO(db)
         self.vendor_dao = VendorDAO(db)
         self.invoice_dao = InvoiceDAO(db)
@@ -50,7 +52,7 @@ class InvoiceDetailsService:
                 status_code=status_code,
                 tds_applicable=tds.tds_applicable if tds else None,
                 tds_amount=tds.tds_amount if tds else None,
-                payable_amount=compute_payable_amount(result.net_amount, tds),
+                payable_amount=compute_payable_amount(result.net_amount, tds) - applied_notes_total(self.db, result.invoice_id),
             )
         except Exception as e:
             raise Exception(f"Error retrieving invoice details: {str(e)}")
@@ -62,6 +64,7 @@ class InvoiceDetailsService:
             tds_by_invoice_id = self.tds_dao.get_invoice_tds_by_invoice_ids(
                 [result.invoice_id for result in results]
             )
+            notes = applied_notes_totals(self.db, [result.invoice_id for result in results])
             invoice_details_list = []
             for result in results:
                 status_code = self.invoice_details_dao.get_status_master_by_id(result.status_id) if result.status_id else None
@@ -91,7 +94,7 @@ class InvoiceDetailsService:
                         status_code=status_code,
                         tds_applicable=tds.tds_applicable if tds else None,
                         tds_amount=tds.tds_amount if tds else None,
-                        payable_amount=compute_payable_amount(result.net_amount, tds),
+                        payable_amount=compute_payable_amount(result.net_amount, tds) - notes.get(result.invoice_id, 0),
                     )
                 )
             return invoice_details_list

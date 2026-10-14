@@ -138,6 +138,10 @@ class RoleDashboardService:
         now = datetime.datetime.now(datetime.timezone.utc)
         threshold = self._high_value()
         queue = self.dao.approver_queue(user_uuid)
+        # Segregation of duties: invoices this user prepared stay listed but can't be approved by them.
+        from Backend.Business_Layer.services.segregation_of_duties_service import SegregationOfDutiesService
+        blocked = SegregationOfDutiesService(self.db).blocked_for_approval(
+            [row[0].invoice_id for row in queue], str(user.get("user_id") or user.get("sub") or ""))
 
         items = []
         for invoice, vendor_name, department, level, started_at, currency in queue:
@@ -147,7 +151,10 @@ class RoleDashboardService:
                 "department": department or "Unassigned", "level": level, "waiting_days": round(waiting, 1) if waiting is not None else None,
                 "amount": _money(invoice.net_amount), "currency_code": currency or BASE_CURRENCY,
                 "due_date": invoice.due_date, "high_value": _money(invoice.net_amount) >= threshold,
+                "sod_blocked": invoice.invoice_id in blocked,
             })
+        conflicts = [i for i in items if i["sod_blocked"]]
+        items = [i for i in items if not i["sod_blocked"]]
         base_items = [i for i in items if i["currency_code"] == BASE_CURRENCY]
         queue_value = sum((i["amount"] for i in base_items), ZERO)
         oldest = max((i["waiting_days"] or 0 for i in items), default=0)
@@ -186,7 +193,9 @@ class RoleDashboardService:
         return {
             "as_of": self.today, "base_currency": BASE_CURRENCY,
             "kpis": [
-                _kpi("awaiting", "Awaiting my approval", len(items), "count", "Oldest first in my queue" if items else "Nothing waiting",
+                _kpi("awaiting", "Awaiting my approval", len(items), "count",
+                     (f"{len(conflicts)} more you prepared - another approver decides" if conflicts else
+                      "Oldest first in my queue" if items else "Nothing waiting"),
                      "indigo" if items else "gray", "/accounts-payable/invoices?queue=approval"),
                 _kpi("queue_value", "Value awaiting decision", queue_value, "money", _n(len(base_items), "invoice"), "blue"),
                 _kpi("oldest", "Oldest waiting", round(oldest, 1) if items else None, "days",
@@ -201,6 +210,8 @@ class RoleDashboardService:
             ],
             "queue": items[:25],
             "queue_count": len(items),
+            "sod_blocked": conflicts[:25],
+            "sod_blocked_count": len(conflicts),
             "waiting_aging": aging,
             "decisions_trend": list(months.values()),
             "pending_by_department": sorted(by_department.values(), key=lambda x: x["amount"], reverse=True),
@@ -219,10 +230,13 @@ class RoleDashboardService:
             return round(max((now - created).total_seconds() / 86400, 0), 1)
 
         to_review, returned, failed, tds_to_determine, ready_to_send = [], [], [], [], []
+        owners, assignment_in_use = self._owners([row[0].invoice_id for row in queue])
         for invoice, vendor_name, status, tds, currency in queue:
             row = {"invoice_id": invoice.invoice_id, "invoice_number": invoice.invoice_number, "vendor_name": vendor_name,
                    "status_code": status, "age_days": age(invoice), "amount": _money(invoice.net_amount),
-                   "currency_code": currency or BASE_CURRENCY, "mine": str(invoice.created_by or "") == user_id}
+                   "currency_code": currency or BASE_CURRENCY, "mine": str(invoice.created_by or "") == user_id,
+                   "assignee": owners.get(invoice.invoice_id),
+                   "assigned_to_me": (owners.get(invoice.invoice_id) or {}).get("user_id") == user_id}
             if status == "OCR_REVIEW_PENDING":
                 to_review.append(row)
             elif status == "RETURNED_FOR_REVIEW":
@@ -258,10 +272,22 @@ class RoleDashboardService:
              + counts.get("PARTIALLY_PAID", 0)},
         ]
         oldest = sorted(to_review + returned + failed + tds_to_determine + ready_to_send, key=lambda r: r["age_days"], reverse=True)
+        open_rows = to_review + returned + failed + tds_to_determine + ready_to_send
+        assignment_kpis = []
+        if assignment_in_use:
+            mine_open = [r for r in open_rows if r["assigned_to_me"]]
+            unassigned = [r for r in open_rows if r["assignee"] is None]
+            assignment_kpis = [
+                _kpi("assigned_to_me", "Assigned to me", len(mine_open), "count",
+                     f"{sum(1 for r in mine_open if r['status_code'] == 'RETURNED_FOR_REVIEW')} returned to me" if mine_open else "Nothing assigned",
+                     "indigo" if mine_open else "gray", "/accounts-payable/invoices/review-workbench?assigned=me"),
+                _kpi("unassigned", "Unassigned", len(unassigned), "count", "Waiting for someone to claim",
+                     "amber" if unassigned else "gray", "/accounts-payable/invoices/review-workbench?assigned=unassigned"),
+            ]
 
         return {
             "as_of": self.today,
-            "kpis": [
+            "kpis": assignment_kpis + [
                 _kpi("to_review", "To review", len(to_review), "count", "Extracted, awaiting OCR review",
                      "indigo" if to_review else "gray", "/accounts-payable/invoices/ocr-review"),
                 _kpi("returned", "Returned to AP", len(returned), "count", "Sent back by an approver",
@@ -282,6 +308,20 @@ class RoleDashboardService:
                             for f in term_issues[:LIST_LIMIT]],
             "term_issue_count": len(term_issues),
         }
+
+    def _owners(self, invoice_ids):
+        """(invoice -> owner, whether work assignment is in use). Optional: never breaks the view."""
+        try:
+            from Backend.Business_Layer.services.work_assignment_service import WorkAssignmentService
+            service = WorkAssignmentService(self.db)
+            owners = service.owners(invoice_ids)
+            return owners, bool(owners) or bool(service.rules())
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            return {}, False
 
     # =================================================================
     # Management (CEO / Chief Product Officer): position, outflow, efficiency

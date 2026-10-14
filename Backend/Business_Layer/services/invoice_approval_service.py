@@ -32,6 +32,7 @@ from Backend.Business_Layer.services.approval_policy_service import ApprovalPoli
 from Backend.Business_Layer.services.approver_resolver_service import ApproverResolverService
 from Backend.Business_Layer.services.tds_determination_service import require_tds_ready_for_approval
 from Backend.Business_Layer.services.notification_events import APNotificationEvents
+from Backend.Business_Layer.services.segregation_of_duties_service import SegregationOfDutiesService
 
 STATUS_CODE_OCR_REVIEWED = "OCR_REVIEWED"
 STATUS_CODE_PENDING_APPROVAL = "PENDING_APPROVAL"
@@ -164,6 +165,10 @@ class InvoiceApprovalService:
         APNotificationEvents(self.db).approval_step_pending(invoice, first_step, first_approver_uuids, user_id)
 
         self.db.commit()
+        # Recurring fast-track: an in-tolerance invoice under an active agreement is approved
+        # without waiting (only for schedules the Finance Manager marked fast-track).
+        from Backend.Business_Layer.services.recurring_service import RecurringService
+        RecurringService(self.db).fast_track(instance.invoice_id)
         return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
 
     # =========================================================
@@ -177,6 +182,7 @@ class InvoiceApprovalService:
             raise ValueError("There is no active approval step for this invoice")
 
         step_approver = self._require_assigned_approver(step, user_id)
+        SegregationOfDutiesService(self.db).check_approve(instance.invoice_id, user_id)
 
         now = datetime.datetime.now(datetime.timezone.utc)
         step_approver.status = "APPROVED"
@@ -201,7 +207,7 @@ class InvoiceApprovalService:
         self.db.commit()
         return self.approval_dao.get_invoice_approval_by_id(instance.invoice_approval_id)
 
-    def auto_approve(self, invoice_id: int, actor: str, reason: str) -> InvoiceApproval:
+    def auto_approve(self, invoice_id: int, actor: str, reason: str, label: str = "AP automation") -> InvoiceApproval:
         """AP automation (ap_automation_service.py): completes an invoice's just-created approval
         workflow without a human decision - only for a PO invoice that passed every touchless
         control and is at or below the configured auto-approval amount. Every step is marked
@@ -214,7 +220,7 @@ class InvoiceApprovalService:
             for approver in self.approval_dao.get_approvers_for_step(step.id):
                 approver.status = "SKIPPED"
                 approver.decided_at = now
-                approver.comments = f"Auto-approved by AP automation: {reason}"[:500]
+                approver.comments = f"Auto-approved by {label}: {reason}"[:500]
             step.status = "APPROVED"
             step.started_at = step.started_at or now
             step.completed_at = now

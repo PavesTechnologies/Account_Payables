@@ -748,6 +748,9 @@ class VendorService:
 
         self.db.commit()
         self.db.refresh(bank)
+        # New account: must be verified and approved by someone else before it is paid.
+        from Backend.Business_Layer.services.vendor_bank_verification_service import VendorBankVerificationService
+        VendorBankVerificationService(self.db).reset_after_change(bank.vendor_bank_id, user_id)
 
         return bank
 
@@ -834,6 +837,10 @@ class VendorService:
 
         self.db.commit()
         self.db.refresh(bank)
+        # Changed account details (not just the primary flag) must be verified and approved again.
+        if set(changed) & {"bank_name", "account_holder_name", "account_number", "iban", "ifsc_code", "swift_code", "routing_number"}:
+            from Backend.Business_Layer.services.vendor_bank_verification_service import VendorBankVerificationService
+            VendorBankVerificationService(self.db).reset_after_change(bank.vendor_bank_id, user_id)
 
         return bank
 

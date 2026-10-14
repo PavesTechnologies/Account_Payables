@@ -5,7 +5,7 @@ One row model (InvoiceFigures) feeds the dashboard and every report, so a total 
 screen always equals the same total in an export. Amount rules are the existing ones:
 
   tds          = invoice_tds.tds_amount when tds_applicable and DETERMINED/VERIFIED
-  net_payable  = net_amount - tds                      (compute_payable_amount)
+  net_payable  = net_amount - tds - applied notes      (compute_payable_amount, vendor_note_service)
   paid         = invoice.amount_paid                    (CLEARED allocations only)
   reserved     = SCHEDULED/SENT allocations             (not yet paid)
   outstanding  = max(net_payable - paid - reserved, 0)  (a partly paid invoice counts once)
@@ -144,6 +144,8 @@ class APReportingService:
     def invoice_figures(self, statuses: Optional[Iterable[str]] = None, **filters) -> List[InvoiceFigures]:
         rows = self.dao.invoice_rows(list(statuses) if statuses else None, **filters)
         reserved = self.dao.reserved_by_invoice(r[0].invoice_id for r in rows)
+        from Backend.Business_Layer.services.vendor_note_service import applied_notes_totals
+        notes = applied_notes_totals(self.db, [r[0].invoice_id for r in rows])
         out = []
         for (invoice, vendor_name, status_code, status_name, currency_code, symbol, tds, term, tracking,
              department, category, nature_code, section) in rows:
@@ -151,7 +153,7 @@ class APReportingService:
                 tds is not None and tds.tds_applicable and tds.determination_status in ("DETERMINED", "VERIFIED")
             ) else ZERO
             net = _money(invoice.net_amount)
-            net_payable = _money(net - tds_amount)
+            net_payable = _money(net - tds_amount - notes.get(invoice.invoice_id, ZERO))
             paid = _money(invoice.amount_paid)
             held = _money(reserved.get(invoice.invoice_id, 0))
             outstanding = max(_money(net_payable - paid - held), ZERO)

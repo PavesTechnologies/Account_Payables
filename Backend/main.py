@@ -27,6 +27,12 @@ from Backend.API_Layer.routes import (
     tds_tracking_route,
     tds_challan_route,
     bulk_import_route,
+    recurring_route,
+    gst_itc_route,
+    vendor_note_route,
+    work_assignment_route,
+    vendor_bank_verification_route,
+    payment_run_route,
     dashboard_route,
     procurement_route,
     procurement_admin_route,
@@ -163,6 +169,12 @@ api_router.include_router(tds_tracking_route.router, tags=["TDS Tracking"], pref
 api_router.include_router(tds_challan_route.challan_router, tags=["TDS Challans"], prefix="/tds/challans")
 api_router.include_router(tds_challan_route.filing_router, tags=["TDS Filings"], prefix="/tds/filings")
 api_router.include_router(bulk_import_route.router, tags=["Bulk Import"], prefix="/bulk-import")
+api_router.include_router(recurring_route.router, tags=["Recurring Invoices"], prefix="/recurring-schedules")
+api_router.include_router(gst_itc_route.router, tags=["GST Input Credit"], prefix="/gst/itc")
+api_router.include_router(vendor_note_route.router, tags=["Credit / Debit Notes"], prefix="/vendor-notes")
+api_router.include_router(work_assignment_route.router, tags=["Work Assignment"], prefix="/work-assignment")
+api_router.include_router(vendor_bank_verification_route.router, tags=["Vendor Bank Verification"], prefix="/vendor-bank-verification")
+api_router.include_router(payment_run_route.router, tags=["Payment Runs"], prefix="/payment-runs")
 api_router.include_router(dashboard_route.router, tags=["Dashboard"], prefix="/dashboard")
 api_router.include_router(reports_route.router, tags=["Reports"], prefix="/reports")
 api_router.include_router(invoice_details_route.router, tags=["Invoice Details"], prefix="/invoice-details")

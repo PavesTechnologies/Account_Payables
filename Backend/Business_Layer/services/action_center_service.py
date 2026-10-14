@@ -40,6 +40,7 @@ AREAS = {
     "approvals": "Approvals",
     "payments": "Payments",
     "tds": "TDS",
+    "gst": "GST input credit",
     "management": "Oversight",
 }
 
@@ -90,12 +91,20 @@ class ActionCenterService:
             areas.append("payments")
             finance = self.dashboards.build("finance", user)
             actions += self._payments(finance)
+            actions += self._notes()
             if finance.get("tds"):
                 areas.append("tds")
                 actions += self._tds(finance["tds"])
         if has_permissions(user, MANAGEMENT_PERMISSIONS):
             areas.append("management")
             actions += self._management(self.dashboards.build("management", user))
+        if has_permissions(user, MY_WORK_PERMISSIONS + FINANCE_PERMISSIONS):
+            actions += self._recurring()
+        if has_permissions(user, FINANCE_PERMISSIONS + ["GST_ITC_VIEW", "GST_ITC_MANAGE"]):
+            gst = self._gst()
+            if gst is not None:
+                areas.append("gst")
+                actions += gst
 
         actions.sort(key=lambda a: (SEVERITY_ORDER[a["severity"]], -(a["amount"] or 0), -a["count"]))
         busy = {a["area"] for a in actions}
@@ -117,6 +126,16 @@ class ActionCenterService:
     def _ap(self, view) -> List[dict]:
         k = self._kpis(view)
         out = []
+        if "assigned_to_me" in k:  # work assignment in use: my queue first, then the unclaimed pool
+            mine, pool = k["assigned_to_me"]["value"], k["unassigned"]["value"]
+            if mine:
+                out.append(_action("ap_mine", "ap", "high", f"Work {_plural(mine, 'invoice')} assigned to you",
+                                   k["assigned_to_me"]["subtitle"] + " - review, fix or send each one.", mine,
+                                   "/accounts-payable/invoices/review-workbench?assigned=me", "Open my queue"))
+            if pool:
+                out.append(_action("ap_unassigned", "ap", "normal", f"Claim {_plural(pool, 'unassigned invoice')}",
+                                   "No one owns these yet - claim them so they don't wait.", pool,
+                                   "/accounts-payable/invoices/review-workbench?assigned=unassigned", "Claim"))
         oldest = max((r["age_days"] for r in view.get("oldest", [])), default=0)
         if n := k["returned"]["value"]:
             out.append(_action("ap_returned", "ap", "high", f"Fix and resubmit {_plural(n, 'returned invoice')}",
@@ -239,6 +258,90 @@ class ActionCenterService:
             if item and item["count"]:
                 out.append(_action(f"tds_{key}", "tds", severity, f"{title} ({_plural(item['count'], 'invoice')})",
                                    detail, item["count"], link, cta, _base_amount(item["amounts"])))
+        return out
+
+    def _notes(self) -> List[dict]:
+        """Credit / debit notes recorded but not yet set off against an invoice."""
+        try:
+            from Backend.Business_Layer.services.vendor_note_service import VendorNoteService
+            summary = VendorNoteService(self.dashboards.db).list(status="OPEN")["summary"]
+        except Exception:  # notes optional (e.g. table not migrated yet)
+            try:
+                self.dashboards.db.rollback()
+            except Exception:
+                pass
+            return []
+        if not summary["open"]:
+            return []
+        return [_action("notes_open", "payments", "normal", f"Apply {_plural(summary['open'], 'credit / debit note')}",
+                        "Recorded but not yet set off - apply each to the vendor's unpaid invoice so we don't overpay.",
+                        summary["open"], "/accounts-payable/vendor-notes", "Apply notes", Decimal(str(summary["open_amount"])))]
+
+    def _recurring(self) -> List[dict]:
+        """Recurring schedules: invoices that haven't arrived, and amounts that differ from the schedule."""
+        try:
+            from Backend.Business_Layer.services.recurring_service import RecurringService
+            attention = RecurringService(self.dashboards.db, today=self.today).attention()
+        except Exception:  # recurring schedules are optional (e.g. tables not migrated yet)
+            try:
+                self.dashboards.db.rollback()
+            except Exception:
+                pass
+            return []
+        out = []
+        missing = attention["missing"]
+        if missing:
+            first = missing[0]
+            names = ", ".join(sorted({m["vendor"] or m["schedule"] for m in missing}))
+            out.append(_action("recurring_missing", "ap", "high", f"Chase {_plural(len(missing), 'recurring invoice')} not received",
+                               f"Expected but not uploaded ({names}) - e.g. {first['schedule']}, due "
+                               f"{first['expected_date']:%d %b}. Ask the vendor, or skip the period if nothing was billed.",
+                               len(missing), "/accounts-payable/recurring", "Open schedules",
+                               sum((Decimal(str(m["expected_amount"])) for m in missing), ZERO)))
+        varied = attention["variance"]
+        if varied:
+            out.append(_action("recurring_variance", "ap", "normal",
+                               f"Check {_plural(len(varied), 'recurring invoice')} that differ from schedule",
+                               "The amount is outside the schedule's tolerance - confirm the change (new rate, usage) "
+                               "before approval, or update the schedule.", len(varied), "/accounts-payable/recurring",
+                               "Review differences"))
+        return out
+
+    def _gst(self) -> Optional[List[dict]]:
+        """GST input credit: claim the month's ITC by the GSTR-3B date, IRNs missing, 180-day rule."""
+        try:
+            from Backend.Business_Layer.services.gst_itc_service import GstItcService
+            s = GstItcService(self.dashboards.db, today=self.today).register()["summary"]
+        except Exception:  # register optional (e.g. table not migrated yet)
+            try:
+                self.dashboards.db.rollback()
+            except Exception:
+                pass
+            return None
+        out, link = [], "/accounts-payable/gst"
+        if s["reversal_due"]:
+            out.append(_action("gst_reversal", "gst", "critical", f"Reverse ITC on {_plural(s['reversal_due'], 'invoice')} unpaid over 180 days",
+                               "GST law (s.16(2)): credit on an invoice not paid within 180 days must be reversed in GSTR-3B "
+                               "(with interest); it can be re-claimed after payment.", s["reversal_due"], link, "Open ITC register"))
+        if s["at_risk"]:
+            out.append(_action("gst_at_risk", "gst", "high", f"Pay {_plural(s['at_risk'], 'invoice')} before the 180-day ITC deadline",
+                               "Unpaid for 150+ days - pay within 180 days of the invoice date to keep the input credit.",
+                               s["at_risk"], link, "See invoices"))
+        if s["claimable_count"]:
+            days = (datetime.date.fromisoformat(str(s["claim_due"])) - self.today).days
+            out.append(_action("gst_claim", "gst", "high" if days <= 7 else "normal",
+                               f"Claim {s['claim_period']:%b %Y} input credit in GSTR-3B",
+                               f"{_plural(s['claimable_count'], 'invoice')} ready - return due {s['claim_due']:%d %b}"
+                               + (f" ({days} days)." if days >= 0 else " (overdue)."), s["claimable_count"], link,
+                               "Claim ITC", Decimal(str(s["claimable_now"]))))
+        if s["irn_missing"]:
+            out.append(_action("gst_irn", "gst", "high", f"Get the IRN for {_plural(s['irn_missing'], 'e-invoice')}",
+                               "These suppliers must e-invoice; credit isn't admissible without the IRN. Record it from the "
+                               "invoice QR code or ask the vendor for the e-invoice.", s["irn_missing"], link, "Record IRN"))
+        if s["review"]:
+            out.append(_action("gst_review", "gst", "normal", f"Confirm ITC eligibility on {_plural(s['review'], 'invoice')}",
+                               "Looks like a blocked credit under s.17(5) (food, cabs, club, works contract) - confirm or override.",
+                               s["review"], link, "Review"))
         return out
 
     def _management(self, view) -> List[dict]:

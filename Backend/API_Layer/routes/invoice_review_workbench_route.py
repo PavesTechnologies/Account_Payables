@@ -47,11 +47,15 @@ class WorkbenchRow(BaseModel):
     checks: List[Check]
     ready: bool
     automation: Optional[dict] = None
+    assignee: Optional[dict] = None
+    assigned_to_me: bool = False
 
 
 class WorkbenchCounts(BaseModel):
     total: int
     ready: int
+    mine: int = 0
+    unassigned: int = 0
 
 
 class Workbench(BaseModel):
@@ -59,6 +63,7 @@ class Workbench(BaseModel):
     items: List[WorkbenchRow]
     counts: WorkbenchCounts
     max_bulk: int
+    assigned: str = "all"
     can_review: bool = False
     can_send: bool = False
 
@@ -106,9 +111,11 @@ def _summary(results) -> dict:
 
 
 @router.get("/workbench", response_model=Workbench, dependencies=[Depends(permission_based_access([OCR_REVIEW, SEND]))])
-def get_workbench(request: Request, stage: str = Query("to_review", pattern="^(to_review|reviewed)$")):
-    data = InvoiceReviewAutomationService(request.state.db).workbench(stage)
+def get_workbench(request: Request, stage: str = Query("to_review", pattern="^(to_review|reviewed)$"),
+                  assigned: str = Query("all", pattern="^(all|me|unassigned)$")):
     user = request.state.user
+    user_id = str(user.get("user_id") or user.get("sub") or "")
+    data = InvoiceReviewAutomationService(request.state.db).workbench(stage, user_id=user_id, assigned=assigned)
     return {**data, "can_review": has_permissions(user, [OCR_REVIEW]), "can_send": has_permissions(user, [SEND])}
 
 

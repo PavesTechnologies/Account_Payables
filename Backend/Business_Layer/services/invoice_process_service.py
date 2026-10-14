@@ -695,6 +695,13 @@ def apply_ocr_review(
         PaymentTermComplianceService(db).evaluate_invoice(invoice, user_id, **stated_terms)
 
         db.commit()
+        # A vendor corrected at review may only now match a recurring schedule (no-op if linked).
+        from Backend.Business_Layer.services.recurring_service import RecurringService
+        RecurringService(db).match_invoice(invoice.invoice_id, user_id)
+        from Backend.Business_Layer.services.gst_itc_service import GstItcService
+        GstItcService(db).sync_invoice(invoice.invoice_id)  # reviewed amounts / vendor -> ITC row
+        from Backend.Business_Layer.services.work_assignment_service import WorkAssignmentService
+        WorkAssignmentService(db).assign_new(invoice.invoice_id)  # department now known -> department rule
         db.refresh(invoice)
         return invoice
     except Exception:

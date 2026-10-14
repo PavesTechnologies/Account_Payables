@@ -282,7 +282,7 @@ def test_route_permissions_and_send_needs_its_own_permission(world):
     assert _client(["INVOICE_VIEW"]).get("/invoice-review/workbench").status_code == 403
     reviewer = _client(["INVOICE_OCR_REVIEW"])
     body = reviewer.get("/invoice-review/workbench").json()
-    assert body["counts"] == {"total": 1, "ready": 1} and body["can_review"] and not body["can_send"]
+    assert body["counts"] == {"total": 1, "ready": 1, "mine": 0, "unassigned": 1} and body["can_review"] and not body["can_send"]
     res = reviewer.post("/invoice-review/bulk-review", json={"items": [{"invoice_id": 1}], "send_for_approval": True}).json()
     assert res["results"][0]["status"] == "REVIEWED" and world.sent == []  # no send permission -> review only
     assert reviewer.post("/invoice-review/bulk-send", json={"invoice_ids": [1]}).status_code == 403

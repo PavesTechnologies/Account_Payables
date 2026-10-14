@@ -311,6 +311,8 @@ class PaymentTrackingService:
                 require_tds_verified(invoice_id, tds)
             except ValueError as e:
                 raise ValueError(str(e).replace("cannot be marked ready for payment", "cannot be paid"))
+            from Backend.Business_Layer.services.segregation_of_duties_service import SegregationOfDutiesService
+            SegregationOfDutiesService(self.db).check_record_payment(invoice_id, user_id)
 
             errors = []
             payment_date = data.payment_date

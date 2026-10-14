@@ -293,7 +293,7 @@ def build_stories() -> List[Story]:
         if m.month == 10:
             story.target = "APPROVED"
         s.append(story)
-    for i, m in enumerate(months[4:]):  # private office from August
+    for i, m in enumerate(months[4:6]):  # private office from August; October's invoice hasn't come (recurring: missing)
         inv_date = m.replace(day=5)
         story = Story(key=f"WW-OFFICE-{m:%m}", inv_no=f"WWIM/HYD/26-27/{2391 + i * 97:05d}", inv_date=inv_date,
                       lines=[L(f"Private office, 6 seats - Floor 5 ({month_name(m)})", "997212", 1, 72000)],
@@ -302,10 +302,8 @@ def build_stories() -> List[Story]:
                       title=f"WeWork private office {month_name(m)}", **wework_kw)
         if m.month == 8:
             story.pays = [(dt.date(2026, 8, 14), "FULL", "WeWork private office Aug 2026")]
-        elif m.month == 9:
-            story.pays = [(dt.date(2026, 9, 14), "FULL", "WeWork private office Sep 2026")]
         else:
-            story.target = "PENDING_APPROVAL"
+            story.pays = [(dt.date(2026, 9, 14), "FULL", "WeWork private office Sep 2026")]
         s.append(story)
     s.append(Story(key="WW-EVENT", inv_no="WWIM/HYD/26-27/02604", inv_date=dt.date(2026, 10, 9),
                    lines=[L("Event space - client workshop (8 Oct 2026)", "997212", 1, 45000),
@@ -313,6 +311,57 @@ def build_stories() -> List[Story]:
                    target="OCR_REVIEWED", upload=dt.date(2026, 10, 9), nature="CONTRACTOR",
                    title="WeWork event space (client workshop)", **wework_kw))
     return s
+
+
+# Demo bank accounts - not real accounts (DEMO IFSC codes): bank name, account number, IFSC.
+BANKS = {"AWS": ("HDFC Bank", "50200012340001", "HDFC0DEMO01"),
+         "KEKA": ("ICICI Bank", "000405012345", "ICIC0DEMO02"),
+         "WEWORK": ("Axis Bank", "917020012345678", "UTIB0DEMO03")}
+
+
+# Credit / debit notes: (on, story key, note fields, apply to the same invoice?, recorded by)
+NOTES = [
+    (dt.date(2026, 10, 8), "KEKA-LIC-2", dict(note_type="DEBIT_NOTE", note_number="DN-2026-007",
+     reason="5 licences billed on KTPL/26-27/0633 but only 20 of 25 activated (GRN-PO-000003-2). Recover Rs 4,500.",
+     taxable_value=D("4500")), False, JAGADISH_R),
+    (dt.date(2026, 10, 8), "AWS-PS-2", dict(note_type="CREDIT_NOTE", note_number="AWSPS26-CN-0041",
+     reason="Service credit: landing-zone handover delayed by 3 days (SOW clause 7.2)", taxable_value=D("20000"),
+     igst=D("3600")), True, BOLLI),
+]
+
+
+# Recurring schedules (set up by the Finance Manager): (created on, vendor, fields, later changes [(on, fields, why)]).
+SCHEDULES = [
+    (dt.date(2026, 3, 26), "WEWORK", dict(name="WeWork desks - RMZ Spire, Floor 6", expected_day=1, expected_amount=D("283200"),
+                                          tolerance_pct=D("2"), grace_days=5, start_date=dt.date(2026, 4, 1),
+                                          department_id=DEPT_ADMIN, purchase_category_id=CAT_FACILITIES,
+                                          payment_nature_code="RENT_LAND_BUILDING", match_keyword="Dedicated desks",
+                                          agreement="WW-HYD-RMZ-2026-117"),
+     [(dt.date(2026, 6, 25), dict(expected_amount=D("318600")), "5 desks added from July (45 desks)")]),
+    (dt.date(2026, 3, 26), "KEKA", dict(name="Keka HRMS subscription", expected_day=1, expected_amount=D("55000"),
+                                        tolerance_pct=D("10"), grace_days=5, start_date=dt.date(2026, 4, 1),
+                                        department_id=DEPT_IT, purchase_category_id=CAT_IT_SOFTWARE,
+                                        payment_nature_code="TECHNICAL_SERVICE", match_keyword="Keka HR & Payroll",
+                                        fast_track=True, agreement="KEKA-SUB-2026-27-031"),
+     [(dt.date(2026, 8, 3), dict(expected_amount=D("63000")), "Head count up to ~140 from August")]),
+    (dt.date(2026, 3, 27), "AWS", dict(name="AWS production a/c 4417", expected_day=2, expected_amount=D("245000"),
+                                       tolerance_pct=D("12"), grace_days=4, start_date=dt.date(2026, 4, 1),
+                                       department_id=DEPT_IT, purchase_category_id=CAT_IT_SOFTWARE,
+                                       payment_nature_code="TECHNICAL_SERVICE", match_keyword="a/c 4417"), []),
+    (dt.date(2026, 3, 27), "AWS", dict(name="AWS dev/QA a/c 2290", expected_day=2, expected_amount=D("45000"),
+                                       tolerance_pct=D("12"), grace_days=4, start_date=dt.date(2026, 4, 1),
+                                       department_id=DEPT_IT, purchase_category_id=CAT_IT_SOFTWARE,
+                                       payment_nature_code="TECHNICAL_SERVICE", match_keyword="a/c 2290"), []),
+    (dt.date(2026, 5, 29), "AWS", dict(name="AWS data platform a/c 8830", expected_day=2, expected_amount=D("82000"),
+                                       tolerance_pct=D("15"), grace_days=4, start_date=dt.date(2026, 6, 1),
+                                       department_id=DEPT_IT, purchase_category_id=CAT_IT_SOFTWARE,
+                                       payment_nature_code="TECHNICAL_SERVICE", match_keyword="a/c 8830"), []),
+    (dt.date(2026, 7, 28), "WEWORK", dict(name="WeWork private office - Floor 5", expected_day=5, expected_amount=D("84960"),
+                                          tolerance_pct=D("2"), grace_days=5, start_date=dt.date(2026, 8, 1),
+                                          department_id=DEPT_ADMIN, purchase_category_id=CAT_FACILITIES,
+                                          payment_nature_code="RENT_LAND_BUILDING", match_keyword="Private office",
+                                          agreement="WW-HYD-RMZ-2026-117"), []),
+]
 
 
 # 26Q returns: (quarter, deductions from, to, filed on) - filed when the run date is past that day.
@@ -377,7 +426,35 @@ def amounts(story: Story, vendor: dict) -> dict:
     return gti.compute_amounts(sc, vendor)
 
 
+NO_IRN = {"WW-EVENT"}  # the one e-invoice that arrives without its IRN (GST register: "IRN missing")
+
+
+def irn_for(story: Story, vendor: dict) -> Tuple[Optional[str], Optional[str]]:
+    """A stable demo IRN (64 hex) and acknowledgement number for an e-invoice."""
+    if story.key in NO_IRN:
+        return None, None
+    import hashlib
+    digest = hashlib.sha256(f"{vendor['gstin']}|{story.inv_no}|2026-27".encode()).hexdigest()
+    return digest, "1126" + str(int(digest[:12], 16))[:11].zfill(11)
+
+
+def _stamp_irn(pdf: bytes, irn: str, ack: str, ack_date: dt.date) -> bytes:
+    import fitz
+    doc = fitz.open("pdf", pdf)
+    page = doc[0]
+    page.insert_text((36, page.rect.height - 52), f"IRN: {irn}", fontsize=7, fontname="helv")
+    page.insert_text((36, page.rect.height - 42), f"Ack No: {ack}    Ack Date: {ack_date:%d-%m-%Y}    (e-invoice)",
+                     fontsize=7, fontname="helv")
+    return doc.tobytes(garbage=3, deflate=True)
+
+
 def render_invoice(story: Story, vendor: dict, po_number: Optional[str]) -> bytes:
+    pdf = _render_invoice(story, vendor, po_number)
+    irn, ack = irn_for(story, vendor)
+    return _stamp_irn(pdf, irn, ack, story.inv_date) if irn else pdf
+
+
+def _render_invoice(story: Story, vendor: dict, po_number: Optional[str]) -> bytes:
     gti = _gti()
     sc = gti.Scenario(sid=story.key, vendor=story.vendor, inv_no=story.inv_no, inv_date=story.inv_date,
                       category="DEMO", lines=story.lines, title=story.title, terms=story.terms, po=po_number,
@@ -627,6 +704,119 @@ class Seeder:
         finally:
             db.close()
 
+    def schedule(self, created_on, vendor_key, fields, user=BINDU):
+        """Create (or, on a re-run, reset) a recurring schedule through RecurringService."""
+        from Backend.Business_Layer.services.recurring_service import RecurringService
+        from Backend.Data_Access_Layer.models.recurring_schedule import RecurringSchedule
+        db = self.session()
+        try:
+            values = dict(fields)
+            ref = values.pop("agreement", None)
+            vendor_id = self.vendors[vendor_key]["vendor_id"]
+            if ref:
+                values["agreement_id"] = self.q(db, "select agreement_id from ap.vendor_agreement where vendor_id = :v and reference_no = :r",
+                                                v=vendor_id, r=ref).scalar()
+            service = RecurringService(db, today=created_on)
+            existing = db.query(RecurringSchedule).filter_by(vendor_id=vendor_id, name=values["name"]).first()
+            if existing:  # kept by the reset: back to the story's starting values
+                service.update(existing.schedule_id, values, user)
+                return f"schedule #{existing.schedule_id} reset"
+            made = service.create({"vendor_id": vendor_id, **values}, user)
+            return f"schedule #{made.schedule_id}"
+        finally:
+            db.close()
+
+    def change_schedule(self, vendor_key, name, fields, why, user=BINDU):
+        from Backend.Business_Layer.services.recurring_service import RecurringService
+        from Backend.Data_Access_Layer.models.recurring_schedule import RecurringSchedule
+        db = self.session()
+        try:
+            existing = db.query(RecurringSchedule).filter_by(vendor_id=self.vendors[vendor_key]["vendor_id"], name=name).first()
+            RecurringService(db).update(existing.schedule_id, {**fields, "notes": why}, user)
+            return f"{name}: {why}"
+        finally:
+            db.close()
+
+    def note(self, story_key: str, fields: dict, apply_now: bool, user: str, on: dt.date):
+        from Backend.Business_Layer.services.vendor_note_service import VendorNoteService
+        db = self.session()
+        try:
+            story_vendor = story_key.split("-")[0]
+            vendor = self.vendors["AWS" if story_vendor == "AWS" else "KEKA" if story_vendor == "KEKA" else "WEWORK"]
+            invoice_id = self.invoice_ids.get(story_key)
+            total = fields["taxable_value"] + fields.get("igst", D("0"))
+            title = "CREDIT NOTE" if fields["note_type"] == "CREDIT_NOTE" else "DEBIT NOTE"
+            issuer = vendor["vendor_name"] if fields["note_type"] == "CREDIT_NOTE" else "Paves Global Infotech Pvt Ltd"
+            doc = render_sheet(title, f"Issued by {issuer}", [
+                ("Number", fields["note_number"]), ("Date", f"{on:%d %b %Y}"), ("Vendor", vendor["vendor_name"]),
+                ("Vendor GSTIN", vendor["gstin"]), ("Reason", fields["reason"]),
+                ("Value before GST", f"Rs {fields['taxable_value']:,}"), ("IGST", f"Rs {fields.get('igst', D('0')):,}"),
+                ("Total", f"Rs {total:,}")])
+            note = VendorNoteService(db).record({
+                **fields, "vendor_id": vendor["vendor_id"], "note_date": on, "reference_invoice_id": invoice_id,
+                "apply_to_invoice_id": invoice_id if apply_now else None}, user,
+                (f"{fields['note_number']}.pdf", doc, "application/pdf"))
+            return f"{fields['note_number']} {note.status.lower()}" + (f" - {note.tds_note}" if note.tds_note else "")
+        finally:
+            db.close()
+
+    def vendor_bank(self, key: str):
+        """Vendor Intake adds the account; Finance verifies it from the bank letter; the Finance Manager approves."""
+        from Backend.API_Layer.interface.vendor_interface import VendorBankCreateRequest
+        from Backend.Business_Layer.services.vendor_bank_verification_service import VendorBankVerificationService
+        from Backend.Business_Layer.services.vendor_service import VendorService
+        db = self.session()
+        try:
+            v = self.vendors[key]
+            bank_name, account, ifsc = BANKS[key]
+            existing = self.q(db, "select vendor_bank_id from ap.vendor_bank where vendor_id = :v and account_number = :a",
+                              v=v["vendor_id"], a=account).scalar()
+            bank_id = existing or VendorService(db).create_bank(v["vendor_id"], VendorBankCreateRequest(
+                bank_name=bank_name, account_holder_name=v["vendor_name"], account_number=account, ifsc_code=ifsc,
+                is_primary=True), JAGADISH_R).vendor_bank_id
+            if existing:
+                VendorBankVerificationService(db).reset_after_change(bank_id, JAGADISH_R)
+            letter = render_sheet("BANK ACCOUNT CONFIRMATION", f"Issued by {bank_name} (demo)", [
+                ("Account holder", v["vendor_name"]), ("Account number", account), ("IFSC", ifsc),
+                ("Account type", "Current account"), ("Status", "Active")])
+            service = VendorBankVerificationService(db)
+            service.verify_document(v["vendor_id"], bank_id, (f"bank-letter-{key.lower()}.pdf", letter, "application/pdf"),
+                                    "Bank confirmation letter on bank letterhead matches account number, IFSC and legal name", BOLLI)
+            service.approve(v["vendor_id"], bank_id, "Verified letter; matches the vendor master", BINDU)
+            return f"{bank_name} ****{account[-4:]} approved for payment"
+        finally:
+            db.close()
+
+    def payment_run(self, value_date: dt.date):
+        """This week's run: the invoices ready for payment, submitted for the Finance Manager's approval."""
+        from Backend.Business_Layer.services.payment_run_service import PaymentRunService
+        db = self.session()
+        try:
+            service = PaymentRunService(db)
+            ids = [c["invoice_id"] for c in service.candidates() if not c["blocked"]]
+            if not ids:
+                return "nothing ready to pay"
+            run = service.create(f"Vendor payments {value_date:%d %b %Y}", value_date, ids, BOLLI,
+                                 "Weekly vendor payment run - due this week and next")
+            service.submit(run.run_id, BOLLI)
+            return f"run #{run.run_id}: {len(ids)} invoice(s) submitted for approval"
+        finally:
+            db.close()
+
+    def routing_rules(self):
+        """Each vendor's invoices go to one AP Executive (set up by the Finance Manager)."""
+        from Backend.Business_Layer.services.work_assignment_service import WorkAssignmentService
+        db = self.session()
+        try:
+            service = WorkAssignmentService(db)
+            made = []
+            for key, owner in (("AWS", VENKATESH), ("KEKA", VENKATESH), ("WEWORK", KALASAGAR)):
+                service.set_rule("VENDOR", self.vendors[key]["vendor_id"], owner, BINDU)
+                made.append(f"{key} -> {NAMES[owner]}")
+            return ", ".join(made)
+        finally:
+            db.close()
+
     def policies(self):
         from Backend.API_Layer.interface.approval_policy_interface import (ApprovalPolicyCreateRequest,
                                                                             ApprovalPolicyLevelRequest)
@@ -767,6 +957,13 @@ class Seeder:
             item = items.get(name)
             if item is not None and item.invoice_id:
                 self.invoice_ids[story.key] = item.invoice_id
+                # OCR does not read the IRN from these PDFs: the AP Executive keys it in from the QR code
+                # straight after upload (whichever path - manual review or touchless - the invoice takes).
+                db = self.session()
+                try:
+                    self._ensure_irn(db, story, item.invoice_id)
+                finally:
+                    db.close()
                 out.append(f"{story.key}=#{item.invoice_id}")
             else:
                 self.failures.append(f"{story.key}: upload {item.status if item else 'missing'} - "
@@ -808,9 +1005,33 @@ class Seeder:
             if story.nature and status != "RETURNED_FOR_REVIEW":
                 TDSDeterminationService(db).determine(invoice_id, story.uploader, payment_nature_code=story.nature)
                 note = None
+            irn_note = self._ensure_irn(db, story, invoice_id)
             corrected = sorted(k for k in fields if k not in ("invoice_type", "po_id", "department_id",
-                                                               "purchase_category_id"))
+                                                               "purchase_category_id")) + irn_note
             return "reviewed" + (f", corrected {corrected}" if corrected else "") + (f" ({note})" if note else "")
+        finally:
+            db.close()
+
+    def _ensure_irn(self, db, story: Story, invoice_id: int) -> list:
+        """OCR may miss the IRN; the AP Executive then types it in from the e-invoice QR code."""
+        from Backend.Business_Layer.services.gst_itc_service import GstItcService
+        irn, ack = irn_for(story, self.vendors[story.vendor])
+        if not irn:
+            return []
+        row = self.q(db, "select irn from ap.invoice_gst where invoice_id = :i", i=invoice_id).fetchone()
+        if row is not None and row[0]:
+            return []
+        GstItcService(db).set_irn(invoice_id, irn, ack, story.uploader)
+        return ["IRN (from QR code)"]
+
+    def claim_itc(self, period: dt.date):
+        from Backend.Business_Layer.services.gst_itc_service import GstItcService
+        db = self.session()
+        try:
+            result = GstItcService(db).claim(period, BOLLI)
+            return f"GSTR-3B {period:%b %Y}: ITC Rs {result['itc']:,} from {result['invoices']} invoice(s) claimed"
+        except ValueError as exc:
+            return f"nothing claimed ({exc})"
         finally:
             db.close()
 
@@ -1019,6 +1240,15 @@ class Seeder:
             lambda: self.agreement("KEKA", "Keka HRMS subscription agreement FY26-27", "KEKA-SUB-2026-27-031",
                                    "SUBSCRIPTION", dt.date(2026, 4, 1), dt.date(2027, 3, 31), 30,
                                    "Invoices are payable within 30 days of the invoice date."))
+        add(at(dt.date(2026, 3, 26), 16, 50), "AP routing rules", self.routing_rules)
+        for n, key in enumerate(("AWS", "KEKA", "WEWORK")):
+            add(at(dt.date(2026, 3, 19), 15, 20 + n * 7), f"Vendor bank account: {key}", lambda k=key: self.vendor_bank(k))
+        for created_on, vendor_key, fields, changes in SCHEDULES:
+            add(at(created_on, 17, 5), f"Recurring schedule: {fields['name']}",
+                lambda c=created_on, v=vendor_key, f=fields: self.schedule(c, v, f))
+            for on, change, why in changes:
+                add(at(on, 16, 45), f"Schedule change: {fields['name']}",
+                    lambda v=vendor_key, n=fields["name"], ch=change, w=why: self.change_schedule(v, n, ch, w))
         for p in PURCHASES:
             add(at(p["pr_on"], 11, 15), f"{p['key']}: purchase requisition", lambda p=p: self.raise_pr(p))
             add(at(p["approve_on"], 10, 40), f"{p['key']}: PR approved", lambda p=p: self.approve_pr(p))
@@ -1084,10 +1314,21 @@ class Seeder:
             add(at(deposit_on, 11, 45), f"TDS challans for {month:%b %Y}",
                 lambda month=month, d=deposit_on, n=n: self.challans(month, d, 21400 + n * 13))
             month, n = nxt, n + 1
+        for on, key, fields, apply_now, user in NOTES:
+            add(at(on, 15, 10), f"{fields['note_type'].replace('_', ' ').title()} {fields['note_number']}",
+                lambda k=key, f=fields, a=apply_now, u=user, o=on: self.note(k, f, a, u, o))
+        month = dt.date(2026, 4, 1)
+        while True:  # Finance claims each month's input credit before the 20th (GSTR-3B)
+            claim_on = bd((month + dt.timedelta(days=32)).replace(day=19), 0)
+            if claim_on > AS_OF:
+                break
+            add(at(claim_on, 12, 30), f"GSTR-3B input credit for {month:%b %Y}", lambda m=month: self.claim_itc(m))
+            month = (month + dt.timedelta(days=32)).replace(day=1)
         for quarter, start, end, filed_on in QUARTERS:  # 26Q filed a few days before the due date
             if filed_on <= AS_OF - dt.timedelta(days=1):
                 add(at(filed_on, 15, 30), f"Q{quarter} 26Q return filed",
                     lambda q=quarter, a=start, b=end, f=filed_on: self.file_quarter(q, a, b, f))
+        add(at(AS_OF, 9, 40), "Payment run for the week", lambda: self.payment_run(AS_OF + dt.timedelta(days=4)))
         late = [e.label for e in ev if e.ts.date() > AS_OF]
         if late:
             raise ValueError(f"Story events after {AS_OF}: {late}")

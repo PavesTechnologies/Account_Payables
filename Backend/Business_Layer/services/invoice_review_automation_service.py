@@ -94,7 +94,10 @@ def auto_determine_tds(db, invoice_id: int, user_id: str) -> Optional[str]:
     if tds_determination_problem(existing) is None:
         return None
     try:
-        row = service.determine(invoice_id, user_id)
+        # A recurring schedule (e.g. rent -> 194I) prescribes the payment nature; else the category default.
+        from Backend.Business_Layer.services.recurring_service import RecurringService
+        nature = RecurringService(db).tds_nature_for(invoice_id)
+        row = service.determine(invoice_id, user_id, payment_nature_code=nature) if nature else service.determine(invoice_id, user_id)
     except Exception as exc:  # determine() rolls back itself
         logger.info("Automatic TDS determination for invoice %s did not complete: %s", invoice_id, exc)
         return f"TDS needs review: {exc}"
@@ -115,6 +118,19 @@ def _load_automation(db, invoices, ids):
         return None, None, {}
 
 
+def _load_owners(db, ids):
+    """invoice -> its AP owner (work assignment); empty when assignment is not set up."""
+    try:
+        from Backend.Business_Layer.services.work_assignment_service import WorkAssignmentService
+        return WorkAssignmentService(db).owners(ids)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {}
+
+
 def _automation_view(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not result:
         return None
@@ -129,15 +145,30 @@ class InvoiceReviewAutomationService:
     # ------------------------------------------------------------------
     # Workbench rows
     # ------------------------------------------------------------------
-    def workbench(self, stage: str, limit: int = 200) -> Dict[str, Any]:
+    def workbench(self, stage: str, limit: int = 200, user_id: Optional[str] = None, assigned: str = "all") -> Dict[str, Any]:
         if stage not in _STAGE_STATUSES:
             raise ValueError("stage must be 'to_review' or 'reviewed'")
+        if assigned not in ("all", "me", "unassigned"):
+            raise ValueError("assigned must be 'all', 'me' or 'unassigned'")
         rows = self.dao.invoices_in_status(_STAGE_STATUSES[stage], limit)
         items = self._rows(rows, stage)
+        owners = _load_owners(self.db, [i["invoice_id"] for i in items])
+        me = str(user_id) if user_id else None
+        for item in items:
+            owner = owners.get(item["invoice_id"])
+            item["assignee"] = owner
+            item["assigned_to_me"] = bool(owner and me and owner["user_id"] == me)
+        mine = sum(1 for i in items if i["assigned_to_me"])
+        unassigned = sum(1 for i in items if i["assignee"] is None)
+        if assigned == "me":
+            items = [i for i in items if i["assigned_to_me"]]
+        elif assigned == "unassigned":
+            items = [i for i in items if i["assignee"] is None]
         return {
             "stage": stage,
             "items": items,
-            "counts": {"total": len(items), "ready": sum(1 for i in items if i["ready"])},
+            "counts": {"total": len(items), "ready": sum(1 for i in items if i["ready"]), "mine": mine, "unassigned": unassigned},
+            "assigned": assigned,
             "max_bulk": MAX_BULK,
         }
 

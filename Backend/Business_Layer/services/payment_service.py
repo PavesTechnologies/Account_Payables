@@ -72,7 +72,9 @@ class PaymentService:
         Finance has clicked Verify yet (verification confirms the calculated
         numbers; it doesn't gate whether a determined deduction applies)."""
         tds = self.tds_dao.get_invoice_tds_by_invoice_id(invoice.invoice_id)
-        return compute_payable_amount(invoice.net_amount, tds)
+        # Credit / debit notes applied to this invoice (vendor_note_service) lower what is owed.
+        from Backend.Business_Layer.services.vendor_note_service import applied_notes_total
+        return compute_payable_amount(invoice.net_amount, tds) - applied_notes_total(self.db, invoice.invoice_id)
 
     def create_payment(self, request: PaymentCreateRequest, user_id: str) -> Payment:
         try:
@@ -206,6 +208,8 @@ class PaymentService:
                 )
 
             require_tds_verified(invoice_id, self.tds_dao.get_invoice_tds_by_invoice_id(invoice_id))
+            from Backend.Business_Layer.services.segregation_of_duties_service import SegregationOfDutiesService
+            SegregationOfDutiesService(self.db).check_release(invoice_id, user_id)
             # Payment terms must be COMPLIANT or verified by Finance (plan decision D1) - an
             # added control alongside approval and TDS, never a replacement for either.
             PaymentTermComplianceService(self.db).require_resolved_for_payment(invoice, user_id)

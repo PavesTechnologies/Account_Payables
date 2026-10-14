@@ -39,7 +39,7 @@ CLEARED_TABLES = [
     "tds_challan", "tds_challan_allocation", "tds_return_filing", "tds_return_filing_invoice",
     "payment", "payment_invoice", "payment_document",
     "inbound_document", "invoice_upload_batch", "invoice_upload_batch_item",
-    "bulk_import_job", "bulk_import_row", "notification",
+    "bulk_import_job", "bulk_import_row", "notification", "recurring_occurrence", "invoice_gst", "vendor_note", "invoice_assignment", "payment_run", "payment_run_item",
 ]
 
 # Audit rows are kept for vendors and configuration; these table names go.
@@ -52,12 +52,12 @@ FILE_COLUMNS = [
     ("goods_receipt", "file_path"), ("quotation", "file_url"),
     ("tds_challan", "file_path"), ("tds_return_filing", "file_path"),
     ("invoice_upload_batch_item", "file_path"), ("bulk_import_job", "file_path"),
-    ("bulk_import_row", "document_path"),
+    ("bulk_import_row", "document_path"), ("vendor_note", "file_path"),
 ]
 
 # Spot-checked before and after: these counts must not change.
 PROTECTED_TABLES = [
-    "vendor", "vendor_agreement", "vendor_agreement_document", "vendor_nda", "vendor_onboarding_request",
+    "vendor", "vendor_agreement", "vendor_agreement_document", "vendor_nda", "vendor_onboarding_request", "recurring_schedule",
     "approval_policy", "department", "purchase_category", "payment_term", "tax_rule",
     "tax_rate_rule", "system_configuration",
 ]

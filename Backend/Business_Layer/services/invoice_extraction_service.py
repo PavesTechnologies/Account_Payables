@@ -1689,6 +1689,15 @@ class InvoiceExtractionService:
             APNotificationEvents(self.db).invoice_review_required(invoice, created_by)
 
             self.db.commit()
+            # Recurring schedules (rent / SaaS): link to its billing period, pre-fill coding. Never raises.
+            from Backend.Business_Layer.services.recurring_service import RecurringService
+            RecurringService(self.db).match_invoice(invoice.invoice_id, created_by)
+            # GST input credit register: CGST / SGST / IGST, eligibility, IRN. Never raises.
+            from Backend.Business_Layer.services.gst_itc_service import GstItcService
+            GstItcService(self.db).sync_invoice(invoice.invoice_id)
+            # Work assignment: the vendor's AP Executive gets it (else it waits to be claimed). Never raises.
+            from Backend.Business_Layer.services.work_assignment_service import WorkAssignmentService
+            WorkAssignmentService(self.db).assign_new(invoice.invoice_id)
             self.db.refresh(invoice)
 
             return {
