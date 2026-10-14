@@ -93,6 +93,10 @@ def bd(d: dt.date, n: int = 1) -> dt.date:
     return d
 
 
+def month_start_of(d: dt.date) -> dt.date:
+    return d.replace(day=1)
+
+
 def at(d: dt.date, hh: int, mm: int = 0) -> dt.datetime:
     return dt.datetime(d.year, d.month, d.day, hh, 0, tzinfo=IST) + dt.timedelta(minutes=mm)
 
@@ -425,6 +429,12 @@ def amounts(story: Story, vendor: dict) -> dict:
                       category="DEMO", lines=story.lines, title=story.title)
     return gti.compute_amounts(sc, vendor)
 
+
+# GSTR-2B (what suppliers filed), imported on the 14th of the next month before the GSTR-3B claim.
+# August carries the exceptions Finance has to chase:
+GSTR2B_MISSING = {"KEKA-LIC-1"}                    # Keka files it late - credit held
+GSTR2B_TAX_DIFF = {"WW-ADDON-08": D("270.00")}      # WeWork filed CGST and SGST 270 higher each (old rate card)
+GSTR2B_NOT_IN_BOOKS = [("AWS", "AWSIN26-4328305", dt.date(2026, 8, 2), D("4200.00"))]  # sandbox account never booked
 
 NO_IRN = {"WW-EVENT"}  # the one e-invoice that arrives without its IRN (GST register: "IRN missing")
 
@@ -1024,6 +1034,45 @@ class Seeder:
         GstItcService(db).set_irn(invoice_id, irn, ack, story.uploader)
         return ["IRN (from QR code)"]
 
+    def gstr2b(self, stories: List[Story], month: dt.date, on: dt.date):
+        """Finance downloads the month's GSTR-2B from the GST portal and imports it (built here from the stories)."""
+        from Backend.Business_Layer.services.gstr2b_service import Gstr2bService
+        db = self.session()
+        try:
+            suppliers: Dict[str, dict] = {}
+
+            def add(vendor_key, number, on_date, taxable, taxes):
+                v = self.vendors.get(vendor_key)
+                if not v:
+                    return
+                sup = suppliers.setdefault(v["gstin"], {"ctin": v["gstin"], "trdnm": v["vendor_name"],
+                                                        "supfildt": on.replace(day=11).strftime("%d-%m-%Y"), "inv": []})
+                item = {"txval": float(taxable), "igst": 0.0, "cgst": 0.0, "sgst": 0.0, "cess": 0.0}
+                for name, _rate, amount in taxes:
+                    item[name.lower()] = float(amount)
+                sup["inv"].append({"inum": number, "dt": on_date.strftime("%d-%m-%Y"), "itcavl": "Y", "rsn": "",
+                                   "items": [item]})
+
+            for st in stories:
+                if month_start_of(st.inv_date) != month or st.key in GSTR2B_MISSING or st.vendor not in self.vendors:
+                    continue
+                a = amounts(st, self.vendors[st.vendor])
+                extra = GSTR2B_TAX_DIFF.get(st.key, D("0"))
+                add(st.vendor, st.inv_no, st.inv_date, a["taxable"], [(n, r, amt + extra) for n, r, amt in a["taxes"]])
+            for vendor_key, number, on_date, taxable in GSTR2B_NOT_IN_BOOKS:
+                if month_start_of(on_date) == month and vendor_key in self.vendors:
+                    v = self.vendors[vendor_key]
+                    tax = money(taxable * D("0.18"))
+                    add(vendor_key, number, on_date, taxable,
+                        [("CGST", 9, money(tax / 2)), ("SGST", 9, money(tax / 2))] if v["state_code"] == "36" else [("IGST", 18, tax)])
+            doc = {"data": {"rtnprd": month.strftime("%m%Y"), "version": "1.0", "gendt": on.strftime("%d-%m-%Y"),
+                            "docdata": {"b2b": list(suppliers.values())}}}
+            r = Gstr2bService(db).import_file(f"GSTR2B_{month:%m%Y}.json", json.dumps(doc, indent=1).encode(), BOLLI, month)
+            c = r["counts"]
+            return f"{r['documents']} documents: {c['MATCHED']} matched, {c['MISMATCH']} mismatch, {c['NOT_IN_BOOKS']} not in books"
+        finally:
+            db.close()
+
     def claim_itc(self, period: dt.date):
         from Backend.Business_Layer.services.gst_itc_service import GstItcService
         db = self.session()
@@ -1317,6 +1366,13 @@ class Seeder:
         for on, key, fields, apply_now, user in NOTES:
             add(at(on, 15, 10), f"{fields['note_type'].replace('_', ' ').title()} {fields['note_number']}",
                 lambda k=key, f=fields, a=apply_now, u=user, o=on: self.note(k, f, a, u, o))
+        month = dt.date(2026, 4, 1)
+        while True:  # GSTR-2B for a month is generated on the 14th of the next; Finance imports it that day
+            on = bd((month + dt.timedelta(days=32)).replace(day=14), 0)
+            if on > AS_OF:
+                break
+            add(at(on, 11, 15), f"GSTR-2B for {month:%b %Y} imported", lambda m=month, o=on: self.gstr2b(stories, m, o))
+            month = (month + dt.timedelta(days=32)).replace(day=1)
         month = dt.date(2026, 4, 1)
         while True:  # Finance claims each month's input credit before the 20th (GSTR-3B)
             claim_on = bd((month + dt.timedelta(days=32)).replace(day=19), 0)

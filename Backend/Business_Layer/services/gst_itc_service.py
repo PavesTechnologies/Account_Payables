@@ -11,8 +11,9 @@
 
 Claimable = ELIGIBLE, not yet claimed, invoice approved or later, and - for suppliers who must
 e-invoice - an IRN on the invoice (credit on an e-invoice without IRN is not admissible).
-Matching against GSTR-2B (what the vendor actually filed) is the next step; until then the
-register says "not checked". Every change is written to audit_log.
+Once a GSTR-2B (what the vendor actually filed) is imported for the invoice's month or later, the
+invoice must also be MATCHED there (s.16(2)(aa)); before that the register says "not checked".
+Every change is written to audit_log.
 """
 from __future__ import annotations
 
@@ -125,10 +126,12 @@ def _state_code(place: Optional[str]) -> Optional[str]:
 
 
 class GstItcService:
-    def __init__(self, db, today: Optional[datetime.date] = None, einvoice_lookup=None):
+    def __init__(self, db, today: Optional[datetime.date] = None, einvoice_lookup=None, gstr2b_lookup=None):
         self.db = db
         self.today = today or datetime.date.today()
         self._lookup = einvoice_lookup or self._einvoice_from_gst_portal
+        self._gstr2b_lookup = gstr2b_lookup
+        self._gstr2b_cache = None
         self.buyer_state = str(get_env_var("BUYER_CODE", "36") or "36").zfill(2)[:2]
 
     # ------------------------------------------------------------------ inputs
@@ -181,7 +184,7 @@ class GstItcService:
     # ------------------------------------------------------------------ build the row
     def sync_invoice(self, invoice_id: int) -> Optional[InvoiceGst]:
         try:
-            return self._sync(invoice_id)
+            row = self._sync(invoice_id)
         except Exception:
             try:
                 self.db.rollback()
@@ -189,6 +192,23 @@ class GstItcService:
                 pass
             logger.exception("GST ITC sync failed for invoice %s", invoice_id)
             return None
+        if row is not None:
+            self._rematch_gstr2b(invoice_id)
+        return row
+
+    def _rematch_gstr2b(self, invoice_id: int) -> None:
+        """A supplier's filing imported before the invoice was booked (or corrected) now matches it."""
+        try:
+            from Backend.Business_Layer.services.gstr2b_service import Gstr2bService, _table_exists
+            if _table_exists(self.db):
+                Gstr2bService(self.db).rematch(invoice_id)
+                self._gstr2b_cache = None
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            logger.exception("GSTR-2B re-match failed for invoice %s", invoice_id)
 
     def _sync(self, invoice_id: int) -> Optional[InvoiceGst]:
         invoice = self.db.get(Invoice, invoice_id)
@@ -284,6 +304,22 @@ class GstItcService:
         self.db.commit()
         return row
 
+    def _gstr2b(self):
+        if self._gstr2b_cache is None:
+            if self._gstr2b_lookup is not None:
+                self._gstr2b_cache = self._gstr2b_lookup()
+            else:
+                from Backend.Business_Layer.services.gstr2b_service import gstr2b_state
+                self._gstr2b_cache = gstr2b_state(self.db)
+        return self._gstr2b_cache
+
+    def gstr2b_status(self, invoice) -> Optional[str]:
+        """MATCHED / MISMATCH / MISSING once a GSTR-2B covering the invoice's month is imported, else None."""
+        statuses, first, latest = self._gstr2b()
+        if latest is None or not invoice.invoice_date or not first <= month_start(invoice.invoice_date) <= latest:
+            return None
+        return statuses.get(invoice.invoice_id, "MISSING")
+
     def _rows_with_invoices(self, *conditions):
         stmt = (select(InvoiceGst, Invoice, StatusMaster.status_code)
                 .join(Invoice, Invoice.invoice_id == InvoiceGst.invoice_id)
@@ -296,7 +332,7 @@ class GstItcService:
         return [(g, i, s) for g, i, s in self._rows_with_invoices(
             InvoiceGst.itc_status == ITC_PENDING, InvoiceGst.itc_eligibility == ELIGIBLE,
             Invoice.invoice_date <= month_end(period))
-            if s in CLAIMABLE_INVOICE_STATUSES and g.irn_status != IRN_MISSING]
+            if s in CLAIMABLE_INVOICE_STATUSES and g.irn_status != IRN_MISSING and self.gstr2b_status(i) in (None, "MATCHED")]
 
     def pending_credit_notes(self, period: datetime.date) -> list:
         """Vendor credit notes up to the period whose GST has not yet reduced a claim (s.34)."""
@@ -373,6 +409,7 @@ class GstItcService:
             risk = "REVERSAL_DUE" if age > REVERSAL_DAYS and g.itc_status == ITC_CLAIMED else "AT_RISK" if age >= AT_RISK_DAYS else None
         if g.itc_status == ITC_REVERSED and not unpaid:
             risk = "RECLAIM"
+        twob = self.gstr2b_status(invoice) if g.itc_eligibility == ELIGIBLE else None
         return {
             "invoice_id": invoice.invoice_id, "invoice_number": invoice.invoice_number, "invoice_date": invoice.invoice_date,
             "vendor_name": vendor_name, "supplier_gstin": g.supplier_gstin, "supply_type": g.supply_type,
@@ -380,9 +417,9 @@ class GstItcService:
             "cess": g.cess, "itc": g.cgst + g.sgst + g.igst + g.cess, "itc_eligibility": g.itc_eligibility,
             "eligibility_reason": g.eligibility_reason, "itc_status": g.itc_status, "claim_period": g.claim_period,
             "irn_status": g.irn_status, "irn": g.irn, "reverse_charge": g.reverse_charge,
-            "reversal_due_date": g.reversal_due_date, "days_since_invoice": age, "risk": risk,
+            "reversal_due_date": g.reversal_due_date, "days_since_invoice": age, "risk": risk, "gstr2b": twob,
             "claimable": (g.itc_status == ITC_PENDING and g.itc_eligibility == ELIGIBLE and status in CLAIMABLE_INVOICE_STATUSES
-                          and g.irn_status != IRN_MISSING),
+                          and g.irn_status != IRN_MISSING and twob in (None, "MATCHED")),
         }
 
     def _all_views(self) -> List[dict]:
@@ -418,7 +455,10 @@ class GstItcService:
                 "at_risk": sum(1 for v in views if v["risk"] == "AT_RISK"),
                 "reversal_due": sum(1 for v in views if v["risk"] == "REVERSAL_DUE"),
                 "reclaim": sum(1 for v in views if v["risk"] == "RECLAIM"),
-                "gstr2b": "NOT_CHECKED",
+                "gstr2b": "CHECKED" if self._gstr2b()[2] else "NOT_CHECKED",
+                "gstr2b_period": self._gstr2b()[2],
+                "gstr2b_held": sum(1 for v in views if v["itc_status"] == ITC_PENDING and v["gstr2b"] in ("MISMATCH", "MISSING")
+                                   and v["invoice_status"] in CLAIMABLE_INVOICE_STATUSES),
             },
             "invoices": in_month,
             "attention": [v for v in views if v["risk"] or v["irn_status"] == IRN_MISSING or v["itc_eligibility"] == REVIEW][:50],

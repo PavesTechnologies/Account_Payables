@@ -338,11 +338,37 @@ class ActionCenterService:
             out.append(_action("gst_irn", "gst", "high", f"Get the IRN for {_plural(s['irn_missing'], 'e-invoice')}",
                                "These suppliers must e-invoice; credit isn't admissible without the IRN. Record it from the "
                                "invoice QR code or ask the vendor for the e-invoice.", s["irn_missing"], link, "Record IRN"))
+        if s.get("gstr2b_held"):
+            out.append(_action("gst_2b_held", "gst", "high", f"Chase {_plural(s['gstr2b_held'], 'supplier invoice')} not matched in GSTR-2B",
+                               "The supplier has not filed these (or filed different tax) in GSTR-1, so the credit can't be "
+                               "claimed (s.16(2)(aa)). Ask them to file or amend.", s["gstr2b_held"], link + "?tab=gstr2b",
+                               "Open GSTR-2B"))
+        twob = self._gstr2b()
+        if twob and twob.get("not_in_books"):
+            out.append(_action("gst_2b_not_in_books", "gst", "normal",
+                               f"Book {_plural(twob['not_in_books'], 'invoice')} suppliers filed in GSTR-2B",
+                               f"Filed against our GSTIN for {twob['period']:%b %Y} but not in AP - get the invoice, or "
+                               "dispute it with the supplier if it isn't ours.", twob["not_in_books"], link + "?tab=gstr2b",
+                               "Review"))
         if s["review"]:
             out.append(_action("gst_review", "gst", "normal", f"Confirm ITC eligibility on {_plural(s['review'], 'invoice')}",
                                "Looks like a blocked credit under s.17(5) (food, cabs, club, works contract) - confirm or override.",
                                s["review"], link, "Review"))
         return out
+
+    def _gstr2b(self) -> Optional[dict]:
+        try:
+            from Backend.Business_Layer.services.gstr2b_service import Gstr2bService, _table_exists
+            if not _table_exists(self.dashboards.db):
+                return None
+            data = Gstr2bService(self.dashboards.db).attention()
+            return data if data.get("period") else None
+        except Exception:
+            try:
+                self.dashboards.db.rollback()
+            except Exception:
+                pass
+            return None
 
     def _management(self, view) -> List[dict]:
         out = []
