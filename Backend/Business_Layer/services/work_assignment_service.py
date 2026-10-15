@@ -226,17 +226,19 @@ class WorkAssignmentService:
     def workload(self) -> Dict[str, Any]:
         team = self.team()
         rows = self.db.execute(text("""
-            select i.invoice_id, s.status_code, a.assignee_user_id, i.created_at
+            select i.invoice_id, s.status_code, a.assignee_user_id,
+                   extract(epoch from (localtimestamp - i.created_at)) / 86400 as age_days
             from ap.invoice i join ap.status_master s on s.status_id = i.status_id
             left join ap.invoice_assignment a on a.invoice_id = i.invoice_id
             where s.status_code = any(:statuses)"""), {"statuses": list(AP_STAGE) + ["PENDING_APPROVAL"]}).all()
-        now = _now()
+        # invoice.created_at is timestamp WITHOUT time zone (DB local time), so its age is taken in SQL
+        # against the DB's own clock - mixing it with an aware Python "now" raised TypeError.
         per: Dict[str, Counter] = {m["user_id"]: Counter() for m in team}
         oldest: Dict[str, float] = {}
         unassigned = Counter()
-        for invoice_id, status, owner, created_at in rows:
+        for invoice_id, status, owner, age_days in rows:
             stage = STAGE_LABELS.get(status, "other")
-            age = (now - created_at).total_seconds() / 86400 if created_at else 0
+            age = max(float(age_days or 0), 0.0)
             if owner is None:
                 if status in AP_STAGE:
                     unassigned[stage] += 1

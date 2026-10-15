@@ -1384,7 +1384,7 @@ class Seeder:
             if filed_on <= AS_OF - dt.timedelta(days=1):
                 add(at(filed_on, 15, 30), f"Q{quarter} 26Q return filed",
                     lambda q=quarter, a=start, b=end, f=filed_on: self.file_quarter(q, a, b, f))
-        add(at(AS_OF, 9, 40), "Payment run for the week", lambda: self.payment_run(AS_OF + dt.timedelta(days=4)))
+        # No payment run: Finance pays from the bank portal and records each payment with its receipt.
         late = [e.label for e in ev if e.ts.date() > AS_OF]
         if late:
             raise ValueError(f"Story events after {AS_OF}: {late}")

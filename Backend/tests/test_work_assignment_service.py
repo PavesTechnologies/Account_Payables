@@ -68,3 +68,27 @@ def test_assign_new_never_raises(monkeypatch):
         def rollback(self):
             pass
     assert was.WorkAssignmentService(Db()).assign_new(5) is None
+
+
+class _WorkloadDb:
+    """Rows as the workload SQL returns them: the age is computed by the database (Decimal days)."""
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, *a, **k):
+        return SimpleNamespace(all=lambda: self.rows)
+
+
+def test_workload_counts_stages_and_oldest_age_from_sql(monkeypatch):
+    from decimal import Decimal
+    rows = [(1, "OCR_REVIEW_PENDING", "5100007", Decimal("10.31")), (2, "RETURNED_FOR_REVIEW", "5100007", Decimal("2.0")),
+            (3, "OCR_REVIEWED", "5100027", Decimal("6.3")), (4, "OCR_REVIEW_PENDING", None, Decimal("1.0")),
+            (5, "PENDING_APPROVAL", "5100007", None)]
+    svc = was.WorkAssignmentService(_WorkloadDb(rows))
+    monkeypatch.setattr(svc, "team", lambda: [{"user_id": "5100007", "name": "Venkatesh"}, {"user_id": "5100027", "name": "Kalasagar"}])
+    monkeypatch.setattr(svc, "names", lambda ids: {})
+    monkeypatch.setattr(svc, "rules", lambda: [])
+    out = svc.workload()
+    venkatesh = next(m for m in out["members"] if m["user_id"] == "5100007")
+    assert (venkatesh["to_review"], venkatesh["returned"], venkatesh["in_approval"], venkatesh["oldest_days"]) == (1, 1, 1, 10.3)
+    assert out["unassigned"]["total"] == 1
