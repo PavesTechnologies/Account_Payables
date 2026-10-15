@@ -337,6 +337,24 @@ class RoleDashboardService:
             return None
         return {k: stats[k] for k in ("processed", "auto_approved", "auto_sent", "exceptions", "touchless_rate")}
 
+    def _gst_compliance(self) -> List[dict]:
+        """GST input credit for management: what to claim in the open GSTR-3B, and what could be lost."""
+        try:
+            from Backend.Business_Layer.services.gst_itc_service import GstItcService
+            g = GstItcService(self.db, today=self.today).position()
+        except Exception:  # GST register not migrated / unavailable - the rest of the dashboard still loads
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            return []
+        return [
+            {"key": "gst_claim", "label": f"GST input credit to claim ({g['claim_period']:%b %Y}, due {g['claim_due']:%d %b})",
+             "count": g["claimable_count"], "amount": g["claimable"], "tone": "good"},
+            {"key": "gst_at_risk", "label": "GST credit at risk (180-day rule / IRN / GSTR-2B)", "count": g["at_risk_count"],
+             "amount": g["at_risk"]},
+        ]
+
     def _management(self, user) -> Dict[str, Any]:
         today = self.today
         base = BASE_CURRENCY
@@ -349,7 +367,8 @@ class RoleDashboardService:
 
         windows = [("overdue", "Overdue", None, -1), ("d30", "Next 30 days", 0, 30), ("d60", "31–60 days", 31, 60),
                    ("d90", "61–90 days", 61, 90), ("later", "After 90 days", 91, None), ("unverified", "Due date unverified", None, None)]
-        outflow = OrderedDict((k, {"key": k, "label": label, "approved": ZERO, "pipeline": ZERO, "count": 0}) for k, label, *_ in windows)
+        outflow = OrderedDict((k, {"key": k, "label": label, "approved": ZERO, "pipeline": ZERO, "recurring": ZERO, "tds": ZERO,
+                                   "count": 0}) for k, label, *_ in windows)
         for f in figures:
             if not f.due_verified or f.due_date is None:
                 key = "unverified"
@@ -360,7 +379,15 @@ class RoleDashboardService:
             field = "approved" if f.stage in ("PAYABLE", "APPROVED") else "pipeline"
             slot[field] = _money(slot[field] + f.outstanding)
             slot["count"] += 1
-        due_30 = outflow["d30"]["approved"] + outflow["d30"]["pipeline"]
+        # estimates: recurring invoices not yet received + TDS to deposit (cash_forecast_service)
+        for e in self.reporting._estimates(today + datetime.timedelta(days=90), figures):
+            days = (e["due_date"] - today).days
+            key = "overdue" if days < 0 else "d30" if days <= 30 else "d60" if days <= 60 else "d90"
+            field = "recurring" if e["kind"] == "RECURRING" else "tds"
+            outflow[key][field] = _money(outflow[key][field] + e["amount"])
+        window_total = lambda k: outflow[k]["approved"] + outflow[k]["pipeline"] + outflow[k]["recurring"] + outflow[k]["tds"]
+        due_30 = window_total("d30")
+        estimated_30 = outflow["d30"]["recurring"] + outflow["d30"]["tds"]
 
         # 12-month spend vs paid + on-time / days-to-pay over the last 90 days
         start = self._month_starts(12)[0]
@@ -421,8 +448,8 @@ class RoleDashboardService:
             "kpis": [
                 _kpi("liability", "Total AP liability", liability, "money", f"{_n(len(figures), 'open invoice')} · net of TDS", "indigo",
                      "/accounts-payable/reports?report=outstanding_payables"),
-                _kpi("due_30", "Due in next 30 days", due_30, "money",
-                     f"60 d: {outflow['d60']['approved'] + outflow['d60']['pipeline']:,.0f} · 90 d: {outflow['d90']['approved'] + outflow['d90']['pipeline']:,.0f}",
+                _kpi("due_30", "Cash needed next 30 days", due_30, "money",
+                     f"incl. {estimated_30:,.0f} estimated · 60 d: {window_total('d60'):,.0f} · 90 d: {window_total('d90'):,.0f}",
                      "blue", "/accounts-payable/reports?report=expected_payments"),
                 _kpi("overdue", "Overdue", overdue_total, "money",
                      f"{round(float(overdue_total / approved_total * 100)) if approved_total else 0}% of approved payables", "rose",
@@ -454,7 +481,7 @@ class RoleDashboardService:
                  "amount": next((a["amount"] for a in card["msme_due"]["amounts"] if a["currency_code"] == base), ZERO)},
                 {"key": "tds_overdue", "label": "TDS deposit / statement overdue", "count": tds_overdue, "amount": None},
                 {"key": "receipts", "label": "Payments without a receipt (90 days)", "count": dashboard["receipts_missing"]["count"], "amount": None},
-            ],
+            ] + self._gst_compliance(),
             "high_value_exceptions": [{
                 "invoice_id": f.invoice_id, "invoice_number": f.invoice_number, "vendor_name": f.vendor_name,
                 "outstanding": f.outstanding, "currency_code": f.currency_code, "stage": STAGE_LABELS.get(f.stage, f.stage),
@@ -462,6 +489,6 @@ class RoleDashboardService:
                 "issue": "Overdue" if f.days_overdue(today) else "Payment-term exception",
             } for f in high_value],
             "high_value_threshold": threshold,
-            "note": "Read-only management view. Expected outflow is based on recorded invoices and due dates, "
-                    "not a guaranteed cash-flow forecast.",
+            "note": "Read-only management view. Expected outflow = recorded invoices by due date, plus estimates for "
+                    "recurring invoices not yet received and TDS to deposit - a planning figure, not a guaranteed cash-flow forecast.",
         }

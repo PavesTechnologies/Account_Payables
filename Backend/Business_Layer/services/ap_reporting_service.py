@@ -20,6 +20,7 @@ and shown as on hold).
 from __future__ import annotations
 
 import datetime
+import logging
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -60,8 +61,11 @@ RECENT_PAYMENTS_LIMIT = 10
 RECEIPT_CHECK_DAYS = 90
 TOP_INVOICES_PER_BUCKET = 5
 MAX_REPORT_ROWS = 10000
-FORECAST_NOTE = ("Expected payments based on recorded invoices and their due dates - not a guaranteed cash-flow "
-                 "forecast. Disputed invoices are excluded; invoices without a verified due date are shown separately.")
+logger = logging.getLogger(__name__)
+FORECAST_NOTE = ("Expected payments based on recorded invoices and their due dates, plus estimates: recurring invoices "
+                 "(rent, subscriptions) not yet received, at the schedule's amount, and TDS to deposit by the 7th. A planning "
+                 "figure, not a guaranteed cash-flow forecast; nothing is posted. Disputed invoices are excluded; invoices "
+                 "without a verified due date are shown separately.")
 
 FINANCE_PERMISSIONS = ["PAYMENT_VIEW", "PAYMENT_PROCESS"]
 TDS_PERMISSIONS = ["TDS_TRACKING_VIEW", "TDS_TRACKING_UPDATE", "INVOICE_TDS_VIEW", "INVOICE_TDS_VERIFY"]
@@ -367,7 +371,8 @@ class APReportingService:
                             "start": starts[months], "end": None}
         buckets["unverified"] = {"key": "unverified", "label": "Due date unverified", "start": None, "end": None}
         for b in buckets.values():
-            b.update(approved=_MoneyByCurrency(), pipeline=_MoneyByCurrency(), invoices=[])
+            b.update(approved=_MoneyByCurrency(), pipeline=_MoneyByCurrency(), recurring=_MoneyByCurrency(),
+                     tds=_MoneyByCurrency(), invoices=[], estimates=[])
 
         for f in items:
             if not f.due_verified or f.due_date is None:
@@ -382,16 +387,51 @@ class APReportingService:
                 f.currency_code, f.symbol, f.outstanding)
             bucket["invoices"].append(f)
 
+        horizon = starts[months] - datetime.timedelta(days=1)
+        for e in self._estimates(horizon, items):
+            key = "overdue" if e["due_date"] < self.today else next(
+                (k for k, b in buckets.items() if k.startswith("m") and b["start"] <= e["due_date"] <= b["end"]), None)
+            if key is None:
+                continue
+            buckets[key]["recurring" if e["kind"] == "RECURRING" else "tds"].add(e["currency_code"], "₹", e["amount"])
+            buckets[key]["estimates"].append(e)
+
         out = []
         for b in buckets.values():
             top = sorted(b["invoices"], key=lambda f: f.outstanding, reverse=True)[:TOP_INVOICES_PER_BUCKET]
             out.append({
                 "key": b["key"], "label": b["label"], "start": b["start"], "end": b["end"],
                 "approved": b["approved"].as_list(), "pipeline": b["pipeline"].as_list(),
+                "recurring": b["recurring"].as_list(), "tds": b["tds"].as_list(),
                 "count": len(b["invoices"]),
                 "top_invoices": [self._invoice_brief(f) for f in top],
+                "estimates": [self._estimate_brief(e) for e in b["estimates"]],
             })
         return {"months": months, "buckets": out, "note": FORECAST_NOTE}
+
+    def _estimates(self, horizon: datetime.date, items) -> List[dict]:
+        """Recurring invoices not yet received + TDS deposits (cash_forecast_service). Never breaks the forecast."""
+        try:
+            from Backend.Business_Layer.services.cash_forecast_service import CashForecastService
+            svc = CashForecastService(self.db, today=self.today)
+            return svc.recurring(horizon) + svc.tds(horizon, items)
+        except Exception:
+            logger.exception("Forecast estimates unavailable")
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            return []
+
+    @staticmethod
+    def _estimate_brief(e: dict) -> dict:
+        if e["kind"] == "RECURRING":
+            label = f"{e['name']} ({e['period_start']:%b %Y})" + (" - invoice late" if e["late"] else "")
+            return {"kind": "RECURRING", "label": label, "vendor_name": e["vendor_name"], "due_date": e["due_date"],
+                    "amount": e["amount"], "currency_code": e["currency_code"]}
+        return {"kind": "TDS", "label": f"TDS deposit ({e['invoices']} invoice{'s' if e['invoices'] != 1 else ''})"
+                + (" - overdue" if e["overdue"] else ""), "vendor_name": "Income Tax Department", "due_date": e["due_date"],
+                "amount": e["amount"], "currency_code": e["currency_code"]}
 
     def _invoice_brief(self, f: InvoiceFigures) -> dict:
         return {
@@ -478,6 +518,8 @@ class APReportingService:
         ("tds_register", {"title": "TDS register", "period": "range", "permissions": TDS_PERMISSIONS}),
         ("payment_term_exceptions", {"title": "Payment-term exceptions", "period": "as_of",
                                      "permissions": TERM_PERMISSIONS}),
+        ("gst_itc_register", {"title": "GST input credit (ITC) register", "period": "range",
+                              "permissions": ["GST_ITC_VIEW", "GST_ITC_MANAGE", "PAYMENT_VIEW", "PAYMENT_PROCESS", "AP_AUTOMATION_MANAGE"]}),
         ("msme_payments", {"title": "MSME payments - MSMED Act s.15 / s.16 interest", "period": "range",
                            "permissions": FINANCE_PERMISSIONS}),
         ("msme_43bh", {"title": "MSME s.43B(h) disallowance (financial year of the To date)", "period": "range",
@@ -712,19 +754,24 @@ class APReportingService:
         rows = []
         for bucket in upcoming["buckets"]:
             currencies = OrderedDict()
-            for kind in ("approved", "pipeline"):
+            for kind in ("approved", "pipeline", "recurring", "tds"):
                 for m in bucket[kind]:
-                    slot = currencies.setdefault(m["currency_code"], {"approved": ZERO, "pipeline": ZERO, "count": 0})
+                    slot = currencies.setdefault(m["currency_code"], {"approved": ZERO, "pipeline": ZERO, "recurring": ZERO,
+                                                                      "tds": ZERO, "count": 0})
                     slot[kind] = m["amount"]
-                    slot["count"] += m["count"]
+                    if kind in ("approved", "pipeline"):
+                        slot["count"] += m["count"]
             for code, slot in currencies.items():
+                confirmed = _money(slot["approved"] + slot["pipeline"])
                 rows.append({"period": bucket["label"], "from": bucket["start"], "to": bucket["end"],
                              "currency_code": code, "invoices": slot["count"], "approved": slot["approved"],
-                             "pipeline": slot["pipeline"], "total": _money(slot["approved"] + slot["pipeline"])})
+                             "pipeline": slot["pipeline"], "recurring": slot["recurring"], "tds": slot["tds"],
+                             "total": _money(confirmed + slot["recurring"] + slot["tds"])})
         return {"columns": [
             _col("period", "Period"), _col("from", "From", "date"), _col("to", "To", "date"),
             _col("currency_code", "Cur."), _col("invoices", "Invoices", "int"),
             _col("approved", "Approved / ready", "money"), _col("pipeline", "Still in review / approval", "money"),
+            _col("recurring", "Recurring - not yet received (est.)", "money"), _col("tds", "TDS to deposit", "money"),
             _col("total", "Total expected", "money"),
         ], "rows": rows, "notes": [FORECAST_NOTE]}
 
@@ -788,6 +835,43 @@ class APReportingService:
         ], "rows": rows, "notes": [
             "Deposit due: 7th of the month after deduction (30 April for March); quarterly statement: "
             "31 Jul / 31 Oct / 31 Jan / 31 May. Configurable in system configuration."]}
+
+    def _report_gst_itc_register(self, date_from=None, date_to=None, vendor_id=None, **_):
+        from sqlalchemy import select
+        from Backend.Business_Layer.services.gst_itc_service import GstItcService
+        from Backend.Data_Access_Layer.models.invoice import Invoice
+        labels = {"PENDING": "Not yet claimed", "CLAIMED": "Claimed", "REVERSED": "Reversed", "NOT_CLAIMABLE": "Not claimable"}
+        twob = {None: "Not checked", "MATCHED": "Matched", "MISMATCH": "Mismatch", "MISSING": "Missing in 2B"}
+        risk = {None: "", "AT_RISK": "Pay soon (180-day rule)", "REVERSAL_DUE": "Reverse - unpaid > 180 days", "RECLAIM": "Re-claim"}
+        svc = GstItcService(self.db, today=self.today)
+        vendor_ids = dict(self.db.execute(select(Invoice.invoice_id, Invoice.vendor_id)).all()) if vendor_id else {}
+        rows = []
+        for v in svc._all_views():
+            if not v["invoice_date"] or not (date_from <= v["invoice_date"] <= date_to):
+                continue
+            if vendor_id and vendor_ids.get(v["invoice_id"]) != vendor_id:
+                continue
+            rows.append({"invoice_id": v["invoice_id"], "invoice_number": v["invoice_number"], "invoice_date": v["invoice_date"],
+                         "vendor_name": v["vendor_name"], "supplier_gstin": v["supplier_gstin"],
+                         "supply_type": "Inter-state" if v["supply_type"] == "INTER" else "Intra-state",
+                         "currency_code": "INR", "taxable_value": v["taxable_value"], "cgst": v["cgst"], "sgst": v["sgst"],
+                         "igst": v["igst"], "itc": v["itc"], "eligibility": v["itc_eligibility"].replace("_", " ").title(),
+                         "itc_status": labels.get(v["itc_status"], v["itc_status"]),
+                         "claim_period": v["claim_period"].strftime("%b %Y") if v["claim_period"] else "",
+                         "irn": {"PRESENT": "Yes", "MISSING": "Missing", "NOT_REQUIRED": "Not e-invoice"}.get(v["irn_status"], ""),
+                         "gstr2b": twob.get(v["gstr2b"], v["gstr2b"]), "risk": risk.get(v["risk"], v["risk"] or "")})
+        rows.sort(key=lambda r: (r["invoice_date"], r["invoice_number"]))
+        return {"columns": [
+            _col("invoice_number", "Invoice"), _col("invoice_date", "Invoice date", "date"), _col("vendor_name", "Vendor"),
+            _col("supplier_gstin", "Supplier GSTIN"), _col("supply_type", "Supply"), _col("currency_code", "Cur."),
+            _col("taxable_value", "Taxable value", "money"), _col("cgst", "CGST", "money"), _col("sgst", "SGST", "money"),
+            _col("igst", "IGST", "money"), _col("itc", "Input credit", "money"), _col("eligibility", "Eligibility"),
+            _col("itc_status", "ITC status"), _col("claim_period", "Claimed in"), _col("irn", "IRN"),
+            _col("gstr2b", "GSTR-2B"), _col("risk", "Action"),
+        ], "rows": rows, "notes": [
+            "Purchase invoices dated in the period with their GST split and input-credit status. Credit is claimed in "
+            "GSTR-3B (due the 20th of the next month); blocked credit (s.17(5)) is not claimable.",
+            "GSTR-2B: once a month's GSTR-2B is imported, only matched invoices are claimable (s.16(2)(aa))."]}
 
     def _report_msme_payments(self, date_from=None, date_to=None, vendor_id=None, **_):
         from Backend.Business_Layer.services.msme_compliance_service import MsmeComplianceService

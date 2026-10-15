@@ -465,6 +465,24 @@ class GstItcService:
             "periods": periods,
         }
 
+    def position(self) -> Dict[str, Any]:
+        """For management: credit to claim in the open return, and credit at risk of being lost
+        (180-day rule, IRN missing, not matched in GSTR-2B), with the year's claimed credit."""
+        views = self._all_views()
+        last_closed = month_start(month_start(self.today) - datetime.timedelta(days=1))
+        fy_start = datetime.date(self.today.year if self.today.month >= 4 else self.today.year - 1, 4, 1)
+        claimable = [v for v in views if v["claimable"] and v["invoice_date"] <= month_end(last_closed)]
+        note_gst = sum((n.cgst + n.sgst + n.igst for n in self.pending_credit_notes(last_closed)), ZERO)
+        at_risk = [v for v in views if v["itc_eligibility"] == ELIGIBLE and v["itc_status"] in (ITC_PENDING, ITC_CLAIMED) and (
+            v["risk"] in ("AT_RISK", "REVERSAL_DUE") or (v["itc_status"] == ITC_PENDING and (
+                v["irn_status"] == IRN_MISSING or v["gstr2b"] in ("MISMATCH", "MISSING"))))]
+        total = lambda rows: sum((v["itc"] for v in rows), ZERO)
+        return {"claim_period": last_closed, "claim_due": gstr3b_due(last_closed),
+                "claimable": total(claimable) - note_gst, "claimable_count": len(claimable),
+                "at_risk": total(at_risk), "at_risk_count": len(at_risk),
+                "blocked": total([v for v in views if v["itc_eligibility"] == BLOCKED]),
+                "claimed_fy": total([v for v in views if v["claim_period"] and v["claim_period"] >= fy_start and v["itc_status"] == ITC_CLAIMED])}
+
     def attention(self) -> Dict[str, Any]:
         data = self.register()
         s = data["summary"]
