@@ -26,6 +26,7 @@ Every amount the UI shows comes from invoice_payment_summary():
 from __future__ import annotations
 
 import datetime
+import logging
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -53,6 +54,8 @@ from Backend.Data_Access_Layer.models.tds import InvoiceTdsTracking
 # standard Indian banking conventions (UTR / RRN / cheque & DD number), not yet
 # confirmed against this org's bank data - None means only the generic
 # _REFERENCE_RE check applies.
+logger = logging.getLogger(__name__)
+
 PAYMENT_MODES = [
     {"value": "NEFT", "label": "NEFT", "reference_label": "UTR Number",
      "reference_pattern": "^[A-Za-z0-9]{16}$", "reference_hint": "16 letters or digits"},
@@ -406,10 +409,33 @@ class PaymentTrackingService:
             )
 
             self.db.commit()
-            return self.get_invoice_payments(invoice_id) | {"recorded_payment_id": payment.payment_id}
         except Exception:
             self.db.rollback()
             raise
+        self._record_tds_deduction(invoice_id, payment_date, user_id)
+        return self.get_invoice_payments(invoice_id) | {"recorded_payment_id": payment.payment_id}
+
+    def _record_tds_deduction(self, invoice_id: int, payment_date: datetime.date, user_id) -> None:
+        """TDS is deducted when the vendor is paid: the first payment of a TDS invoice records the
+        deduction on the payment date, so the invoice is ready for the next challan. Never fails the
+        payment - an invoice whose TDS was already marked deducted, or is not applicable, is left as is."""
+        try:
+            tds = self.tds_dao.get_invoice_tds_by_invoice_id(invoice_id)
+            if tds is None or not tds.tds_applicable or not tds.tds_amount:
+                return
+            tracking = self.db.query(InvoiceTdsTracking).filter(InvoiceTdsTracking.invoice_id == invoice_id).one_or_none()
+            if tracking is not None and tracking.tracking_status != "TDS_PENDING":
+                return
+            from Backend.API_Layer.interface.tds_tracking_interface import RecordTdsDeductionRequest
+            from Backend.Business_Layer.services.tds_tracking_service import TdsTrackingService
+            TdsTrackingService(self.db).record_deduction(invoice_id, RecordTdsDeductionRequest(
+                deduction_date=payment_date, remarks="TDS deducted at payment"), user_id)
+        except Exception:
+            logger.exception("TDS deduction not recorded automatically for invoice %s", invoice_id)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
 
     # =========================================================
     # Documents (receipts)

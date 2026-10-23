@@ -151,6 +151,44 @@ class TdsChallanService:
         return {"items": items, "total_tds": sum((i["tds_amount"] for i in items), ZERO),
                 "sections": sorted({normalize_section(i["section"]) for i in items if i["section"]})}
 
+    def pending(self) -> Dict[str, Any]:
+        """What is waiting: TDS deducted but not on a challan yet (by the month it is due), and TDS
+        deposited but not in a quarterly statement yet (by quarter) - each with its due date."""
+        today = self.today
+        deposits: Dict[datetime.date, dict] = {}
+        for i in self.challan_candidates()["items"]:
+            due = i["deposit_due_date"]
+            month = i["deduction_date"].replace(day=1) if i["deduction_date"] else None
+            slot = deposits.setdefault(due, {"period": month, "due_date": due, "invoices": 0, "total_tds": ZERO,
+                                             "sections": set()})
+            slot["invoices"] += 1
+            slot["total_tds"] += i["tds_amount"]
+            if i["section"]:
+                slot["sections"].add(normalize_section(i["section"]))
+        filings: Dict[Tuple[str, int], dict] = {}
+        for r in self.dao.invoices_in_tracking_status([DEPOSITED], None, None):
+            row = self._row_view(r)
+            if not row["deduction_date"]:
+                continue
+            fy, quarter = financial_quarter(row["deduction_date"])
+            start, end = quarter_bounds(fy, quarter)
+            slot = filings.setdefault((fy, quarter), {"financial_year": fy, "quarter": quarter, "period_start": start,
+                                                      "period_end": end, "due_date": tds_statement_due_date(start),
+                                                      "invoices": 0, "total_tds": ZERO})
+            slot["invoices"] += 1
+            slot["total_tds"] += row["tds_amount"]
+        deposit_list = sorted(deposits.values(), key=lambda d: (d["due_date"] is None, d["due_date"] or today))
+        for d in deposit_list:
+            d["sections"] = sorted(d["sections"])
+            d["overdue"] = bool(d["due_date"] and d["due_date"] < today)
+            d["days_left"] = (d["due_date"] - today).days if d["due_date"] else None
+        filing_list = sorted(filings.values(), key=lambda f: (f["financial_year"], f["quarter"]))
+        for f in filing_list:
+            f["overdue"] = f["due_date"] < today
+            f["days_left"] = (f["due_date"] - today).days
+            f["open"] = today <= f["period_end"]  # quarter not over yet - file after it ends
+        return {"as_of": today, "deposits": deposit_list, "filings": filing_list}
+
     def validate_challan(self, header: Dict[str, Any], allocations: Sequence[Dict[str, Any]],
                          has_document: bool) -> Dict[str, Any]:
         errors: List[Dict[str, str]] = []

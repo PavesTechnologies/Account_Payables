@@ -23,7 +23,7 @@ from Backend.Business_Layer.services.payment_tracking_service import PaymentNotF
 from Backend.Business_Layer.services.tds_tracking_service import TdsTrackingNotFoundError, TdsTrackingService
 from Backend.Data_Access_Layer.models.invoice import Invoice
 from Backend.Data_Access_Layer.models.master import StatusMaster
-from Backend.Data_Access_Layer.models.tds import InvoiceTds, TdsPaymentNature
+from Backend.Data_Access_Layer.models.tds import InvoiceTds, TdsPaymentNature, InvoiceTdsTracking
 from Backend.tests.test_tds_config_service_db import db, tag  # noqa: F401 - fixtures
 
 USER = "test-suite"
@@ -272,13 +272,31 @@ def test_tds_activity_requires_verified_determination(db, tag):
         svc.get_tds_detail(not_applicable.invoice_id)
 
 
-def test_tds_status_is_independent_of_invoice_payment_status(db, tag):
+def test_paying_the_vendor_records_the_tds_deduction_on_the_payment_date(db, tag):
+    """TDS is deducted when the vendor is paid: the payment records the deduction, so the invoice is
+    ready for the next challan. Deposit and filing still follow their own steps."""
     invoice = _invoice(db, tag)
-    PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("90000", "UTRFULL000000001"), USER)
+    paid_on = TODAY - datetime.timedelta(days=2)
+    PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("90000", "UTRFULL000000001", date=paid_on), USER)
     detail = TdsTrackingService(db).get_tds_detail(invoice.invoice_id)
     assert detail["invoice_status_code"] == "PAID" and detail["payment"]["remaining_amount"] == Decimal("0.00")
-    assert detail["tds_tracking_status"] == "TDS_PENDING"
-    assert PaymentTrackingService(db).get_invoice_payments(invoice.invoice_id)["tds_tracking_status"] == "TDS_PENDING"
+    assert detail["tds_tracking_status"] == "TDS_DEDUCTED"
+    assert PaymentTrackingService(db).get_invoice_payments(invoice.invoice_id)["tds_tracking_status"] == "TDS_DEDUCTED"
+
+
+def test_a_deduction_already_recorded_is_not_changed_by_payment(db, tag):
+    invoice = _invoice(db, tag)
+    booked_on = TODAY - datetime.timedelta(days=20)
+    TdsTrackingService(db).record_deduction(invoice.invoice_id, SimpleNamespace(deduction_date=booked_on, remarks="at booking"), USER)
+    PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("40000", "UTRPART000000002"), USER)
+    tracking = db.query(InvoiceTdsTracking).filter(InvoiceTdsTracking.invoice_id == invoice.invoice_id).one()
+    assert tracking.tracking_status == "TDS_DEDUCTED" and tracking.deduction_date == booked_on
+
+
+def test_no_deduction_for_an_invoice_without_tds(db, tag):
+    invoice = _invoice(db, tag, tds_applicable=False, tds_amount="0")
+    PaymentTrackingService(db).record_payment(invoice.invoice_id, _pay("100000", "UTRNOTDS00000003"), USER)
+    assert db.query(InvoiceTdsTracking).filter(InvoiceTdsTracking.invoice_id == invoice.invoice_id).one_or_none() is None
 
 
 def test_tds_document_upload(db, tag, fake_s3):

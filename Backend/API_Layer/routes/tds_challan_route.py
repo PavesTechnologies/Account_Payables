@@ -104,6 +104,12 @@ def list_challans(request: Request, page: int = Query(1, ge=1), page_size: int =
     return TdsChallanService(request.state.db).list_challans(page, page_size)
 
 
+@challan_router.get("/pending", dependencies=[Depends(permission_based_access(_READ))])
+def pending(request: Request):
+    """TDS waiting for a challan (by due month) and deposited TDS waiting for the quarterly statement."""
+    return TdsChallanService(request.state.db).pending()
+
+
 @challan_router.get("/candidates", dependencies=[Depends(permission_based_access(_READ))])
 def challan_candidates(request: Request, period: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
                        section: Optional[str] = None):

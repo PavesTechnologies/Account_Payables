@@ -54,6 +54,13 @@ def test_parse_challan_falls_back_to_cin_and_detects_mismatch():
     assert mismatch["cin_mismatch"] is True
 
 
+def test_parse_challan_corrects_194i_read_as_194l():
+    """OCR reads the capital I of 194I (rent) as an l; 194L is not a TDS section, 194LA and friends are."""
+    assert tx.parse_challan_fields({"SECTION": _q("194L")}, "")["fields"]["section_code"]["value"] == "194I"
+    assert tx.parse_challan_fields({"SECTION": _q("94L")}, "")["fields"]["section_code"]["value"] == "94I"
+    assert tx.parse_challan_fields({"SECTION": _q("194LA")}, "")["fields"]["section_code"]["value"] == "194LA"
+
+
 def test_parse_filing_acknowledgement():
     out = tx.parse_filing_fields({"ACK": _q("Token No. 123456789012345"), "FILING_DATE": _q("28-Jul-2026"),
                                   "FORM": _q("Form 26Q"), "FY": _q("2026-27"), "QUARTER": _q("Q1"), "KIND": _q("Regular")}, "")

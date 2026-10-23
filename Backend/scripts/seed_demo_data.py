@@ -1205,7 +1205,9 @@ class Seeder:
             PaymentTrackingService(db).upload_document(result["recorded_payment_id"], f"payment-advice-{utr}.pdf",
                                                        advice, "application/pdf", "RECEIPT", actor)
             self.paid[story.key] = self.paid.get(story.key, D("0")) + value
-            if n == 0 and inv.tds_applicable:
+            # record_payment now records the TDS deduction itself; only older code paths need this
+            status = self.q(db, "select tracking_status from ap.invoice_tds_tracking where invoice_id = :i", i=invoice_id).scalar()
+            if n == 0 and inv.tds_applicable and status in (None, "TDS_PENDING"):
                 TdsTrackingService(db).record_deduction(invoice_id, RecordTdsDeductionRequest(
                     deduction_date=pay_date, remarks="TDS deducted at payment"), actor)
             return f"paid Rs {value:,} by {mode} {utr}"

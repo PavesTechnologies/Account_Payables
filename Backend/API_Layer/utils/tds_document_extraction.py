@@ -116,7 +116,10 @@ def parse_challan_fields(results: Dict[str, Dict[str, Any]], full_text: str) -> 
 
     section, section_conf = _value(results, "SECTION")
     section_match = _SECTION.search((section or "").upper().replace(" ", ""))
-    out["section_code"] = _field(section_match.group(0) if section_match else None, section_conf)
+    section_code = section_match.group(0) if section_match else None
+    # OCR reads the capital I of 194I (rent) as an l; plain 194L is no TDS section (only 194LA / LB / LBA ...)
+    section_code = {"194L": "194I", "94L": "94I"}.get(section_code, section_code)
+    out["section_code"] = _field(section_code, section_conf)
 
     for key, alias in (("tax_amount", "TAX"), ("surcharge", "SURCHARGE"), ("cess", "CESS"),
                        ("interest", "INTEREST"), ("fee", "FEE"), ("total_amount", "TOTAL")):
