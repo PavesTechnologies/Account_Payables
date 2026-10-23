@@ -254,8 +254,11 @@ class APReportingService:
         cards = [
             self._card("ready_for_payment", "Ready for payment", ready, "/accounts-payable/payments/ready",
                        detail=[("Due within 7 days", ready_due_soon), ("Overdue", ready_overdue)]),
-            self._card("overdue", "Overdue (approved, unpaid)", overdue, "/accounts-payable/payments/ready?overdue=1",
-                       tone="danger"),
+            self._card("overdue", "Overdue (approved, unpaid)", overdue,
+                       self._payable_link(overdue.count, overdue.count - ready_overdue.count, "/accounts-payable/payments/ready?overdue=1"),
+                       tone="danger",
+                       note=f"{overdue.count - ready_overdue.count} not yet marked ready for payment"
+                       if overdue.count - ready_overdue.count else None),
             self._card("approved_not_ready", "Approved, not yet marked ready", approved_not_ready,
                        "/accounts-payable/invoices?queue=approved",
                        note=f"{blocked_by_terms} blocked by payment-term exceptions" if blocked_by_terms else None),
@@ -275,9 +278,12 @@ class APReportingService:
         # ---- headline KPI tiles + paid trend (base currency; other currencies stay on the cards)
         base = BASE_CURRENCY
         due_week = _MoneyByCurrency()
+        due_week_not_ready = 0
         for f in open_items:
             if f.stage in ("PAYABLE", "APPROVED") and f.due_verified and f.due_date is not None                     and today <= f.due_date <= today + datetime.timedelta(days=DUE_SOON_DAYS):
                 due_week.add(f.currency_code, f.symbol, f.outstanding)
+                due_week_not_ready += f.stage == "APPROVED"
+        overdue_not_ready = overdue.count - ready_overdue.count
         trend_start = self._month_starts(1)[0]
         for _ in range(PAID_TREND_MONTHS - 1):
             trend_start = (trend_start - datetime.timedelta(days=1)).replace(day=1)
@@ -290,10 +296,12 @@ class APReportingService:
         kpis = [
             _kpi("ready_to_pay", "Ready to pay", ready, base, f"{_n(ready.count, 'invoice')} · {ready_overdue.count} overdue",
                  "indigo", "/accounts-payable/payments/ready"),
-            _kpi("due_this_week", "Due in next 7 days", due_week, base, f"{_n(due_week.count, 'approved invoice')}", "amber",
-                 "/accounts-payable/payments/ready"),
-            _kpi("overdue", "Overdue", overdue, base, f"{_n(overdue.count, 'invoice')} past due", "rose",
-                 "/accounts-payable/payments/ready?overdue=1"),
+            _kpi("due_this_week", "Due in next 7 days", due_week, base,
+                 f"{_n(due_week.count, 'approved invoice')}" + (f" · {due_week_not_ready} not yet marked ready" if due_week_not_ready else ""),
+                 "amber", self._payable_link(due_week.count, due_week_not_ready, "/accounts-payable/payments/ready")),
+            _kpi("overdue", "Overdue", overdue, base,
+                 f"{_n(overdue.count, 'invoice')} past due" + (f" · {overdue_not_ready} not yet marked ready" if overdue_not_ready else ""),
+                 "rose", self._payable_link(overdue.count, overdue_not_ready, "/accounts-payable/payments/ready?overdue=1")),
             {"key": "paid_this_month", "label": "Paid this month", "format": "money", "value": this_month["amount"],
              "currency_code": base, "subtitle": f"{_n(this_month['count'], 'payment')} cleared", "tone": "emerald",
              "link": "/accounts-payable/payments/history"},
@@ -324,6 +332,16 @@ class APReportingService:
             "forecast_note": FORECAST_NOTE,
         }
         return result
+
+    @staticmethod
+    def _payable_link(total: int, not_ready: int, ready_link: str) -> str:
+        """Where a tile's invoices actually are: Ready for Payment lists only invoices marked ready, so
+        approved-but-not-ready ones open the Approved queue, and a mix opens the outstanding-payables report."""
+        if not_ready == 0:
+            return ready_link
+        if not_ready == total:
+            return "/accounts-payable/invoices?queue=approved"
+        return "/accounts-payable/reports?report=outstanding_payables"
 
     def _paid_trend(self, cleared_rows, start: datetime.date, currency: str) -> List[dict]:
         months = []
