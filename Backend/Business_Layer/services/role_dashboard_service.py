@@ -265,8 +265,8 @@ class RoleDashboardService:
 
         counts = dict(self.dao.status_counts())
         pipeline = [
-            {"key": "review", "label": "In OCR review", "count": len(to_review) + len(returned) + len(failed)},
-            {"key": "reviewed", "label": "Reviewed, not sent", "count": len(tds_to_determine) + len(ready_to_send)},
+            {"key": "review", "label": "To review", "count": len(to_review) + len(returned) + len(failed)},
+            {"key": "reviewed", "label": "Reviewed, not yet sent", "count": len(tds_to_determine) + len(ready_to_send)},
             {"key": "approval", "label": "Awaiting approval", "count": counts.get("PENDING_APPROVAL", 0)},
             {"key": "approved", "label": "Approved / with Finance", "count": counts.get("APPROVED", 0) + counts.get("READY_FOR_PAYMENT", 0)
              + counts.get("PARTIALLY_PAID", 0)},
@@ -274,32 +274,33 @@ class RoleDashboardService:
         oldest = sorted(to_review + returned + failed + tds_to_determine + ready_to_send, key=lambda r: r["age_days"], reverse=True)
         open_rows = to_review + returned + failed + tds_to_determine + ready_to_send
         assignment_kpis = []
+        unassigned = []
         if assignment_in_use:
             mine_open = [r for r in open_rows if r["assigned_to_me"]]
-            unassigned = [r for r in open_rows if r["assignee"] is None]
+            unassigned = [r for r in open_rows if r["assignee"] is None]  # for the AP lead (AP Team page), not a card
             assignment_kpis = [
                 _kpi("assigned_to_me", "Assigned to me", len(mine_open), "count",
-                     f"{sum(1 for r in mine_open if r['status_code'] == 'RETURNED_FOR_REVIEW')} returned to me" if mine_open else "Nothing assigned",
+                     f"{sum(1 for r in mine_open if r['status_code'] == 'RETURNED_FOR_REVIEW')} sent back to me" if mine_open else "Nothing assigned",
                      "indigo" if mine_open else "gray", "/accounts-payable/invoices/review-workbench?assigned=me"),
-                _kpi("unassigned", "Unassigned", len(unassigned), "count", "Waiting for someone to claim",
-                     "amber" if unassigned else "gray", "/accounts-payable/invoices/review-workbench?assigned=unassigned"),
             ]
+        ready = tds_to_determine + ready_to_send  # TDS is worked out on review - both are "reviewed, send it"
 
         return {
             "as_of": self.today,
             "kpis": assignment_kpis + [
-                _kpi("to_review", "To review", len(to_review), "count", "Extracted, awaiting OCR review",
-                     "indigo" if to_review else "gray", "/accounts-payable/invoices/ocr-review"),
-                _kpi("returned", "Returned to AP", len(returned), "count", "Sent back by an approver",
-                     "rose" if returned else "gray", "/accounts-payable/invoices?queue=ocr_review"),
-                _kpi("tds", "TDS to determine", len(tds_to_determine), "count", "Reviewed, TDS not yet determined",
-                     "amber" if tds_to_determine else "gray", "/accounts-payable/invoices"),
-                _kpi("ready_to_send", "Ready to send", len(ready_to_send), "count", "Reviewed with TDS, send for approval",
-                     "emerald" if ready_to_send else "gray", "/accounts-payable/invoices"),
+                _kpi("to_review", "To review", len(to_review), "count", "New invoices to check",
+                     "indigo" if to_review else "gray", "/accounts-payable/invoices/review-workbench"),
+                _kpi("returned", "Sent back for correction", len(returned), "count", "An approver asked for changes",
+                     "rose" if returned else "gray", "/accounts-payable/invoices?queue=approval"),
+                _kpi("ready_to_send", "Ready to send", len(ready), "count", "Reviewed - send for approval",
+                     "emerald" if ready else "gray", "/accounts-payable/invoices/review-workbench"),
+                _kpi("awaiting_approval", "Waiting for approval", counts.get("PENDING_APPROVAL", 0), "count", "With the approvers",
+                     "gray", "/accounts-payable/invoices?queue=approval"),
                 _kpi("uploaded", "Received this month", this_month["team"], "count",
-                     f"{this_month['mine']} uploaded by me" + (f" · {len(failed)} OCR failed" if failed else ""), "gray",
-                     "/accounts-payable/invoices/upload"),
+                     f"{this_month['mine']} uploaded by me" + (f" · {len(failed)} couldn't be read" if failed else ""), "gray",
+                     "/accounts-payable/invoices"),
             ],
+            "unassigned_count": len(unassigned),
             "intake_trend": list(intake.values()),
             "pipeline": pipeline,
             "oldest": oldest[:LIST_LIMIT],

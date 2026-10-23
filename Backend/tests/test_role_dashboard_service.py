@@ -121,8 +121,10 @@ def test_my_work_buckets_by_next_step(make, monkeypatch):
     monkeypatch.setattr(service.reporting, "invoice_figures", lambda *a, **k: [])
     data = service.build("my_work", {"user_id": "7", "permissions": ["INVOICE_OCR_REVIEW"]})
     kpis = {k["key"]: k["value"] for k in data["kpis"]}
-    assert kpis == {"to_review": 1, "returned": 1, "tds": 1, "ready_to_send": 1, "uploaded": 2}
-    assert "1 uploaded by me" in data["kpis"][-1]["subtitle"] and "1 OCR failed" in data["kpis"][-1]["subtitle"]
+    # business view: reviewed invoices are all "ready to send" (TDS is worked out on review); no unassigned card
+    assert kpis == {"to_review": 1, "returned": 1, "ready_to_send": 2, "awaiting_approval": 4, "uploaded": 2}
+    assert "1 uploaded by me" in data["kpis"][-1]["subtitle"] and "1 couldn't be read" in data["kpis"][-1]["subtitle"]
+    assert all("OCR" not in k["label"] + (k["subtitle"] or "") for k in data["kpis"])
     pipeline = {p["key"]: p["count"] for p in data["pipeline"]}
     assert pipeline == {"review": 3, "reviewed": 2, "approval": 4, "approved": 3}
     assert data["oldest"][0]["invoice_id"] == 1 and data["oldest"][0]["mine"] is True

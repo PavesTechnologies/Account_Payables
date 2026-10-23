@@ -73,7 +73,7 @@ def test_ap_executive_and_approver_items():
     assert by_key["approve"]["severity"] == "critical"  # waited 5 days
     assert "1 is high value" in by_key["approve"]["detail"]
     assert by_key["ap_review"]["severity"] == "high" and "4.5 days" in by_key["ap_review"]["detail"]
-    assert by_key["ap_returned"]["link"] == "/accounts-payable/invoices?queue=ocr_review"
+    assert by_key["ap_returned"]["link"] == "/accounts-payable/invoices?queue=approval"  # returned invoices sit in that tab
     assert "ap_tds" not in by_key  # zero -> not listed
 
 

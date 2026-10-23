@@ -126,34 +126,26 @@ class ActionCenterService:
     def _ap(self, view) -> List[dict]:
         k = self._kpis(view)
         out = []
-        if "assigned_to_me" in k:  # work assignment in use: my queue first, then the unclaimed pool
-            mine, pool = k["assigned_to_me"]["value"], k["unassigned"]["value"]
+        if "assigned_to_me" in k:  # work assignment in use: my queue first (unowned work is the AP lead's, on AP Team)
+            mine = k["assigned_to_me"]["value"]
             if mine:
                 out.append(_action("ap_mine", "ap", "high", f"Work {_plural(mine, 'invoice')} assigned to you",
                                    k["assigned_to_me"]["subtitle"] + " - review, fix or send each one.", mine,
                                    "/accounts-payable/invoices/review-workbench?assigned=me", "Open my queue"))
-            if pool:
-                out.append(_action("ap_unassigned", "ap", "normal", f"Claim {_plural(pool, 'unassigned invoice')}",
-                                   "No one owns these yet - claim them so they don't wait.", pool,
-                                   "/accounts-payable/invoices/review-workbench?assigned=unassigned", "Claim"))
         oldest = max((r["age_days"] for r in view.get("oldest", [])), default=0)
         if n := k["returned"]["value"]:
             out.append(_action("ap_returned", "ap", "high", f"Fix and resubmit {_plural(n, 'returned invoice')}",
                                "An approver sent these back with a comment - read it, correct the invoice, resubmit.",
-                               n, "/accounts-payable/invoices?queue=ocr_review", "Open returned"))
+                               n, "/accounts-payable/invoices?queue=approval", "Open returned"))
         if n := k["to_review"]["value"]:
             out.append(_action("ap_review", "ap", "high" if oldest > 2 else "normal",
                                f"Review {_plural(n, 'uploaded invoice')}",
-                               "OCR has read these - check the fields, set department / category, save."
+                               "Their details were read for you - check them, set department / category, save."
                                + (f" Oldest waiting {oldest:g} days." if oldest > 2 else ""),
                                n, "/accounts-payable/invoices/review-workbench", "Review now"))
-        if n := k["tds"]["value"]:
-            out.append(_action("ap_tds", "ap", "normal", f"Set TDS on {_plural(n, 'reviewed invoice')}",
-                               "TDS must be determined before an invoice can go for approval.",
-                               n, "/accounts-payable/invoices/review-workbench", "Determine TDS"))
         if n := k["ready_to_send"]["value"]:
             out.append(_action("ap_send", "ap", "normal", f"Send {_plural(n, 'invoice')} for approval",
-                               "Reviewed with TDS set - one click sends them to the right approver.",
+                               "Reviewed - one click sends them to the right approver.",
                                n, "/accounts-payable/invoices/review-workbench", "Send for approval"))
         if n := view.get("term_issue_count"):
             out.append(_action("ap_terms", "ap", "normal", f"Check payment terms on {_plural(n, 'invoice')}",
