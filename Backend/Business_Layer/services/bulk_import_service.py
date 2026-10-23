@@ -19,6 +19,9 @@ Flow
                     show the same token number / date.
      Row -> READY (everything confirmed) / NEEDS_REVIEW (a mismatch a person must look at) /
      ERROR (cannot be recorded).
+     Receipts only (create_receipt_job): no sheet - each receipt is first matched to the invoice(s) it
+     pays (_match_receipts: the invoice number on the receipt, else the beneficiary + amount, else the
+     amount alone - flagged for review), then checked exactly like a sheet row.
   3. record - READY rows (and NEEDS_REVIEW rows a person accepts) are recorded. SharePoint jobs
      (auto_record) record READY rows on their own; manual uploads wait for "Record verified rows".
 """
@@ -102,6 +105,7 @@ def _m(value) -> Optional[Decimal]:
 
 
 MAX_DOCUMENTS = 300
+RECEIPTS_ONLY = "RECEIPTS_ONLY"  # source_reference of a receipts-only payment import (no sheet)
 MAX_DOCUMENT_BYTES = 300 * 1024 * 1024
 
 
@@ -250,6 +254,32 @@ class BulkImportService:
         self.db.commit()
         return job.job_id
 
+    def create_receipt_job(self, documents: Sequence[Tuple[str, Optional[str], bytes]], user_id: str,
+                           user_name: Optional[str] = None) -> int:
+        """Receipts only: one row per receipt (loose files and / or ZIPs); the invoice is found when it is read."""
+        files = expand_documents(documents)
+        if not files:
+            raise ValueError("Add at least one receipt")
+        job = BulkImportJob(kind=KIND_PAYMENTS, source=SOURCE_MANUAL, status=JOB_VALIDATING,
+                            file_name=f"Receipts only - {len(files)} file{'s' if len(files) != 1 else ''}",
+                            source_reference=RECEIPTS_ONLY, created_by=user_id,
+                            created_by_name=(user_name or None) and user_name[:200])
+        self.db.add(job)
+        self.db.flush()
+        for number, candidate in enumerate(files, start=1):
+            messages, path = [], None
+            if candidate.problem:
+                messages.append(_msg("error", f"Document '{candidate.file_name}': {candidate.problem}"))
+            else:
+                path = upload_to_s3(filename=candidate.file_name, content=candidate.content,
+                                    content_type=candidate.content_type, prefix=f"bulk-import/{job.job_id}/docs/")["filepath"]
+            self.db.add(BulkImportRow(
+                job_id=job.job_id, row_number=number, data={"receipt_file": candidate.file_name, "receipts_only": True},
+                document_name=candidate.file_name[:255], document_path=path,
+                status=ROW_ERROR if messages else ROW_PENDING, messages=messages or None))
+        self.db.commit()
+        return job.job_id
+
     # ==================================================================
     # 2. Validate
     # ==================================================================
@@ -263,6 +293,7 @@ class BulkImportService:
         for row in pending:
             row.extracted = _jsonable(extracted.get(row.document_path)) if row.document_path in extracted else None
         if job.kind == KIND_PAYMENTS:
+            pending = self._match_receipts(job, pending, extracted)
             self._evaluate_payments(pending, extracted)
         else:
             groups: Dict[str, List[BulkImportRow]] = {}
@@ -273,6 +304,91 @@ class BulkImportService:
                 groups.setdefault(row.group_key, []).append(row)
             for group in groups.values():
                 (self._evaluate_challan if job.kind == KIND_TDS_CHALLANS else self._evaluate_filing)(group, extracted)
+
+    # ---------------- receipts only: which invoice(s) does each receipt pay?
+    def _payable_invoices(self) -> List[Dict[str, Any]]:
+        from Backend.Data_Access_Layer.models.master import StatusMaster
+        tracking = PaymentTrackingService(self.db)
+        ids = [i for (i,) in self.db.query(Invoice.invoice_id).join(StatusMaster, StatusMaster.status_id == Invoice.status_id)
+               .filter(StatusMaster.status_code.in_(("READY_FOR_PAYMENT", "PARTIALLY_PAID"))).all()]
+        out = []
+        for invoice_id in ids:
+            summary = tracking.get_invoice_payments(invoice_id)
+            remaining = Decimal(str(summary["remaining_amount"]))
+            if summary.get("can_record_payment") and remaining > 0:
+                out.append({"invoice_id": invoice_id, "invoice_number": summary["invoice_number"],
+                            "vendor_name": summary["vendor_name"], "remaining": remaining})
+        return out
+
+    @staticmethod
+    def _mentioned(text: str, invoices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Invoices whose number appears on the receipt (remarks / narration), ignoring spaces and punctuation;
+        a number that is only part of a longer number also found is dropped."""
+        flat = re.sub(r"[^A-Z0-9]", "", (text or "").upper())
+        key = lambda inv: re.sub(r"[^A-Z0-9]", "", inv["invoice_number"].upper())
+        found = [inv for inv in invoices if len(key(inv)) >= 5 and key(inv) in flat]
+        return [inv for inv in found if not any(key(inv) != key(o) and key(inv) in key(o) for o in found)]
+
+    def _match_receipts(self, job: BulkImportJob, rows: List[BulkImportRow], extracted) -> List[BulkImportRow]:
+        todo = [r for r in rows if (r.data or {}).get("receipts_only") and not r.data.get("invoice_id")]
+        if not todo:
+            return rows
+        invoices = self._payable_invoices()
+        claimed: set = set()
+        next_number = max((r.row_number for r in job.rows), default=0) + 1
+        out = list(rows)
+        for row in todo:
+            receipt = extracted.get(row.document_path) or {}
+            amount = _m(((receipt.get("fields") or {}).get("amount") or {}).get("value"))
+            beneficiary = receipt.get("beneficiary_name")
+            notes: List[Dict[str, str]] = []
+            matched: List[Dict[str, Any]] = []
+            how = ""
+            mentioned = self._mentioned(receipt.get("text") or "", invoices)
+            if mentioned:
+                matched, how = mentioned, "the invoice number on the receipt"
+            else:
+                pool = [i for i in invoices if i["invoice_id"] not in claimed]
+                vendor_pool = [i for i in pool if beneficiary and names_look_alike(beneficiary, i["vendor_name"])]
+                exact = [i for i in (vendor_pool or pool) if amount is not None and i["remaining"] == amount]
+                if len(exact) == 1:
+                    matched = exact
+                    how = "the beneficiary and the amount" if vendor_pool else "the amount only"
+                    if not vendor_pool:
+                        notes.append(_msg("review", f"Matched to {exact[0]['invoice_number']} on the amount only - "
+                                                    "check it is the right invoice"))
+                elif vendor_pool and amount is not None and len(vendor_pool) > 1 \
+                        and sum((i["remaining"] for i in vendor_pool), Decimal("0")) == amount:
+                    matched, how = vendor_pool, "the beneficiary - the amount pays all its open invoices"
+                elif len(exact) > 1:
+                    notes.append(_msg("error", f"{len(exact)} invoices are due for {amount:,.2f} - put the invoice number in "
+                                               "the payment remarks, or record this one from Payment Management"))
+                elif receipt:
+                    notes.append(_msg("error", "Could not find the invoice this receipt pays (no invoice number on it, and no "
+                                               "open invoice of this beneficiary for this amount) - record it from Payment Management"))
+            if not matched:
+                row.status = ROW_ERROR
+                row.messages = (row.messages or []) + (notes or [_msg("error", "The receipt could not be read")])
+                out.remove(row)
+                continue
+            for n, inv in enumerate(matched):
+                claimed.add(inv["invoice_id"])
+                data = {**row.data, "invoice_id": inv["invoice_id"], "invoice_number": inv["invoice_number"]}
+                if len(matched) > 1:  # one transfer for several invoices: each gets its open balance
+                    data["amount"] = str(inv["remaining"])
+                msgs = [_msg("info", f"Matched to {inv['invoice_number']} by {how}")] + notes
+                if n == 0:
+                    row.data, row.invoice_id = data, inv["invoice_id"]
+                    row.messages = (row.messages or []) + msgs
+                else:
+                    extra = BulkImportRow(job_id=job.job_id, row_number=next_number, data=data, invoice_id=inv["invoice_id"],
+                                          document_name=row.document_name, document_path=row.document_path,
+                                          extracted=row.extracted, status=ROW_PENDING, messages=msgs)
+                    next_number += 1
+                    self.db.add(extra)
+                    self.db.flush()
+                    out.append(extra)
+        return out
 
     # ---------------- payments
     _FROM_RECEIPT = (("payment_date", "payment date"), ("payment_mode", "payment mode"), ("reference_number", "UTR"))
@@ -303,7 +419,10 @@ class BulkImportService:
                                                     ("payment_mode", "Payment Mode"), ("reference_number", "UTR / Reference"))
                            if data.get(key) in (None, "")]
                 if missing and not (len(group) > 1 and missing == ["Amount Paid"]):
-                    per_row[row.row_id].append(_msg("error", f"{', '.join(missing)} not in the sheet or on the receipt - fill {'it' if len(missing) == 1 else 'them'} in the sheet"))
+                    per_row[row.row_id].append(_msg("error", (
+                        f"{', '.join(missing)} not found on the receipt - record this payment from Payment Management"
+                        if row.data.get("receipts_only") else
+                        f"{', '.join(missing)} not in the sheet or on the receipt - fill {'it' if len(missing) == 1 else 'them'} in the sheet")))
                 if filled:
                     per_row[row.row_id].append(_msg("info", "Taken from the receipt: " + ", ".join(filled)))
                     data["filled_from_receipt"] = filled

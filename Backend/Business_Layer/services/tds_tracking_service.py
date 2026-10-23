@@ -85,6 +85,12 @@ def _user(user_id) -> Optional[str]:
     return str(user_id) if user_id is not None else None
 
 
+def _quarter_end(day: datetime.date) -> datetime.date:
+    """Last day of the TDS quarter (Apr-Jun, Jul-Sep, Oct-Dec, Jan-Mar) containing the day."""
+    month = ((day.month - 1) // 3) * 3 + 3
+    return (datetime.date(day.year, month, 28) + datetime.timedelta(days=4)).replace(day=1) - datetime.timedelta(days=1)
+
+
 def allowed_actions(determination_status: Optional[str], tracking_status: str) -> list[str]:
     if determination_status != DETERMINATION_STATUS_VERIFIED:
         return []
@@ -281,6 +287,11 @@ class TdsTrackingService:
             date = self._date(data.filing_date, "Filing Date", errors)
             if date and tracking.deposit_date and date < tracking.deposit_date:
                 errors.append("Filing Date cannot be before the TDS payment date")
+            # a quarterly statement can only be filed once its quarter is over (26Q / 27Q)
+            quarter_end = _quarter_end(tracking.deduction_date) if tracking.deduction_date else None
+            if date and quarter_end and date <= quarter_end:
+                errors.append(f"The quarter of this deduction ends on {quarter_end:%d %b %Y} - "
+                              "its TDS statement can only be filed after that")
             reference = self._reference(data.filing_reference, "Filing Reference", 100, errors)
             if not errors:
                 tracking.filing_date, tracking.filing_reference = date, reference

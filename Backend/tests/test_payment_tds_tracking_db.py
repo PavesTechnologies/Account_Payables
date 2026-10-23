@@ -197,6 +197,10 @@ def test_receipt_upload_and_listing(db, tag, fake_s3):
 # TDS Tracking
 # =========================================================
 
+def _quarter_start(day):
+    return datetime.date(day.year, ((day.month - 1) // 3) * 3 + 1, 1)
+
+
 class _D(SimpleNamespace):
     def __getattr__(self, name):  # missing optional fields -> None
         return None
@@ -217,10 +221,13 @@ def test_tds_list_includes_only_applicable_and_defaults_to_pending(db, tag):
 def test_tds_workflow_deduction_deposit_filing(db, tag):
     invoice = _invoice(db, tag)
     svc = TdsTrackingService(db)
-    d1 = TODAY - datetime.timedelta(days=20)
+    # deducted in the previous TDS quarter, so its statement can be filed today
+    d1 = _quarter_start(TODAY) - datetime.timedelta(days=20)
 
     with pytest.raises(ValueError, match="not allowed while TDS status is TDS Pending"):
         svc.record_filing(invoice.invoice_id, _D(filing_date=TODAY, filing_reference="ACK1"), USER)
+    invoice.invoice_date = d1 - datetime.timedelta(days=10)  # after the failed call, whose rollback would undo it
+    db.flush()
 
     detail = svc.record_deduction(invoice.invoice_id, _D(deduction_date=d1, remarks="deducted at payment"), USER)
     assert detail["tds_tracking_status"] == "TDS_DEDUCTED" and detail["tracking"]["deduction_date"] == d1
@@ -366,3 +373,14 @@ def test_tds_tracking_routes_permissions(db, tag):
     assert updater.post(f"/tds/tracking/{invoice.invoice_id}/filing",
                         json={"filing_date": TODAY.isoformat(), "filing_reference": "A"}).status_code == 422
     assert viewer.get("/tds/tracking/metadata").json()["tracking_statuses"][0]["value"] == "TDS_PENDING"
+
+
+def test_a_quarter_is_filed_only_after_it_ends(db, tag):
+    invoice = _invoice(db, tag)
+    svc = TdsTrackingService(db)
+    deducted = max(_quarter_start(TODAY), invoice.invoice_date)
+    svc.record_deduction(invoice.invoice_id, _D(deduction_date=deducted), USER)
+    svc.record_deposit(invoice.invoice_id, _D(challan_number="CH00200", deposit_date=deducted), USER)
+    with pytest.raises(ValueError, match="can only be filed after that"):
+        svc.record_filing(invoice.invoice_id, _D(filing_date=TODAY, filing_reference="ACK-EARLY-01"), USER)
+

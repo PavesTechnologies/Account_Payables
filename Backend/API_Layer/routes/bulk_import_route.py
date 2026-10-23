@@ -66,6 +66,29 @@ def download_template(path_kind: str, request: Request):
                     headers={"Content-Disposition": f'attachment; filename="{path_kind}-import-template.xlsx"'})
 
 
+@router.post("/payments/receipts", status_code=202, dependencies=[Depends(permission_based_access(_ANY))])
+async def upload_receipts(request: Request, background_tasks: BackgroundTasks, documents: List[UploadFile] = File(...)):
+    """Receipts only - no sheet: each receipt (files and / or ZIPs) is read and matched to the invoice it
+    pays, then checked like a sheet row. Returns at once; poll GET /jobs/{job_id}."""
+    _require(KIND_PAYMENTS, request)
+    docs, total = [], 0
+    for doc in documents:
+        content = await doc.read(MAX_UPLOAD_BYTES + 1)
+        total += len(content)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="The receipts are larger than 300 MB - upload them in parts.")
+        docs.append((doc.filename or "receipt", doc.content_type, content))
+    user_id, name = _user(request)
+    service = BulkImportService(request.state.db)
+    try:
+        job_id = await run_in_threadpool(service.create_receipt_job, docs, user_id, name)
+    except ValueError as exc:
+        request.state.db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    background_tasks.add_task(importer.validate_job, job_id, user_id)
+    return await run_in_threadpool(service.job_detail, job_id)
+
+
 @router.post("/{path_kind}", status_code=202, dependencies=[Depends(permission_based_access(_ANY))])
 async def upload(path_kind: str, request: Request, background_tasks: BackgroundTasks,
                  workbook: UploadFile = File(...), documents: List[UploadFile] = File(default=[])):

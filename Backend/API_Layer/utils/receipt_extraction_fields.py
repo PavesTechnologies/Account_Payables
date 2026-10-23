@@ -145,6 +145,8 @@ def parse_receipt_fields(results: Dict[str, Dict[str, Any]], full_text: str) -> 
         # The STATUS answer decides; whole-page wording only counts for an explicit failure, since
         # "paid", "initiated", "scheduled" appear in ordinary receipt text.
         "transaction_status": detect_status(status_text) if status_text else ("FAILED" if _FAILED.search(full_text or "") else None),
+        # the page text, for finding which invoice(s) the receipt pays (remarks / narration) in a receipts-only import
+        "text": (full_text or "")[:4000],
     }
 
 

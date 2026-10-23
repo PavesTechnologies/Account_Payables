@@ -93,6 +93,13 @@ def bd(d: dt.date, n: int = 1) -> dt.date:
     return d
 
 
+def bd_on_or_before(d: dt.date) -> dt.date:
+    """d itself, or the last business day before it if d is a weekend (statutory deadlines don't move later)."""
+    while d.weekday() >= 5:
+        d -= dt.timedelta(days=1)
+    return d
+
+
 def month_start_of(d: dt.date) -> dt.date:
     return d.replace(day=1)
 
@@ -1357,9 +1364,9 @@ class Seeder:
                     lambda st=st, n=n, on=on, a=amount, r=remarks: self.pay(st, n, on, a, r))
 
         month, n = dt.date(2026, 4, 1), 0
-        while True:  # each month's TDS is deposited by the 7th of the next month
+        while True:  # each month's TDS is deposited by the 7th of the next month (one challan per section)
             nxt = (month + dt.timedelta(days=32)).replace(day=1)
-            deposit_on = bd(nxt.replace(day=6), 0)
+            deposit_on = bd_on_or_before(nxt.replace(day=6))
             if deposit_on > AS_OF:
                 break
             add(at(deposit_on, 11, 45), f"TDS challans for {month:%b %Y}",
