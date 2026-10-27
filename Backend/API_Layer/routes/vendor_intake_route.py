@@ -28,6 +28,7 @@ from Backend.Business_Layer.services.vendor_intake_service import (
     VendorIntakeService,
     nda_document_status,
 )
+from Backend.Business_Layer.services.vendor_onboarding_service import VendorOnboardingService
 from Backend.Data_Access_Layer.models.vendor import VendorEngagement
 from Backend.Data_Access_Layer.models.vendor_screening_rule import VendorScreeningRule
 
@@ -102,6 +103,11 @@ _CONFLICT_MESSAGES = {
     "An engagement already exists for this vendor in the selected department and category",
 }
 
+# Only reachable when POST "" carries onboarding_request_id; every other
+# intake validation error keeps answering 422 exactly as before.
+ONBOARDING_REQUEST_NOT_FOUND = "Vendor onboarding request not found"
+ONBOARDING_INTAKE_ALREADY_DONE = "Vendor intake has already been completed for this onboarding request"
+
 
 # ---------------------------------------------------------
 # Vendor Intake (Save)
@@ -113,8 +119,14 @@ def create_intake(payload: VendorIntakeCreateRequest, http_request: Request):
     try:
         user_id = _get_user_id(http_request)
 
-        service = VendorIntakeService(db)
-        result = service.create_intake(payload, user_id)
+        onboarding_request = None
+        if payload.onboarding_request_id is not None:
+            # Intake for a PR Officer's onboarding request: same intake, plus
+            # the request link + status move, committed together.
+            onboarding_request, result = VendorOnboardingService(db).intake_for_request(payload, user_id)
+        else:
+            service = VendorIntakeService(db)
+            result = service.create_intake(payload, user_id)
 
         return VendorIntakeResponse(
             engagement_id=result.engagement.vendor_category_mapping_id,
@@ -123,11 +135,24 @@ def create_intake(payload: VendorIntakeCreateRequest, http_request: Request):
             pre_screen_status=result.engagement.pre_screen_status,
             gst_status=result.gst_status,
             message="Vendor intake saved successfully",
+            onboarding_request_id=onboarding_request.id if onboarding_request is not None else None,
+            onboarding_status_code=(
+                onboarding_request.status.status_code
+                if onboarding_request is not None and onboarding_request.status is not None
+                else None
+            ),
         )
 
     except ValueError as e:
         db.rollback()
-        raise HTTPException(status_code=422, detail=str(e))
+        message = str(e)
+        if message == ONBOARDING_REQUEST_NOT_FOUND:
+            status_code = 404
+        elif message == ONBOARDING_INTAKE_ALREADY_DONE:
+            status_code = 409
+        else:
+            status_code = 422
+        raise HTTPException(status_code=status_code, detail=message)
 
     except IntegrityError:
         db.rollback()

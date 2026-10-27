@@ -1379,3 +1379,46 @@ def test_put_engagement_rejects_a_malformed_body(monkeypatch):
     client = _engagement_client(monkeypatch, _handler)
 
     assert client.put("/vendor-intake/1", json={"category_id": "not-an-int"}).status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# commit flag (used by the onboarding-request orchestration)
+# ---------------------------------------------------------------------------
+
+
+def _count_commits(env, monkeypatch):
+    commits = []
+    monkeypatch.setattr(type(env.service.db), "commit", lambda self: commits.append(1))
+    return commits
+
+
+def test_create_intake_commits_by_default(env, monkeypatch):
+    commits = _count_commits(env, monkeypatch)
+
+    env.service.create_intake(_manual_payload(vendor_name="Default Commit Co"), "user-1")
+
+    assert commits == [1]
+
+
+def test_create_intake_without_commit_leaves_engagement_for_the_caller(env, monkeypatch):
+    commits = _count_commits(env, monkeypatch)
+
+    result = env.service.create_intake(_manual_payload(vendor_name="Deferred Commit Co"), "user-1", commit=False)
+
+    assert commits == []
+    assert result.engagement.pre_screen_status == "PENDING"
+    # Same validations still apply with commit=False.
+    with pytest.raises(ValueError, match="already exists"):
+        env.service.create_intake(_manual_payload(vendor_name="Deferred Commit Co"), "user-1", commit=False)
+
+
+def test_pre_screen_without_commit_records_the_same_verdict(env, monkeypatch):
+    result = env.service.create_intake(_manual_payload(vendor_name="Screen Later Co"), "user-1")
+    env.vendor_dao.statuses[1] = SimpleNamespace(status_code="ACTIVE")
+    commits = _count_commits(env, monkeypatch)
+
+    outcome = env.service.run_pre_screen(result.engagement.vendor_category_mapping_id, "user-1", commit=False)
+
+    assert commits == []
+    assert outcome.result == "PASS"
+    assert result.engagement.pre_screen_status == "PASS"

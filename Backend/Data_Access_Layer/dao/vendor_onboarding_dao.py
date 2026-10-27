@@ -116,13 +116,46 @@ class VendorOnboardingDAO:
         self.db.flush()
         return request
 
+    @staticmethod
+    def _request_detail_options():
+        # pr/department/category feed the Vendor Intake form prefill on the
+        # request DTO, so they are loaded up front rather than lazily per row.
+        return (
+            selectinload(VendorOnboardingRequest.status),
+            selectinload(VendorOnboardingRequest.pr),
+            selectinload(VendorOnboardingRequest.department),
+            selectinload(VendorOnboardingRequest.purchase_category),
+        )
+
     def get_request_by_id(self, request_id: int) -> Optional[VendorOnboardingRequest]:
         return (
             self.db.query(VendorOnboardingRequest)
-            .options(selectinload(VendorOnboardingRequest.status))
+            .options(*self._request_detail_options())
             .filter(VendorOnboardingRequest.id == request_id)
             .first()
         )
+
+    def link_vendor(self, request_id: int, vendor_id: int, engagement_id: int) -> bool:
+        """Link the intake result to the request only if no vendor is linked
+        yet. A conditional UPDATE rather than a read-then-write: two
+        concurrent submissions for one request serialise on the row lock, and
+        the loser matches zero rows instead of overwriting the winner's link."""
+
+        updated = (
+            self.db.query(VendorOnboardingRequest)
+            .filter(
+                VendorOnboardingRequest.id == request_id,
+                VendorOnboardingRequest.vendor_id.is_(None),
+            )
+            .update(
+                {
+                    VendorOnboardingRequest.vendor_id: vendor_id,
+                    VendorOnboardingRequest.engagement_id: engagement_id,
+                },
+                synchronize_session="fetch",
+            )
+        )
+        return updated == 1
 
     def get_open_request(
         self,
@@ -167,7 +200,7 @@ class VendorOnboardingDAO:
     ) -> List[VendorOnboardingRequest]:
 
         query = self.db.query(VendorOnboardingRequest).options(
-            selectinload(VendorOnboardingRequest.status)
+            *self._request_detail_options()
         )
 
         if pr_id is not None:

@@ -17,8 +17,11 @@ class VendorIntakeCreateRequest(BaseModel):
     business_requirement: Optional[str] = None
     purpose_of_onboarding: Optional[str] = None
     # Optional procurement handoff context, set when this intake originates
-    # from a vendor onboarding request raised by a PR Officer. Purely
-    # additive - the standalone Register Vendor flow omits it.
+    # from a vendor onboarding request raised by a PR Officer. When set, the
+    # intake is linked to that request (department/category must match it)
+    # and the request moves to PRE_SCREEN_PENDING in the same commit - see
+    # VendorOnboardingService.intake_for_request. The standalone Register
+    # Vendor flow omits it and is unaffected.
     onboarding_request_id: Optional[int] = None
 
     # GST branch. When gst_registered is True, gstin is required and is
@@ -52,6 +55,9 @@ class VendorIntakeResponse(BaseModel):
     pre_screen_status: str
     gst_status: Optional[str] = None
     message: str
+    # Set only when the intake was submitted for a vendor onboarding request.
+    onboarding_request_id: Optional[int] = None
+    onboarding_status_code: Optional[str] = None
 
 
 class VendorEngagementUpdateRequest(BaseModel):

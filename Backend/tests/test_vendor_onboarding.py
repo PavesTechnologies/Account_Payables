@@ -9,6 +9,7 @@ are deliberately NOT re-tested here.
 """
 from __future__ import annotations
 
+import datetime
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -117,6 +118,15 @@ class FakeOnboardingDAO:
     def get_request_by_id(self, request_id):
         return self.requests.get(request_id)
 
+    def link_vendor(self, request_id, vendor_id, engagement_id):
+        # Same compare-and-set contract as the real conditional UPDATE.
+        request = self.requests.get(request_id)
+        if request is None or request.vendor_id is not None:
+            return False
+        request.vendor_id = vendor_id
+        request.engagement_id = engagement_id
+        return True
+
     def get_open_request(self, pr_id, department_id, purchase_category_id):
         for request in self.requests.values():
             if (
@@ -150,22 +160,29 @@ class FakeIntakeService:
     handed so the tests can assert PR context is passed through untouched."""
 
     calls: List[object] = []
+    commit_flags: List[bool] = []
+    pre_screen_commit_flags: List[bool] = []
     pre_screen_result = "PASS"
     pre_screen_reason = None
+    intake_error: Optional[Exception] = None
 
     def __init__(self, db):
         self.db = db
 
-    def create_intake(self, payload, user_id):
+    def create_intake(self, payload, user_id, commit=True):
         FakeIntakeService.calls.append(payload)
+        FakeIntakeService.commit_flags.append(commit)
+        if FakeIntakeService.intake_error is not None:
+            raise FakeIntakeService.intake_error
         return SimpleNamespace(
-            engagement=SimpleNamespace(vendor_category_mapping_id=77),
+            engagement=SimpleNamespace(vendor_category_mapping_id=77, pre_screen_status="PENDING"),
             vendor=SimpleNamespace(vendor_id=900),
             vendor_created=True,
             gst_status="Active",
         )
 
-    def run_pre_screen(self, engagement_id, user_id):
+    def run_pre_screen(self, engagement_id, user_id, commit=True):
+        FakeIntakeService.pre_screen_commit_flags.append(commit)
         return SimpleNamespace(
             engagement=SimpleNamespace(vendor_category_mapping_id=engagement_id),
             result=FakeIntakeService.pre_screen_result,
@@ -195,6 +212,9 @@ class FakeVendorService:
 @pytest.fixture
 def env(monkeypatch):
     FakeIntakeService.calls = []
+    FakeIntakeService.commit_flags = []
+    FakeIntakeService.pre_screen_commit_flags = []
+    FakeIntakeService.intake_error = None
     FakeIntakeService.pre_screen_result = "PASS"
     FakeIntakeService.pre_screen_reason = None
     FakeVendorService.activations = []
@@ -786,3 +806,426 @@ def test_every_onboarding_route_is_permission_gated():
         vendor_onboarding_route.ONBOARDING_PROCESS,
     ):
         assert bundle, "permission bundle is empty"
+
+
+# ---------------------------------------------------------------------------
+# Vendor Intake for an onboarding request through the normal intake form
+# (POST /apm/vendor-intake with onboarding_request_id)
+# ---------------------------------------------------------------------------
+
+
+def _intake_form(**overrides):
+    from Backend.API_Layer.interface.vendor_intake_interface import VendorIntakeCreateRequest
+
+    defaults = dict(
+        onboarding_request_id=1, department_id=1, category_id=10,
+        gst_registered=False, vendor_name=None, country_id=10,
+        address_line1="1 Industrial Road", city="Pune",
+    )
+    defaults.update(overrides)
+    return VendorIntakeCreateRequest(**defaults)
+
+
+def _count_commits(env, monkeypatch):
+    commits = []
+    monkeypatch.setattr(type(env.service.db), "commit", lambda self: commits.append(1))
+    return commits
+
+
+def test_intake_form_links_vendor_and_moves_request_to_pre_screen(env):
+    request = env.service.create_request(_create_payload(assigned_to="intaker-9"), "officer-1")
+
+    updated, result = env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    assert updated.vendor_id == 900
+    assert updated.engagement_id == 77
+    assert updated.status.status_code == "PRE_SCREEN_PENDING"
+    assert result.vendor_created is True
+    assert any(a.action == "INTAKE_STARTED" for a in env.dao.audit_logs)
+
+
+def test_intake_form_fills_gaps_from_the_request(env):
+    request = env.service.create_request(_create_payload(), "officer-1")
+
+    env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    payload = FakeIntakeService.calls[0]
+    assert payload.vendor_name == "Acme Supplies"
+    assert payload.email == "sales@acme.example"
+    assert payload.business_requirement == "Laptops for the new dev team"
+    assert payload.purpose_of_onboarding == "Only supplier with 5-day lead time"
+
+
+def test_intake_form_values_supplied_by_vendor_intake_win(env):
+    request = env.service.create_request(_create_payload(), "officer-1")
+
+    env.service.intake_for_request(
+        _intake_form(onboarding_request_id=request.id, vendor_name="Acme Supplies Pvt Ltd",
+                     email="accounts@acme.example", pan_number="ABCDE1234F"),
+        "intaker-9",
+    )
+
+    payload = FakeIntakeService.calls[0]
+    assert payload.vendor_name == "Acme Supplies Pvt Ltd"
+    assert payload.email == "accounts@acme.example"
+    assert payload.pan_number == "ABCDE1234F"
+
+
+@pytest.mark.parametrize("override", [{"department_id": 2}, {"category_id": 11}])
+def test_intake_form_cannot_move_the_request_to_another_scope(env, override):
+    request = env.service.create_request(_create_payload(), "officer-1")
+
+    with pytest.raises(ValueError, match="must match the vendor onboarding request"):
+        env.service.intake_for_request(_intake_form(onboarding_request_id=request.id, **override), "intaker-9")
+
+    assert FakeIntakeService.calls == []
+    assert request.vendor_id is None
+
+
+def test_intake_form_for_unknown_request_is_not_found(env):
+    with pytest.raises(ValueError, match="Vendor onboarding request not found"):
+        env.service.intake_for_request(_intake_form(onboarding_request_id=404), "intaker-9")
+
+
+def test_intake_form_rejected_for_a_closed_request(env):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.update_status(request.id, "CANCELLED", "officer-1")
+
+    with pytest.raises(ValueError, match="cannot be started .* CANCELLED"):
+        env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    assert FakeIntakeService.calls == []
+
+
+def test_second_submission_for_the_same_request_is_rejected(env):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    with pytest.raises(ValueError, match="already been completed"):
+        env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+    with pytest.raises(ValueError, match="already been completed"):
+        env.service.start(request.id, _start_payload(), "intaker-9")
+
+    assert len(FakeIntakeService.calls) == 1
+
+
+def test_intake_and_request_link_are_one_commit(env, monkeypatch):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    commits = _count_commits(env, monkeypatch)
+
+    env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    # Vendor Intake is asked not to commit; the onboarding service commits
+    # the engagement and the request update together, once.
+    assert FakeIntakeService.commit_flags == [False]
+    assert commits == [1]
+
+
+def test_failed_intake_leaves_the_request_untouched_and_retry_succeeds(env, monkeypatch):
+    request = env.service.create_request(_create_payload(assigned_to="intaker-9"), "officer-1")
+    commits = _count_commits(env, monkeypatch)
+    FakeIntakeService.intake_error = ValueError("A vendor with this PAN number already exists")
+
+    with pytest.raises(ValueError, match="PAN number"):
+        env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    assert commits == []
+    assert request.vendor_id is None
+    assert request.status.status_code == "ASSIGNED"
+
+    FakeIntakeService.intake_error = None
+    updated, _ = env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    assert updated.status.status_code == "PRE_SCREEN_PENDING"
+    assert updated.vendor_id == 900
+
+
+def test_losing_a_concurrent_submission_commits_nothing(env, monkeypatch):
+    """Another submission linked a vendor between our checks and our write:
+    the conditional link fails, so this attempt's engagement is never
+    committed (the route rolls it back)."""
+
+    request = env.service.create_request(_create_payload(), "officer-1")
+    commits = _count_commits(env, monkeypatch)
+    monkeypatch.setattr(env.dao, "link_vendor", lambda *args: False)
+
+    with pytest.raises(ValueError, match="already been completed"):
+        env.service.intake_for_request(_intake_form(onboarding_request_id=request.id), "intaker-9")
+
+    assert commits == []
+    assert request.status.status_code == "CREATED"
+
+
+def test_start_also_commits_intake_and_link_together(env, monkeypatch):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    commits = _count_commits(env, monkeypatch)
+
+    env.service.start(request.id, _start_payload(), "intaker-9")
+
+    assert FakeIntakeService.commit_flags == [False]
+    assert FakeIntakeService.calls[0].onboarding_request_id == request.id
+    assert commits == [1]
+
+
+# ---------------------------------------------------------------------------
+# Supplying missing information after Pre-Screen
+# ---------------------------------------------------------------------------
+
+
+def test_pre_screen_rerun_after_missing_information_is_supplied_passes(env):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.intake_for_request(
+        _intake_form(onboarding_request_id=request.id, address_line1=None, city=None), "intaker-9"
+    )
+    FakeIntakeService.pre_screen_result = "NEED_INFORMATION"
+    env.service.run_pre_screen(request.id, "intaker-9")
+
+    # Address added through Vendor Management, Pre-Screen re-run.
+    FakeIntakeService.pre_screen_result = "PASS"
+    updated, _ = env.service.run_pre_screen(request.id, "intaker-9")
+
+    assert updated.status.status_code == "PASSED"
+    completed = env.service.complete(request.id, "intaker-9")
+    assert completed.status.status_code == "COMPLETED"
+    assert env.vendor_service.activations == [(900, True, "intaker-9")]
+
+
+def test_pre_screen_rerun_can_still_fail_from_need_information(env):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.start(request.id, _start_payload(), "intaker-9")
+    FakeIntakeService.pre_screen_result = "NEED_INFORMATION"
+    env.service.run_pre_screen(request.id, "intaker-9")
+
+    FakeIntakeService.pre_screen_result = "FAIL"
+    updated, _ = env.service.run_pre_screen(request.id, "intaker-9")
+
+    assert updated.status.status_code == "FAILED"
+    assert updated.closed_at is not None
+
+
+def test_pre_screen_verdict_and_request_status_are_one_commit(env, monkeypatch):
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.start(request.id, _start_payload(), "intaker-9")
+    commits = _count_commits(env, monkeypatch)
+
+    env.service.run_pre_screen(request.id, "intaker-9")
+
+    assert FakeIntakeService.pre_screen_commit_flags == [False]
+    assert commits == [1]
+
+
+def test_rejected_pre_screen_transition_commits_nothing(env, monkeypatch):
+    """A completed request re-screened to a non-PASS verdict cannot move -
+    and the engagement's new verdict must not be committed on its own."""
+
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.start(request.id, _start_payload(), "intaker-9")
+    env.service.run_pre_screen(request.id, "intaker-9")
+    env.service.complete(request.id, "intaker-9")
+    commits = _count_commits(env, monkeypatch)
+    FakeIntakeService.pre_screen_result = "NEED_INFORMATION"
+
+    with pytest.raises(ValueError, match="cannot move from COMPLETED"):
+        env.service.run_pre_screen(request.id, "intaker-9")
+
+    assert commits == []
+
+
+# ---------------------------------------------------------------------------
+# Request details for prefilling the Vendor Intake form
+# ---------------------------------------------------------------------------
+
+
+def _with_timestamps(request):
+    request.created_at = request.updated_at = datetime.datetime(2026, 10, 1)
+    return request
+
+
+def test_request_dto_exposes_intake_form_defaults_while_awaiting_intake(env):
+    from Backend.API_Layer.interface.vendor_intake_interface import VendorIntakeCreateRequest
+    from Backend.API_Layer.routes.vendor_onboarding_route import _to_dto
+
+    request = _with_timestamps(env.service.create_request(_create_payload(), "officer-1"))
+    request.pr = SimpleNamespace(pr_number="PR-2026-0001")
+    request.department = SimpleNamespace(name="Engineering")
+    request.purchase_category = SimpleNamespace(name="IT Hardware")
+
+    dto = _to_dto(request)
+
+    assert dto.pr_number == "PR-2026-0001"
+    assert dto.department_name == "Engineering"
+    assert dto.purchase_category_name == "IT Hardware"
+    assert dto.awaiting_intake is True
+    assert dto.intake_defaults.model_dump() == {
+        "onboarding_request_id": request.id,
+        "department_id": 1,
+        "category_id": 10,
+        "business_requirement": "Laptops for the new dev team",
+        "purpose_of_onboarding": "Only supplier with 5-day lead time",
+        "vendor_name": "Acme Supplies",
+        "email": "sales@acme.example",
+    }
+    # The defaults are exactly what the normal intake endpoint accepts.
+    VendorIntakeCreateRequest(**dto.intake_defaults.model_dump(), gst_registered=False, country_id=10)
+
+
+def test_request_dto_stops_offering_intake_once_a_vendor_is_linked(env):
+    from Backend.API_Layer.routes.vendor_onboarding_route import _to_dto
+
+    request = env.service.create_request(_create_payload(), "officer-1")
+    env.service.start(request.id, _start_payload(), "intaker-9")
+
+    dto = _to_dto(_with_timestamps(request))
+
+    assert dto.awaiting_intake is False
+    assert dto.intake_defaults is None
+    assert dto.vendor_id == 900
+
+
+# ---------------------------------------------------------------------------
+# Routes: dispatch + authorization
+# ---------------------------------------------------------------------------
+
+
+def _route_client(permissions):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    from Backend.API_Layer.routes import vendor_intake_route, vendor_onboarding_route
+
+    class _Auth(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user = {"user_id": "u-1", "permissions": permissions}
+            request.state.db = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
+            return await call_next(request)
+
+    app = FastAPI()
+    app.add_middleware(_Auth)
+    app.include_router(vendor_intake_route.router, prefix="/vendor-intake")
+    app.include_router(vendor_onboarding_route.router, prefix="/vendor-onboarding-requests")
+    return TestClient(app, raise_server_exceptions=False)
+
+
+INTAKE_BODY = {
+    "department_id": 1, "category_id": 10, "gst_registered": False,
+    "vendor_name": "Acme Supplies", "country_id": 10,
+}
+
+
+def _intake_result():
+    return SimpleNamespace(
+        engagement=SimpleNamespace(vendor_category_mapping_id=77, pre_screen_status="PENDING"),
+        vendor=SimpleNamespace(vendor_id=900), vendor_created=True, gst_status=None,
+    )
+
+
+def test_intake_endpoint_routes_onboarding_requests_through_the_onboarding_service(monkeypatch):
+    from Backend.API_Layer.routes import vendor_intake_route
+
+    seen = {}
+
+    def _intake_for_request(self, payload, user_id):
+        seen["request_id"] = payload.onboarding_request_id
+        request = SimpleNamespace(
+            id=payload.onboarding_request_id,
+            status=SimpleNamespace(status_code="PRE_SCREEN_PENDING"),
+        )
+        return request, _intake_result()
+
+    def _plain_intake(self, payload, user_id):
+        raise AssertionError("plain intake must not run for an onboarding request")
+
+    monkeypatch.setattr(vendor_intake_route.VendorOnboardingService, "intake_for_request", _intake_for_request)
+    monkeypatch.setattr(vendor_intake_route.VendorIntakeService, "create_intake", _plain_intake)
+
+    response = _route_client(["VENDOR_MANAGE"]).post(
+        "/vendor-intake", json={**INTAKE_BODY, "onboarding_request_id": 5}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert seen["request_id"] == 5
+    assert body["onboarding_request_id"] == 5
+    assert body["onboarding_status_code"] == "PRE_SCREEN_PENDING"
+    assert body["vendor_id"] == 900
+
+
+def test_intake_endpoint_without_a_request_is_the_unchanged_normal_flow(monkeypatch):
+    from Backend.API_Layer.routes import vendor_intake_route
+
+    def _no_onboarding(self, payload, user_id):
+        raise AssertionError("onboarding orchestration must not run for a normal intake")
+
+    monkeypatch.setattr(vendor_intake_route.VendorOnboardingService, "intake_for_request", _no_onboarding)
+    monkeypatch.setattr(
+        vendor_intake_route.VendorIntakeService, "create_intake",
+        lambda self, payload, user_id: _intake_result(),
+    )
+
+    response = _route_client(["VENDOR_MANAGE"]).post("/vendor-intake", json=INTAKE_BODY)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["onboarding_request_id"] is None
+
+
+def test_normal_intake_validation_errors_still_answer_422(monkeypatch):
+    from Backend.API_Layer.routes import vendor_intake_route
+
+    def _duplicate(self, payload, user_id):
+        raise ValueError("An engagement already exists for this vendor in the selected department and category")
+
+    monkeypatch.setattr(vendor_intake_route.VendorIntakeService, "create_intake", _duplicate)
+
+    assert _route_client(["VENDOR_MANAGE"]).post("/vendor-intake", json=INTAKE_BODY).status_code == 422
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Vendor onboarding request not found", 404),
+    ("Vendor intake has already been completed for this onboarding request", 409),
+    ("Department and category must match the vendor onboarding request", 422),
+])
+def test_intake_endpoint_maps_onboarding_errors(monkeypatch, message, expected):
+    from Backend.API_Layer.routes import vendor_intake_route
+
+    def _raise(self, payload, user_id):
+        raise ValueError(message)
+
+    monkeypatch.setattr(vendor_intake_route.VendorOnboardingService, "intake_for_request", _raise)
+
+    response = _route_client(["VENDOR_MANAGE"]).post(
+        "/vendor-intake", json={**INTAKE_BODY, "onboarding_request_id": 5}
+    )
+    assert response.status_code == expected
+
+
+def test_vendor_intake_can_retrieve_and_process_onboarding_requests():
+    """Vendor Intake works these requests from Vendor Management with its
+    VENDOR_* grants."""
+
+    viewer = _route_client(["VENDOR_VIEW"])
+    assert viewer.get("/vendor-onboarding-requests").status_code != 403
+    assert viewer.get("/vendor-onboarding-requests/1").status_code != 403
+    assert viewer.post("/vendor-onboarding-requests/1/pre-screen").status_code == 403
+
+    manager = _route_client(["VENDOR_MANAGE"])
+    start_body = {"gst_registered": False, "country_id": 10}
+    assert manager.post("/vendor-onboarding-requests/1/start", json=start_body).status_code != 403
+    assert manager.post("/vendor-onboarding-requests/1/pre-screen").status_code != 403
+    assert manager.post("/vendor-onboarding-requests/1/complete").status_code != 403
+
+
+def test_vendor_intake_cannot_raise_or_assign_onboarding_requests():
+    """Raising and assigning stay with procurement."""
+
+    manager = _route_client(["VENDOR_MANAGE"])
+    assert manager.post("/vendor-onboarding-requests", json={"pr_id": 1}).status_code == 403
+    assert manager.patch("/vendor-onboarding-requests/1/assign", json={"assigned_to": "x"}).status_code == 403
+
+
+def test_existing_onboarding_grants_keep_working():
+    assert _route_client(["ONBOARDING_VIEW"]).get("/vendor-onboarding-requests/1").status_code != 403
+    assert _route_client(["QUOTATION_VIEW"]).get("/vendor-onboarding-requests/1").status_code != 403
+    assert _route_client(["ONBOARDING_PROCESS"]).post("/vendor-onboarding-requests/1/complete").status_code != 403
+    assert _route_client(["QUOTATION_CREATE"]).post("/vendor-onboarding-requests", json={"pr_id": 1}).status_code != 403
+    assert _route_client([]).get("/vendor-onboarding-requests/1").status_code == 403

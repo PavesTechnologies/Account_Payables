@@ -111,8 +111,16 @@ class VendorIntakeService:
     # Vendor Intake (Save)
     # =========================================================
 
-    def create_intake(self, payload: VendorIntakeCreateRequest, user_id: str) -> IntakeResult:
-        department = self._require_active_department(payload.department_id)
+    def create_intake(
+        self, payload: VendorIntakeCreateRequest, user_id: str, commit: bool = True
+    ) -> IntakeResult:
+        """commit=False leaves the engagement + its audit row flushed but
+        uncommitted, so a caller (VendorOnboardingService) can link it to an
+        onboarding request and commit both together - or roll both back. A
+        brand-new vendor is still committed by create_vendor() itself; see the
+        module docstring for why that is safe to retry."""
+
+        department =self._require_active_department(payload.department_id)
         category = self._require_active_category_in_department(payload.category_id, payload.department_id)
 
         gst_status: Optional[str] = None
@@ -159,8 +167,9 @@ class VendorIntakeService:
             )
         )
 
-        self.db.commit()
-        self.db.refresh(engagement)
+        if commit:
+            self.db.commit()
+            self.db.refresh(engagement)
 
         return IntakeResult(
             engagement=engagement,
@@ -404,7 +413,10 @@ class VendorIntakeService:
     # Pre-Screen
     # =========================================================
 
-    def run_pre_screen(self, engagement_id: int, user_id: str) -> PreScreenOutcome:
+    def run_pre_screen(self, engagement_id: int, user_id: str, commit: bool = True) -> PreScreenOutcome:
+        """commit=False: same checks and writes, left for the caller to commit
+        together with its own (e.g. the onboarding request's status)."""
+
         engagement = self._require_engagement(engagement_id)
 
         checks: List[PreScreenCheckResult] = []
@@ -487,8 +499,9 @@ class VendorIntakeService:
         engagement.nda_recommended = nda_recommended
         engagement.updated_by = user_id
 
-        self.db.commit()
-        self.db.refresh(engagement)
+        if commit:
+            self.db.commit()
+            self.db.refresh(engagement)
 
         return PreScreenOutcome(
             engagement=engagement, result=result, reason=reason, checks=checks, nda_recommended=nda_recommended

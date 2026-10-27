@@ -73,6 +73,10 @@ ONBOARDING_TRANSITIONS = {
 # request - it is what the partial unique index keys on via closed_at.
 TERMINAL_STATUS_CODES = {STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED}
 
+# Vendor intake may run only while no vendor is linked yet and the request is
+# still open and ahead of Pre-Screen.
+INTAKE_START_STATUS_CODES = {STATUS_CREATED, STATUS_ASSIGNED, STATUS_IN_PROGRESS}
+
 # Pre-Screen result -> onboarding status
 PRE_SCREEN_STATUS_MAP = {
     "PASS": STATUS_PASSED,
@@ -294,8 +298,7 @@ class VendorOnboardingService:
         PR context is preserved end to end."""
 
         request = self._require_request(request_id)
-        if request.vendor_id is not None:
-            raise ValueError("Vendor intake has already been completed for this onboarding request")
+        self._require_awaiting_intake(request)
 
         intake_payload = VendorIntakeCreateRequest(
             department_id=request.department_id,
@@ -316,15 +319,74 @@ class VendorOnboardingService:
             pan_number=payload.pan_number,
             phone_number=payload.phone_number,
             email=payload.email or request.requested_vendor_email,
+            onboarding_request_id=request.id,
         )
+
+        return self._run_intake(request, intake_payload, user_id)
+
+    def intake_for_request(self, payload: VendorIntakeCreateRequest, user_id: str):
+        """POST /apm/vendor-intake with ``onboarding_request_id`` set: the
+        Vendor Intake form (prefilled from the request) is submitted through
+        the normal intake endpoint. Same intake, validations and linkage as
+        ``start`` - only the payload shape differs."""
+
+        request = self._require_request(payload.onboarding_request_id)
+        self._require_awaiting_intake(request)
+
+        # The onboarding context belongs to the PR; the form may not move it.
+        if (
+            payload.department_id != request.department_id
+            or payload.category_id != request.purchase_category_id
+        ):
+            raise ValueError(
+                "Department and category must match the vendor onboarding request"
+            )
+
+        # Values the requester already supplied fill any the form left empty.
+        intake_payload = payload.model_copy(
+            update={
+                "business_requirement": payload.business_requirement or request.business_requirement,
+                "purpose_of_onboarding": payload.purpose_of_onboarding or request.purpose_of_onboarding,
+                "vendor_name": payload.vendor_name or request.requested_vendor_name,
+                "email": payload.email or request.requested_vendor_email,
+            }
+        )
+
+        return self._run_intake(request, intake_payload, user_id)
+
+    def _require_awaiting_intake(self, request: VendorOnboardingRequest) -> None:
+        if request.vendor_id is not None:
+            raise ValueError("Vendor intake has already been completed for this onboarding request")
+
+        status_code = self._status_code(request)
+        if status_code not in INTAKE_START_STATUS_CODES:
+            raise ValueError(
+                f"Vendor intake cannot be started for an onboarding request in status {status_code}"
+            )
+
+    def _run_intake(self, request: VendorOnboardingRequest, intake_payload, user_id: str):
+        """All-or-nothing: the engagement, the request link, its status moves
+        and the audit rows are committed together in ONE commit at the end.
+        The request is not touched before intake succeeds, so the commit that
+        VendorService.create_vendor makes for a brand-new vendor never
+        carries a half-updated request with it. On any failure the route rolls
+        back and the request is exactly as it was; a vendor created on the way
+        is reused by name/GSTIN when the intake is retried."""
+
+        intake_result = VendorIntakeService(self.db).create_intake(
+            intake_payload, user_id, commit=False
+        )
+
+        linked = self.onboarding_dao.link_vendor(
+            request.id,
+            intake_result.vendor.vendor_id,
+            intake_result.engagement.vendor_category_mapping_id,
+        )
+        if not linked:
+            raise ValueError("Vendor intake has already been completed for this onboarding request")
 
         if self._status_code(request) in {STATUS_CREATED, STATUS_ASSIGNED}:
             self._transition(request, STATUS_IN_PROGRESS)
-
-        intake_result = VendorIntakeService(self.db).create_intake(intake_payload, user_id)
-
-        request.vendor_id = intake_result.vendor.vendor_id
-        request.engagement_id = intake_result.engagement.vendor_category_mapping_id
         request.updated_by = user_id
         self._transition(request, STATUS_PRE_SCREEN_PENDING)
 
@@ -353,7 +415,12 @@ class VendorOnboardingService:
         if request.engagement_id is None:
             raise ValueError("Vendor intake must be completed before Pre-Screen can run")
 
-        outcome = VendorIntakeService(self.db).run_pre_screen(request.engagement_id, user_id)
+        # commit=False: the engagement's verdict and the request's status are
+        # committed together below, so a rejected transition can never leave
+        # the engagement at PASS while the request still says otherwise.
+        outcome = VendorIntakeService(self.db).run_pre_screen(
+            request.engagement_id, user_id, commit=False
+        )
 
         target_status = PRE_SCREEN_STATUS_MAP.get(outcome.result)
         if target_status is None:
@@ -361,6 +428,12 @@ class VendorOnboardingService:
 
         status_changed = self._status_code(request) != target_status
         if status_changed:
+            # Missing information was supplied (e.g. an address added through
+            # Vendor Management) and Pre-Screen re-run: the request goes back
+            # through PRE_SCREEN_PENDING, the existing NEED_INFORMATION exit,
+            # before taking the new verdict.
+            if self._status_code(request) == STATUS_NEED_INFORMATION:
+                self._transition(request, STATUS_PRE_SCREEN_PENDING)
             self._transition(request, target_status)
         request.updated_by = user_id
 

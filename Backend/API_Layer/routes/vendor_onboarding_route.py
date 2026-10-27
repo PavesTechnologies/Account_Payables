@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 
 from Backend.API_Layer.interface.vendor_onboarding_interface import (
     VendorOnboardingAssignRequest,
+    VendorOnboardingIntakeDefaultsDTO,
     VendorOnboardingPreScreenResponse,
     VendorOnboardingRequestCreate,
     VendorOnboardingRequestDTO,
@@ -29,15 +30,23 @@ from Backend.API_Layer.interface.vendor_onboarding_interface import (
     VendorOnboardingStatusUpdateRequest,
 )
 from Backend.API_Layer.middleware.permission_base_access import permission_based_access
-from Backend.Business_Layer.services.vendor_onboarding_service import VendorOnboardingService
+from Backend.API_Layer.utils import vendor_permissions as vp
+from Backend.Business_Layer.services.vendor_onboarding_service import (
+    INTAKE_START_STATUS_CODES,
+    VendorOnboardingService,
+)
 from Backend.Data_Access_Layer.models.vendor_onboarding import VendorOnboardingRequest
 
 router = APIRouter()
 
-ONBOARDING_VIEW = ["ONBOARDING_VIEW", "QUOTATION_VIEW"]
+# Vendor Intake works these requests from Vendor Management, holding the
+# VENDOR_* grants (vendor_permissions.py) - the same grants that already allow
+# it to run intake, Pre-Screen and vendor activation directly. Raising and
+# assigning requests stays with procurement.
+ONBOARDING_VIEW = ["ONBOARDING_VIEW", "QUOTATION_VIEW"] + vp.VENDOR_READ
 ONBOARDING_CREATE = ["ONBOARDING_CREATE", "QUOTATION_CREATE"]
 ONBOARDING_ASSIGN = ["ONBOARDING_ASSIGN", "QUOTATION_CREATE"]
-ONBOARDING_PROCESS = ["ONBOARDING_PROCESS", "QUOTATION_CREATE"]
+ONBOARDING_PROCESS = ["ONBOARDING_PROCESS", "QUOTATION_CREATE"] + vp.VENDOR_WRITE
 
 
 def _get_user_id(http_request: Request) -> str:
@@ -53,13 +62,35 @@ def _get_user_id(http_request: Request) -> str:
 
 
 def _to_dto(request: VendorOnboardingRequest) -> VendorOnboardingRequestDTO:
+    status_code = request.status.status_code if request.status is not None else None
+    awaiting_intake = request.vendor_id is None and status_code in INTAKE_START_STATUS_CODES
+
     return VendorOnboardingRequestDTO(
         id=request.id,
         pr_id=request.pr_id,
         department_id=request.department_id,
         purchase_category_id=request.purchase_category_id,
         status_id=request.status_id,
-        status_code=request.status.status_code if request.status is not None else None,
+        status_code=status_code,
+        pr_number=request.pr.pr_number if request.pr is not None else None,
+        department_name=request.department.name if request.department is not None else None,
+        purchase_category_name=(
+            request.purchase_category.name if request.purchase_category is not None else None
+        ),
+        awaiting_intake=awaiting_intake,
+        intake_defaults=(
+            VendorOnboardingIntakeDefaultsDTO(
+                onboarding_request_id=request.id,
+                department_id=request.department_id,
+                category_id=request.purchase_category_id,
+                business_requirement=request.business_requirement,
+                purpose_of_onboarding=request.purpose_of_onboarding,
+                vendor_name=request.requested_vendor_name,
+                email=request.requested_vendor_email,
+            )
+            if awaiting_intake
+            else None
+        ),
         business_requirement=request.business_requirement,
         purpose_of_onboarding=request.purpose_of_onboarding,
         requested_vendor_name=request.requested_vendor_name,

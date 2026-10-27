@@ -71,6 +71,22 @@ class VendorOnboardingStartRequest(BaseModel):
     email: Optional[str] = None
 
 
+class VendorOnboardingIntakeDefaultsDTO(BaseModel):
+    """What the request already knows, keyed exactly like
+    VendorIntakeCreateRequest, so the Vendor Intake form can be prefilled
+    from it and submitted to POST /apm/vendor-intake unchanged. GST status,
+    country, address and the other vendor details are not known yet and are
+    supplied on the form."""
+
+    onboarding_request_id: int
+    department_id: int
+    category_id: int
+    business_requirement: Optional[str] = None
+    purpose_of_onboarding: Optional[str] = None
+    vendor_name: Optional[str] = None
+    email: Optional[str] = None
+
+
 class VendorOnboardingRequestDTO(BaseModel):
     id: int
     pr_id: int
@@ -78,6 +94,12 @@ class VendorOnboardingRequestDTO(BaseModel):
     purchase_category_id: int
     status_id: int
     status_code: Optional[str]
+    pr_number: Optional[str] = None
+    department_name: Optional[str] = None
+    purchase_category_name: Optional[str] = None
+    # True while Vendor Intake can still be run for this request.
+    awaiting_intake: bool = False
+    intake_defaults: Optional[VendorOnboardingIntakeDefaultsDTO] = None
     business_requirement: Optional[str]
     purpose_of_onboarding: Optional[str]
     requested_vendor_name: Optional[str]
