@@ -536,6 +536,10 @@ class APReportingService:
         ("tds_register", {"title": "TDS register", "period": "range", "permissions": TDS_PERMISSIONS}),
         ("payment_term_exceptions", {"title": "Payment-term exceptions", "period": "as_of",
                                      "permissions": TERM_PERMISSIONS}),
+        ("control_exceptions", {"title": "Control exceptions - last 30 days", "period": "as_of",
+                                "permissions": FINANCE_PERMISSIONS}),
+        ("month_end_accruals", {"title": "Month-end accruals (month of the To date)", "period": "range",
+                                "permissions": FINANCE_PERMISSIONS}),
         ("gst_itc_register", {"title": "GST input credit (ITC) register", "period": "range",
                               "permissions": ["GST_ITC_VIEW", "GST_ITC_MANAGE", "PAYMENT_VIEW", "PAYMENT_PROCESS", "AP_AUTOMATION_MANAGE"]}),
         ("msme_payments", {"title": "MSME payments - MSMED Act s.15 / s.16 interest", "period": "range",
@@ -579,25 +583,42 @@ class APReportingService:
         days_to_pay = [(r[1] - r[12]).days for r in paid_rows if r[1] and len(r) > 12 and r[12]]
         payment_ids = {r[0] for r in paid_rows}
 
+        on_time_pct = round(100 * len(on_time) / len(paid_rows), 1) if paid_rows else None
+        # group: "now" = today's position (ignores the dates chosen); "period" = what happened between the dates
         kpis = [
-            {"key": "invoiced", "label": "Invoiced", "format": "money", "value": _money(invoiced_total),
-             "subtitle": f"{_n(len(invoiced), 'invoice')} in period", "tone": "indigo"},
-            {"key": "paid", "label": "Paid", "format": "money", "value": _money(paid_total),
-             "subtitle": f"{_n(len(payment_ids), 'payment')} cleared", "tone": "emerald"},
-            {"key": "outstanding", "label": "Outstanding now", "format": "money", "value": _money(outstanding),
-             "subtitle": f"{_n(len(open_now), 'open invoice')}, as of today", "tone": "amber"},
-            {"key": "overdue", "label": "Overdue now", "format": "money", "value": _money(overdue_total),
-             "subtitle": f"{_n(len(overdue_items), 'approved invoice')} past due", "tone": "rose"},
-            {"key": "tds", "label": "TDS withheld", "format": "money", "value": _money(tds_total),
-             "subtitle": "On invoices in period", "tone": "gray"},
-            {"key": "on_time", "label": "Paid on time", "format": "percent",
-             "value": round(100 * len(on_time) / len(paid_rows), 1) if paid_rows else None,
-             "subtitle": f"{len(on_time)} of {len(paid_rows)} payment allocations", "tone": "emerald"},
-            {"key": "days_to_pay", "label": "Avg days to pay", "format": "days",
+            {"key": "outstanding", "group": "now", "label": "Still to pay", "format": "money", "value": _money(outstanding),
+             "subtitle": f"{_n(len(open_now), 'unpaid invoice')} · after TDS", "tone": "amber",
+             "help": "Everything received from vendors and not yet paid, as of today - whatever the dates chosen above, and "
+                     "including invoices still in review or approval. After TDS, so it is what the vendors will receive."},
+            {"key": "overdue", "group": "now", "label": "Overdue", "format": "money", "value": _money(overdue_total),
+             "subtitle": f"{_n(len(overdue_items), 'approved invoice')} past its due date",
+             "tone": "rose",
+             "help": "Approved invoices whose due date has passed and that are still unpaid, as of today. Pay these first. "
+                     "Invoices still waiting for approval are not counted here."},
+            {"key": "invoiced", "group": "period", "label": "Invoices received", "format": "money", "value": _money(invoiced_total),
+             "subtitle": f"{_n(len(invoiced), 'invoice')} dated in the period · incl. GST", "tone": "indigo",
+             "help": "Total value of vendor invoices dated between the chosen dates, including GST and before TDS. "
+                     "Rejected invoices are left out."},
+            {"key": "paid", "group": "period", "label": "Paid to vendors", "format": "money", "value": _money(paid_total),
+             "subtitle": f"{_n(len(payment_ids), 'payment')} made in the period", "tone": "emerald",
+             "help": "Money actually sent to vendors between the chosen dates (by payment date). It can include payments for "
+                     "older invoices, and it excludes TDS, which is paid to the government."},
+            {"key": "tds", "group": "period", "label": "TDS deducted", "format": "money", "value": _money(tds_total),
+             "subtitle": "Kept back from vendors on the period's invoices", "tone": "gray",
+             "help": "Tax deducted at source from vendors on the invoices of this period. It is paid to the government by the "
+                     "7th of the next month and reported in the quarterly TDS return - see TDS Tracking."},
+            {"key": "on_time", "group": "period", "label": "Paid on time", "format": "percent", "value": on_time_pct,
+             "subtitle": f"{len(on_time)} of {len(paid_rows)} payments made by the due date", "tone": "emerald",
+             "help": "Of the payments made in the period, the share made on or before the invoice's due date. "
+                     "90% or more is healthy; late payment hurts vendor relations and, for MSMEs, costs interest."},
+            {"key": "days_to_pay", "group": "period", "label": "Average days to pay", "format": "days",
              "value": round(sum(days_to_pay) / len(days_to_pay), 1) if days_to_pay else None,
-             "subtitle": "Invoice date to payment", "tone": "gray"},
-            {"key": "vendors", "label": "Vendors", "format": "count", "value": len({f.vendor_id for f in invoiced}),
-             "subtitle": "Invoiced in period", "tone": "gray"},
+             "subtitle": "From invoice date to payment", "tone": "gray",
+             "help": "How long vendors waited, on average, for the payments made in the period - from the invoice date to the "
+                     "payment date. Compare it with the usual 30-day terms."},
+            {"key": "vendors", "group": "period", "label": "Vendors billed", "format": "count", "value": len({f.vendor_id for f in invoiced}),
+             "subtitle": "Sent invoices dated in the period", "tone": "gray",
+             "help": "How many different vendors sent invoices dated between the chosen dates."},
         ]
 
         months = OrderedDict()
@@ -853,6 +874,28 @@ class APReportingService:
         ], "rows": rows, "notes": [
             "Deposit due: 7th of the month after deduction (30 April for March); quarterly statement: "
             "31 Jul / 31 Oct / 31 Jan / 31 May. Configurable in system configuration."]}
+
+    def _report_control_exceptions(self, **_):
+        from Backend.Business_Layer.services.cfo_insights_service import CfoInsightsService
+        rows = [{"check": c["label"], "count": c["count"] if c["count"] is not None else "n/a",
+                 "status": "Look into it" if c["count"] and c["severity"] in ("high", "medium") else ("Review" if c["count"] else "Clear"),
+                 "why": c["why"]} for c in CfoInsightsService(self.db, today=self.today).controls()]
+        return {"columns": [_col("check", "Check"), _col("count", "Last 30 days", "int"), _col("status", "Status"),
+                            _col("why", "Why it matters")],
+                "rows": rows, "notes": ["From the audit trail and live data. A count is not a problem by itself - it is what to sample-check."]}
+
+    def _report_month_end_accruals(self, date_to=None, **_):
+        from Backend.Business_Layer.services.cfo_insights_service import CfoInsightsService, month_end
+        data = CfoInsightsService(self.db, today=self.today).accruals(month_end(date_to or self.today))
+        rows = [{"group": g["label"], "reference": i["reference"], "vendor_name": i["vendor_name"], "description": i["description"],
+                 "currency_code": "INR", "amount": i["amount"], "invoice_id": i.get("invoice_id")}
+                for g in data["groups"] for i in g["items"]]
+        return {"columns": [_col("group", "Accrual"), _col("reference", "Reference"), _col("vendor_name", "Vendor"),
+                            _col("description", "Detail"), _col("currency_code", "Cur."), _col("amount", "Amount", "money")],
+                "rows": rows, "notes": [
+                    f"As of {data['as_of']:%d %b %Y}: costs incurred but not yet approved payables - book them as accruals at month-end.",
+                    "Received, not invoiced = PO quantity received (goods receipts) minus quantity invoiced, at the PO price incl. tax. "
+                    "Recurring = the schedule's usual amount for a month whose invoice has not arrived."]}
 
     def _report_gst_itc_register(self, date_from=None, date_to=None, vendor_id=None, **_):
         from sqlalchemy import select

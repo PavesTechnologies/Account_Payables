@@ -165,7 +165,10 @@ def test_management_position_outflow_efficiency(make, monkeypatch):
     kpis = {k["key"]: k for k in data["kpis"]}
     assert kpis["liability"]["value"] == Decimal("300160.00")
     assert kpis["overdue"]["value"] == Decimal("300000.00")
-    assert kpis["overdue"]["subtitle"].startswith("100%")
+    assert kpis["overdue"]["subtitle"] == "1 approved invoice past due · 100% of approved"
+    assert all(k["help"] for k in data["kpis"])  # every tile explains itself
+    texts = [h["text"] for h in data["highlights"]]
+    assert texts[0].startswith("₹3.0 L on 1 approved invoice is past its due date")
     assert kpis["due_30"]["value"] == Decimal("100.00")
     assert kpis["on_time"]["tone"] == "amber"
     outflow = {o["key"]: o for o in data["outflow"]}
@@ -178,4 +181,6 @@ def test_management_position_outflow_efficiency(make, monkeypatch):
     assert data["efficiency"]["bottlenecks"][0]["count"] == 2
     assert data["high_value_exceptions"][0]["invoice_id"] == 1
     compliance = {c["key"]: c["count"] for c in data["compliance"]}
-    assert compliance["tds_overdue"] == 1 and compliance["receipts"] == 2
+    assert compliance["tds_overdue"] == 1 and "receipts" not in compliance  # moved to the controls card
+    controls = {c["key"]: c["count"] for c in data["controls"]}
+    assert controls["receipts"] == 2
